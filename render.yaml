@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: learning-web-builder-api
+    runtime: go
+    rootDir: backend
+    buildCommand: go build -o bin/api ./cmd/api
+    startCommand: ./bin/api
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+

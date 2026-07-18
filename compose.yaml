@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: learning_web_builder
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - learning_web_builder_pgdata:/var/lib/postgresql/data
+
+volumes:
+  learning_web_builder_pgdata:
+

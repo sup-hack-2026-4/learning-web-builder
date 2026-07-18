@@ -1,0 +1,14 @@
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+backend/bin/
+backend/coverage.out
+backend/.gocache/
+.env
+.env.local
+*.log
+.DS_Store
+.idea/
+.vscode/

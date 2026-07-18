@@ -1,0 +1,25 @@
+name: 機能追加
+description: MVPの機能や改善を提案します
+title: "[Feature] "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 目的
+      description: 誰のどんな課題を解決するかを書いてください。
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 完了条件
+      description: 確認できる状態を箇条書きにしてください。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 対象外
+      description: 今回やらないことがあれば書いてください。
+

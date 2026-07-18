@@ -1,0 +1,80 @@
+openapi: 3.1.0
+info:
+  title: Learning Web Builder API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080/api/v1
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, status, version]
+                properties:
+                  service: { type: string }
+                  status: { type: string, const: ok }
+                  version: { type: string }
+  /generate:
+    post:
+      operationId: generateSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [topic]
+              properties:
+                topic: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        "200":
+          description: Generated or fallback site model
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [site, provider]
+                properties:
+                  provider: { type: string, enum: [gemini, static-sample] }
+                  site: { $ref: "#/components/schemas/SiteModel" }
+        "400":
+          description: Invalid input
+components:
+  schemas:
+    SiteModel:
+      type: object
+      required: [id, topic, siteTitle, tagline, theme, sections]
+      properties:
+        id: { type: string }
+        topic: { type: string }
+        siteTitle: { type: string }
+        tagline: { type: string }
+        theme:
+          type: object
+          required: [primary, background, text, fontFamily, spacing]
+          properties:
+            primary: { type: string }
+            background: { type: string }
+            text: { type: string }
+            fontFamily: { type: string, enum: [sans, serif, rounded] }
+            spacing: { type: integer, minimum: 2, maximum: 10 }
+        sections:
+          type: array
+          items:
+            type: object
+            required: [id, kind, title, body, imageAlt, visible]
+            properties:
+              id: { type: string }
+              kind: { type: string, enum: [hero, about, features, gallery, contact] }
+              title: { type: string }
+              body: { type: string }
+              imageAlt: { type: string }
+              visible: { type: boolean }
+
