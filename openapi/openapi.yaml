@@ -52,29 +52,31 @@ components:
       type: object
       required: [id, topic, siteTitle, tagline, theme, sections]
       properties:
-        id: { type: string }
-        topic: { type: string }
-        siteTitle: { type: string }
-        tagline: { type: string }
+        id: { type: string, minLength: 1 }
+        topic: { type: string, minLength: 1, maxLength: 100 }
+        siteTitle: { type: string, minLength: 1, maxLength: 80 }
+        tagline: { type: string, maxLength: 160 }
         theme:
           type: object
           required: [primary, background, text, fontFamily, spacing]
           properties:
-            primary: { type: string }
-            background: { type: string }
-            text: { type: string }
+            primary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+            background: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+            text: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
             fontFamily: { type: string, enum: [sans, serif, rounded] }
             spacing: { type: integer, minimum: 2, maximum: 10 }
         sections:
           type: array
+          minItems: 2
+          maxItems: 8
           items:
             type: object
             required: [id, kind, title, body, imageAlt, visible]
             properties:
-              id: { type: string }
+              id: { type: string, minLength: 1 }
               kind: { type: string, enum: [hero, about, features, gallery, contact] }
-              title: { type: string }
-              body: { type: string }
-              imageAlt: { type: string }
+              title: { type: string, minLength: 1, maxLength: 80 }
+              body: { type: string, maxLength: 800 }
+              imageAlt: { type: string, maxLength: 160 }
               visible: { type: boolean }
 
