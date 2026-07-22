@@ -1,19 +1,40 @@
 import { z } from "zod";
 
+// OpenAPIのmaxLength(JSON Schema)はUnicodeコードポイント数を数える仕様のため、
+// JavaScriptのstring.length(UTF-16コード単位)ではなく[...value].lengthで揃える。
+function codePointLength(value: string): number {
+  return [...value].length;
+}
+
+function maxCodePoints(max: number) {
+  return (value: string) => codePointLength(value) <= max;
+}
+
+const maxCodePointsMessage = (max: number) => `${max}文字以内で入力してください`;
+
 export const sectionSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(["hero", "about", "features", "gallery", "contact"]),
-  title: z.string().min(1).max(80),
-  body: z.string().max(800),
-  imageAlt: z.string().max(160),
+  title: z
+    .string()
+    .min(1)
+    .refine(maxCodePoints(80), maxCodePointsMessage(80)),
+  body: z.string().refine(maxCodePoints(800), maxCodePointsMessage(800)),
+  imageAlt: z.string().refine(maxCodePoints(160), maxCodePointsMessage(160)),
   visible: z.boolean(),
 });
 
 export const siteModelSchema = z.object({
   id: z.string().min(1),
-  topic: z.string().min(1).max(100),
-  siteTitle: z.string().min(1).max(80),
-  tagline: z.string().max(160),
+  topic: z
+    .string()
+    .min(1)
+    .refine(maxCodePoints(100), maxCodePointsMessage(100)),
+  siteTitle: z
+    .string()
+    .min(1)
+    .refine(maxCodePoints(80), maxCodePointsMessage(80)),
+  tagline: z.string().refine(maxCodePoints(160), maxCodePointsMessage(160)),
   theme: z.object({
     primary: z.string().regex(/^#[0-9a-fA-F]{6}$/),
     background: z.string().regex(/^#[0-9a-fA-F]{6}$/),

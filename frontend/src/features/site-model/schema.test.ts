@@ -44,4 +44,24 @@ describe("siteModelSchema", () => {
     site.topic = "";
     expect(() => siteModelSchema.parse(site)).toThrow();
   });
+
+  it("サロゲートペア文字はコードポイント数で判定する(UTF-16長ではない)", () => {
+    // 😀はUTF-16では2コード単位だが、コードポイントとしては1文字。
+    // 51文字(コードポイント)はtopicの上限100以内だが、UTF-16長では102になり誤って拒否されうる。
+    const site = createSampleSite();
+    site.topic = "😀".repeat(51);
+    expect(() => siteModelSchema.parse(site)).not.toThrow();
+
+    site.siteTitle = "😀".repeat(41); // コードポイント41 <= 80、UTF-16長は82
+    expect(() => siteModelSchema.parse(site)).not.toThrow();
+
+    site.sections[0].title = "😀".repeat(41); // コードポイント41 <= 80
+    expect(() => siteModelSchema.parse(site)).not.toThrow();
+  });
+
+  it("コードポイント数が上限を超えるtopicは拒否する", () => {
+    const site = createSampleSite();
+    site.topic = "😀".repeat(101); // コードポイント101 > 100
+    expect(() => siteModelSchema.parse(site)).toThrow();
+  });
 });
