@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Check, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
+import { SitePreview } from "@/components/site-preview";
 import { explanationDictionary } from "@/features/explanations/dictionary";
 import { exportProject } from "@/features/export/export-project";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
@@ -14,13 +14,11 @@ import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 
 export default function App() {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [topic, setTopic] = useState("");
   const [reason, setReason] = useState("");
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
   const { site, selectedElementId, notes, aiUsage, setSite, selectElement, updateTheme, updateSection, addNote, reset } = useBuilderStore();
 
-  const artifacts = useMemo(() => buildSiteArtifacts(site), [site]);
   const quality = useMemo(() => evaluateQuality(site), [site]);
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
   const explanation = explanationDictionary[selectedElementId] ?? explanationDictionary.about;
@@ -38,17 +36,6 @@ export default function App() {
       setNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
     },
   });
-
-  useEffect(() => {
-    const receiveMessage = (event: MessageEvent) => {
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      if (event.data?.type === "learning-builder:select" && typeof event.data.elementId === "string") {
-        selectElement(event.data.elementId);
-      }
-    };
-    window.addEventListener("message", receiveMessage);
-    return () => window.removeEventListener("message", receiveMessage);
-  }, [selectElement]);
 
   const submitTopic = (event: FormEvent) => {
     event.preventDefault();
@@ -123,7 +110,7 @@ export default function App() {
             <div><span className="text-xs font-bold text-slate-500">LIVE PREVIEW</span><h2 className="font-black">{site.siteTitle}</h2></div>
             <span className="rounded-full bg-white px-3 py-1 text-xs text-slate-500">クリックしてコードを解説</span>
           </div>
-          <iframe ref={iframeRef} title="生成サイトのプレビュー" sandbox="allow-scripts" srcDoc={artifacts.srcdoc} className="min-h-[720px] w-full flex-1 rounded-2xl border border-slate-300 bg-white shadow-xl" />
+          <SitePreview site={site} onElementSelect={selectElement} />
         </main>
 
         <aside className="border-l border-slate-200 bg-white p-4">
