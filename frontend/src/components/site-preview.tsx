@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
+import { resolveSelectedElementId } from "@/features/preview/resolve-selected-element";
 import type { SiteModel } from "@/features/site-model/schema";
 
 type Props = {
@@ -9,14 +10,12 @@ type Props = {
 
 export function SitePreview({ site, onElementSelect }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const artifacts = buildSiteArtifacts(site);
+  const artifacts = useMemo(() => buildSiteArtifacts(site), [site]);
 
   useEffect(() => {
     const receiveMessage = (event: MessageEvent) => {
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      if (event.data?.type === "learning-builder:select" && typeof event.data.elementId === "string") {
-        onElementSelect(event.data.elementId);
-      }
+      const elementId = resolveSelectedElementId(event, iframeRef.current?.contentWindow ?? null);
+      if (elementId) onElementSelect(elementId);
     };
     window.addEventListener("message", receiveMessage);
     return () => window.removeEventListener("message", receiveMessage);
