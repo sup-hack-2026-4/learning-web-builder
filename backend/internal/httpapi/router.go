@@ -16,7 +16,7 @@ import (
 )
 
 type Config struct {
-	FrontendOrigin string
+	AllowedOrigins []string
 	Generator      SiteGenerator
 }
 
@@ -34,7 +34,7 @@ func NewRouter(config Config) http.Handler {
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
-	router.Use(cors(config.FrontendOrigin))
+	router.Use(cors(config.AllowedOrigins))
 
 	router.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", func(writer http.ResponseWriter, _ *http.Request) {
@@ -85,21 +85,6 @@ func generate(generator SiteGenerator) http.HandlerFunc {
 			return
 		}
 		writeJSON(writer, http.StatusOK, map[string]any{"site": fallback, "provider": "static-sample"})
-	}
-}
-
-func cors(origin string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			writer.Header().Set("Access-Control-Allow-Origin", origin)
-			writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			if request.Method == http.MethodOptions {
-				writer.WriteHeader(http.StatusNoContent)
-				return
-			}
-			next.ServeHTTP(writer, request)
-		})
 	}
 }
 

@@ -3,9 +3,10 @@ services:
     name: learning-web-builder-api
     runtime: go
     rootDir: backend
-    buildCommand: go build -o bin/api ./cmd/api
-    startCommand: ./bin/api
+    buildCommand: go build -tags netgo -ldflags '-s -w' -o app ./cmd/api
+    startCommand: ./app
     healthCheckPath: /api/v1/health
+    autoDeployTrigger: checksPass
     envVars:
       - key: APP_ENV
         value: production
@@ -19,4 +20,3 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
-

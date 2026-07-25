@@ -23,7 +23,7 @@ func (generator stubGenerator) Generate(_ context.Context, _ string) (site.Model
 func TestHealth(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	response := httptest.NewRecorder()
-	NewRouter(Config{FrontendOrigin: "http://localhost:5173"}).ServeHTTP(response, request)
+	NewRouter(Config{AllowedOrigins: []string{"http://localhost:5173"}}).ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", response.Code)
 	}
