@@ -1,7 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +17,11 @@ import (
 
 type Config struct {
 	FrontendOrigin string
+	Generator      SiteGenerator
+}
+
+type SiteGenerator interface {
+	Generate(context.Context, string) (site.Model, error)
 }
 
 type generateRequest struct {
@@ -31,29 +40,52 @@ func NewRouter(config Config) http.Handler {
 		api.Get("/health", func(writer http.ResponseWriter, _ *http.Request) {
 			writeJSON(writer, http.StatusOK, map[string]string{"service": "learning-web-builder-api", "status": "ok", "version": "0.1.0"})
 		})
-		api.Post("/generate", generate)
+		api.Post("/generate", generate(config.Generator))
 	})
 
 	return router
 }
 
-func generate(writer http.ResponseWriter, request *http.Request) {
-	request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
-	var input generateRequest
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	input.Topic = strings.TrimSpace(input.Topic)
-	if input.Topic == "" || len([]rune(input.Topic)) > 100 {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "topic must be between 1 and 100 characters"})
-		return
-	}
+func generate(generator SiteGenerator) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
+		var input generateRequest
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		input.Topic = strings.TrimSpace(input.Topic)
+		if input.Topic == "" || len([]rune(input.Topic)) > 100 {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "topic must be between 1 and 100 characters"})
+			return
+		}
 
-	// 初期版は常に監修済み静的サンプルを返す。Gemini連携時も同じ構造へ検証してから返す。
-	writeJSON(writer, http.StatusOK, map[string]any{"site": site.Sample(input.Topic), "provider": "static-sample"})
+		if generator != nil {
+			generatedSite, err := generator.Generate(request.Context(), input.Topic)
+			if err == nil {
+				err = site.Validate(generatedSite)
+			}
+			if err == nil {
+				writeJSON(writer, http.StatusOK, map[string]any{"site": generatedSite, "provider": "gemini"})
+				return
+			}
+			log.Printf("Gemini generation failed; using static fallback request_id=%s error=%v", middleware.GetReqID(request.Context()), err)
+		}
+
+		fallback := site.Sample(input.Topic)
+		if err := site.Validate(fallback); err != nil {
+			log.Printf("static fallback validation failed request_id=%s error=%v", middleware.GetReqID(request.Context()), err)
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "site generation failed"})
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]any{"site": fallback, "provider": "static-sample"})
+	}
 }
 
 func cors(origin string) func(http.Handler) http.Handler {
