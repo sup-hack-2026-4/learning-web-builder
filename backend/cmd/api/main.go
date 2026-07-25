@@ -12,8 +12,12 @@ import (
 
 func main() {
 	port := envOr("PORT", "8080")
+	allowedOrigins, err := httpapi.ParseAllowedOrigins(envOr("FRONTEND_ORIGIN", "http://localhost:5173"))
+	if err != nil {
+		log.Fatalf("configure frontend origins: %v", err)
+	}
 	routerConfig := httpapi.Config{
-		FrontendOrigin: envOr("FRONTEND_ORIGIN", "http://localhost:5173"),
+		AllowedOrigins: allowedOrigins,
 	}
 	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
 		geminiClient, err := gemini.NewClient(gemini.Config{
