@@ -12,12 +12,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
 type Config struct {
 	AllowedOrigins []string
+	Authenticator  SessionAuthenticator
 	Generator      SiteGenerator
+}
+
+type SessionAuthenticator interface {
+	Optional(http.Handler) http.Handler
 }
 
 type SiteGenerator interface {
@@ -40,10 +46,33 @@ func NewRouter(config Config) http.Handler {
 		api.Get("/health", func(writer http.ResponseWriter, _ *http.Request) {
 			writeJSON(writer, http.StatusOK, map[string]string{"service": "learning-web-builder-api", "status": "ok", "version": "0.1.0"})
 		})
+		api.With(optionalAuthentication(config.Authenticator)).Get("/session", session)
 		api.Post("/generate", generate(config.Generator))
 	})
 
 	return router
+}
+
+func optionalAuthentication(authenticator SessionAuthenticator) func(http.Handler) http.Handler {
+	if authenticator == nil {
+		return func(next http.Handler) http.Handler {
+			return next
+		}
+	}
+	return authenticator.Optional
+}
+
+func session(writer http.ResponseWriter, request *http.Request) {
+	identity, authenticated := authn.IdentityFromContext(request.Context())
+	if !authenticated {
+		writeJSON(writer, http.StatusOK, map[string]any{"authenticated": false, "mode": "guest"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"authenticated": true,
+		"mode":          "clerk",
+		"userId":        identity.UserID,
+	})
 }
 
 func generate(generator SiteGenerator) http.HandlerFunc {

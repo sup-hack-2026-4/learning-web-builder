@@ -20,6 +20,26 @@ paths:
                   service: { type: string }
                   status: { type: string, const: ok }
                   version: { type: string }
+  /session:
+    get:
+      operationId: getSession
+      security:
+        - {}
+        - clerkBearer: []
+      responses:
+        "200":
+          description: Current Clerk or guest session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authenticated, mode]
+                properties:
+                  authenticated: { type: boolean }
+                  mode: { type: string, enum: [guest, clerk] }
+                  userId: { type: string, minLength: 1 }
+        "401":
+          description: Invalid or expired authentication token
   /generate:
     post:
       operationId: generateSite
@@ -47,6 +67,11 @@ paths:
         "400":
           description: Invalid input
 components:
+  securitySchemes:
+    clerkBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     SiteModel:
       type: object
