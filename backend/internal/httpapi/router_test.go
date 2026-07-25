@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
@@ -20,12 +21,53 @@ func (generator stubGenerator) Generate(_ context.Context, _ string) (site.Model
 	return generator.model, generator.err
 }
 
+type stubAuthenticator struct {
+	identity authn.Identity
+}
+
+func (authenticator stubAuthenticator) Optional(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		ctx := authn.ContextWithIdentity(request.Context(), authenticator.identity)
+		next.ServeHTTP(writer, request.WithContext(ctx))
+	})
+}
+
 func TestHealth(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	response := httptest.NewRecorder()
 	NewRouter(Config{AllowedOrigins: []string{"http://localhost:5173"}}).ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", response.Code)
+	}
+}
+
+func TestSessionReturnsGuestMode(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"authenticated":false`) ||
+		!strings.Contains(response.Body.String(), `"mode":"guest"`) {
+		t.Fatalf("expected guest session response, got %s", response.Body.String())
+	}
+}
+
+func TestSessionReturnsAuthenticatedIdentity(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"authenticated":true`) ||
+		!strings.Contains(response.Body.String(), `"userId":"user_123"`) {
+		t.Fatalf("expected authenticated session response, got %s", response.Body.String())
 	}
 }
 

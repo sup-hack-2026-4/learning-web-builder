@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/gemini"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/httpapi"
 )
@@ -18,6 +19,13 @@ func main() {
 	}
 	routerConfig := httpapi.Config{
 		AllowedOrigins: allowedOrigins,
+	}
+	if secretKey := os.Getenv("CLERK_SECRET_KEY"); secretKey != "" {
+		authenticator, err := authn.NewClerkAuthenticator(secretKey, allowedOrigins, authn.DefaultHTTPClient())
+		if err != nil {
+			log.Fatalf("configure Clerk authentication: %v", err)
+		}
+		routerConfig.Authenticator = authenticator
 	}
 	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
 		geminiClient, err := gemini.NewClient(gemini.Config{
