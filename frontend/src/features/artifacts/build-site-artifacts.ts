@@ -107,10 +107,21 @@ footer { padding: 28px; text-align: center; color: #667085; background: #eef2f7;
       elementId: element.getAttribute('data-builder-id')
     }, '*');
   });
+});
+
+// 親（エディタ）からのテーマ更新を受け取り、styleタグの中身だけ差し替える。
+// srcDocごと再ロードするとちらつき・スクロール位置リセットが起きるため、CSSのみ更新する。
+// 送信元は親ウィンドウに限定し、想定したメッセージ型・文字列のみを反映する。
+window.addEventListener('message', (event) => {
+  if (event.source !== window.parent) return;
+  var data = event.data;
+  if (!data || data.type !== 'learning-builder:theme' || typeof data.css !== 'string') return;
+  var style = document.getElementById('builder-theme');
+  if (style) style.textContent = data.css;
 });`;
 
   const srcdoc = html
-    .replace('<link rel="stylesheet" href="style.css">', `<style>${css}</style>`)
+    .replace('<link rel="stylesheet" href="style.css">', `<style id="builder-theme">${css}</style>`)
     .replace('<script src="script.js"></script>', `<script>${javascript}</script>`);
 
   return { html, css, javascript, srcdoc };
