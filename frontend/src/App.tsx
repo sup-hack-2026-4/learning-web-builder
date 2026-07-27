@@ -95,7 +95,7 @@ export default function App() {
       return;
     }
     const summary = touchedThemeKeys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
-    addNote(`デザイン: ${summary}`, reason.trim());
+    addNote(`デザイン変更（${summary}）`, reason.trim());
     setNotice("デザイン変更の内容と理由を学習メモへ記録しました。");
     setTouchedThemeKeys([]);
     setReason("");
@@ -103,7 +103,7 @@ export default function App() {
 
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
-    addNote(`内容: ${selectedSection.title}`, reason.trim());
+    addNote(`内容変更（${selectedSection.title}）`, reason.trim());
     setNotice("内容変更の理由を学習メモへ記録しました。");
     setReason("");
   };

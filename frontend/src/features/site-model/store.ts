@@ -50,7 +50,7 @@ export const useBuilderStore = create<BuilderState>()(
               ),
             },
             notes: reason
-              ? [...state.notes, { id: crypto.randomUUID(), target: `内容: ${targetLabel}`, reason, createdAt: new Date().toISOString() }]
+              ? [...state.notes, { id: crypto.randomUUID(), target: `表示切替（${targetLabel}）`, reason, createdAt: new Date().toISOString() }]
               : state.notes,
           };
         }),
