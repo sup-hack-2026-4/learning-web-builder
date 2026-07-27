@@ -13,11 +13,39 @@ import { createSampleSite } from "@/features/site-model/sample";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 
+type ThemeKey = "primary" | "background" | "fontFamily" | "spacing";
+
+// 学習メモ・ZIP出力に載る、テーマ項目の日本語ラベル。
+const themeKeyLabels: Record<ThemeKey, string> = {
+  primary: "メインカラー",
+  background: "背景色",
+  fontFamily: "フォント",
+  spacing: "余白",
+};
+
+// フォントの内部値を、画面のセレクトと同じ日本語表記へ変換する。
+const fontLabels: Record<string, string> = {
+  sans: "ゴシック",
+  serif: "明朝",
+  rounded: "丸ゴシック",
+};
+
+// テーマ項目の現在値を「メインカラーを #e11d48 に」のような読める文へ整形する。
+function describeThemeChange(key: ThemeKey, theme: { primary: string; background: string; fontFamily: string; spacing: number }): string {
+  const label = themeKeyLabels[key];
+  if (key === "fontFamily") return `${label}を ${fontLabels[theme.fontFamily] ?? theme.fontFamily} に`;
+  if (key === "spacing") return `${label}を ${theme.spacing} に`;
+  if (key === "primary") return `${label}を ${theme.primary} に`;
+  return `${label}を ${theme.background} に`;
+}
+
 export default function App() {
   const [topic, setTopic] = useState("");
   const [reason, setReason] = useState("");
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
-  const { site, selectedElementId, notes, aiUsage, setSite, selectElement, updateTheme, updateSection, addNote, reset } = useBuilderStore();
+  // 記録ボタンを押すまでに変更したテーマ項目を覚えておき、記録時にまとめて1件のメモにする。
+  const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
+  const { site, selectedElementId, notes, aiUsage, setSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
@@ -43,13 +71,34 @@ export default function App() {
     generation.mutate(topic.trim());
   };
 
-  const applyTheme = (key: "primary" | "background" | "fontFamily" | "spacing", value: string | number) => {
+  // 色・余白・フォントの変更はプレビューへ即時反映するだけで、メモは残さない。
+  // カラーピッカー等は操作ごとに大量のイベントが発火するため、記録は明示ボタンで行う。
+  // 理由未入力のうちは変更させず、先に「なぜ変えるか」を言語化させる（理解確認）。
+  // 変更した項目は覚えておき、記録時に「何をどの値に変えたか」をまとめてメモへ残す。
+  const changeTheme = (key: ThemeKey, value: string | number) => {
     if (!reason.trim()) {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
-    updateTheme(key, value, reason.trim());
-    setNotice("変更と理由を学習メモへ記録しました。");
+    previewTheme(key, value);
+    setTouchedThemeKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
+  };
+
+  // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由を1件のメモへ残す。
+  const recordThemeReason = () => {
+    if (!reason.trim()) {
+      setNotice("先に『なぜ変えるか』を入力してください。");
+      return;
+    }
+    if (touchedThemeKeys.length === 0) {
+      setNotice("先に色・余白・フォントを変更してください。");
+      return;
+    }
+    const summary = touchedThemeKeys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
+    addNote(`デザイン: ${summary}`, reason.trim());
+    setNotice("デザイン変更の内容と理由を学習メモへ記録しました。");
+    setTouchedThemeKeys([]);
+    setReason("");
   };
 
   const recordContentReason = () => {
@@ -105,7 +154,7 @@ export default function App() {
         </aside>
 
         <main className="flex min-h-[70vh] flex-col p-4">
-          <div className="mb-3 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-900"><Info className="size-4 shrink-0" />{notice}</div>
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
           <div className="flex items-center justify-between pb-3">
             <div><span className="text-xs font-bold text-slate-500">LIVE PREVIEW</span><h2 className="font-black">{site.siteTitle}</h2></div>
             <span className="rounded-full bg-white px-3 py-1 text-xs text-slate-500">クリックしてコードを解説</span>
@@ -116,14 +165,22 @@ export default function App() {
         <aside className="border-l border-slate-200 bg-white p-4">
           <h2 className="text-base font-black">調整と学習</h2>
           <label className="mt-3 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
-          <Input id="reason" className="mt-1" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：落ち着いた印象にしたい" />
+          <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
+          <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-amber-400 focus-visible:ring-amber-400"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
 
-          <Card className="mt-4 space-y-4 p-4">
+          <Card className="relative mt-4 space-y-4 p-4">
             <h3 className="text-sm font-black">デザイン</h3>
-            <label className="block text-xs font-bold">メインカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.primary} onChange={(event) => applyTheme("primary", event.target.value)} /></label>
-            <label className="block text-xs font-bold">背景色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.background} onChange={(event) => applyTheme("background", event.target.value)} /></label>
-            <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => applyTheme("spacing", Number(event.target.value))} /></label>
-            <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => applyTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
+            <label className="block text-xs font-bold">メインカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.primary} onChange={(event) => changeTheme("primary", event.target.value)} /></label>
+            <label className="block text-xs font-bold">背景色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.background} onChange={(event) => changeTheme("background", event.target.value)} /></label>
+            <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => changeTheme("spacing", Number(event.target.value))} /></label>
+            <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
+            <Button className="w-full" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
+            {!reason.trim() && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl bg-white/75 px-4 text-center backdrop-blur-[1px]">
+                <span className="text-sm font-black text-slate-700">まず変更の理由を入力</span>
+                <span className="text-xs text-slate-500">上の欄に理由を書くと調整できます。</span>
+              </div>
+            )}
           </Card>
 
           {selectedSection && <Card className="mt-4 space-y-3 p-4">

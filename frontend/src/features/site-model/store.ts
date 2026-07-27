@@ -10,7 +10,8 @@ type BuilderState = {
   aiUsage: AiUsage[];
   setSite: (site: SiteModel, provider: AiUsage["provider"]) => void;
   selectElement: (id: string) => void;
-  updateTheme: (key: keyof SiteModel["theme"], value: string | number, reason: string) => void;
+  // テーマの更新はプレビュー反映のみ。学習メモはApp側の明示的な記録操作でaddNoteする。
+  previewTheme: (key: keyof SiteModel["theme"], value: string | number) => void;
   updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string) => void;
   addNote: (target: string, reason: string) => void;
   reset: () => void;
@@ -33,26 +34,26 @@ export const useBuilderStore = create<BuilderState>()(
           aiUsage: [{ provider, purpose: "サイト構成と仮文章の生成", generatedAt: new Date().toISOString() }],
         }),
       selectElement: (selectedElementId) => set({ selectedElementId }),
-      updateTheme: (key, value, reason) =>
+      previewTheme: (key, value) =>
         set((state) => ({
           site: { ...state.site, theme: { ...state.site.theme, [key]: value } },
-          notes: [
-            ...state.notes,
-            { id: crypto.randomUUID(), target: `デザイン: ${key}`, reason, createdAt: new Date().toISOString() },
-          ],
         })),
       updateSection: (id, values, reason) =>
-        set((state) => ({
-          site: {
-            ...state.site,
-            sections: state.site.sections.map((section) =>
-              section.id === id ? { ...section, ...values } : section,
-            ),
-          },
-          notes: reason
-            ? [...state.notes, { id: crypto.randomUUID(), target: `内容: ${id}`, reason, createdAt: new Date().toISOString() }]
-            : state.notes,
-        })),
+        set((state) => {
+          const target = state.site.sections.find((section) => section.id === id);
+          const targetLabel = target?.title ?? id;
+          return {
+            site: {
+              ...state.site,
+              sections: state.site.sections.map((section) =>
+                section.id === id ? { ...section, ...values } : section,
+              ),
+            },
+            notes: reason
+              ? [...state.notes, { id: crypto.randomUUID(), target: `内容: ${targetLabel}`, reason, createdAt: new Date().toISOString() }]
+              : state.notes,
+          };
+        }),
       addNote: (target, reason) =>
         set((state) => ({
           notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString() }],
