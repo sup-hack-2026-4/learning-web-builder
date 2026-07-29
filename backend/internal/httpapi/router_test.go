@@ -2,13 +2,16 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
+	projectpkg "github.com/haru-yoshi-5/learning-web-builder/backend/internal/project"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
@@ -30,6 +33,27 @@ func (authenticator stubAuthenticator) Optional(next http.Handler) http.Handler 
 		ctx := authn.ContextWithIdentity(request.Context(), authenticator.identity)
 		next.ServeHTTP(writer, request.WithContext(ctx))
 	})
+}
+
+type stubProjectRepository struct {
+	record    projectpkg.Record
+	err       error
+	ownerID   string
+	projectID string
+	model     site.Model
+}
+
+func (repository *stubProjectRepository) Create(_ context.Context, ownerID string, model site.Model) (projectpkg.Record, error) {
+	repository.ownerID = ownerID
+	repository.model = model
+	return repository.record, repository.err
+}
+
+func (repository *stubProjectRepository) Update(_ context.Context, ownerID, projectID string, model site.Model) (projectpkg.Record, error) {
+	repository.ownerID = ownerID
+	repository.projectID = projectID
+	repository.model = model
+	return repository.record, repository.err
 }
 
 func TestHealth(t *testing.T) {
@@ -147,4 +171,107 @@ func TestGenerateFallsBackWhenGeneratedModelIsInvalid(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `"provider":"static-sample"`) {
 		t.Fatalf("expected static fallback response, got %s", response.Body.String())
 	}
+}
+
+func TestCreateProjectRequiresAuthentication(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	NewRouter(Config{}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCreateProjectReturnsUnavailableWithoutDatabase(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCreateProjectSavesValidatedSiteForAuthenticatedOwner(t *testing.T) {
+	model := site.Sample("学校の写真部")
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	repository := &stubProjectRepository{
+		record: projectpkg.Record{
+			ID:        "11111111-1111-1111-1111-111111111111",
+			OwnerID:   "user_123",
+			Site:      model,
+			Version:   1,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", projectRequestBody(t, model))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "user_123" {
+		t.Fatalf("expected authenticated owner, got %q", repository.ownerID)
+	}
+	if repository.model.ID != model.ID {
+		t.Fatalf("expected submitted site model to be saved")
+	}
+	if !strings.Contains(response.Body.String(), `"version":1`) {
+		t.Fatalf("expected project response, got %s", response.Body.String())
+	}
+}
+
+func TestCreateProjectRejectsInvalidSite(t *testing.T) {
+	model := site.Sample("学校の写真部")
+	model.Theme.Primary = "blue"
+	repository := &stubProjectRepository{}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", projectRequestBody(t, model))
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "" {
+		t.Fatal("expected invalid site not to reach repository")
+	}
+}
+
+func TestUpdateProjectReturnsNotFoundForOtherOwner(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	repository := &stubProjectRepository{err: projectpkg.ErrNotFound}
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID, projectRequestBody(t, site.Sample("学校の写真部")))
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_456"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "user_456" || repository.projectID != projectID {
+		t.Fatalf("expected owner-scoped update, got owner=%q project=%q", repository.ownerID, repository.projectID)
+	}
+}
+
+func projectRequestBody(t *testing.T, model site.Model) *strings.Reader {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]any{"site": model})
+	if err != nil {
+		t.Fatalf("marshal project request: %v", err)
+	}
+	return strings.NewReader(string(encoded))
 }

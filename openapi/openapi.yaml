@@ -66,6 +66,63 @@ paths:
                   site: { $ref: "#/components/schemas/SiteModel" }
         "400":
           description: Invalid input
+  /projects:
+    post:
+      operationId: createProject
+      security:
+        - clerkBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveProjectRequest"
+      responses:
+        "201":
+          description: Project was saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          description: Invalid request or SiteModel
+        "401":
+          description: Authentication is required
+        "503":
+          description: Project persistence is not configured
+  /projects/{projectId}:
+    put:
+      operationId: updateProject
+      security:
+        - clerkBearer: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveProjectRequest"
+      responses:
+        "200":
+          description: Project was updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          description: Invalid request, project ID, or SiteModel
+        "401":
+          description: Authentication is required
+        "404":
+          description: Project was not found for the authenticated owner
+        "503":
+          description: Project persistence is not configured
 components:
   securitySchemes:
     clerkBearer:
@@ -73,6 +130,32 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    SaveProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [site]
+      properties:
+        site:
+          $ref: "#/components/schemas/SiteModel"
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, site, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        site:
+          $ref: "#/components/schemas/SiteModel"
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     SiteModel:
       type: object
       required: [id, topic, siteTitle, tagline, theme, sections]
