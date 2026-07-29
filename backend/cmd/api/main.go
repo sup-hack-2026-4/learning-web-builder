@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +10,8 @@ import (
 	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/gemini"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/httpapi"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/project"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -37,6 +40,22 @@ func main() {
 			log.Fatalf("configure Gemini client: %v", err)
 		}
 		routerConfig.Generator = geminiClient
+	}
+	var databasePool *pgxpool.Pool
+	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
+		databaseContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		databasePool, err = pgxpool.New(databaseContext, databaseURL)
+		if err != nil {
+			log.Fatalf("configure database pool: %v", err)
+		}
+		if err := databasePool.Ping(databaseContext); err != nil {
+			databasePool.Close()
+			log.Fatalf("connect to database: %v", err)
+		}
+		defer databasePool.Close()
+		routerConfig.Projects = project.NewPostgresRepository(databasePool)
 	}
 
 	server := &http.Server{
