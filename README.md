@@ -56,6 +56,8 @@ psql $env:DATABASE_URL -f db/migrations/001_initial.sql
 その後、バックエンドの`DATABASE_URL`と`CLERK_SECRET_KEY`を設定してください。
 
 - `POST /api/v1/projects`: 認証ユーザーのプロジェクトを新規保存
+- `GET /api/v1/projects`: 認証ユーザーの保存済みプロジェクトを更新日時順で一覧取得
+- `GET /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを再取得
 - `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新
 - DB未設定時も生成・ゲスト機能は起動し、保存APIだけが`503`を返します
 - ユーザーIDはClerkトークンから取得し、リクエスト本文からは受け取りません

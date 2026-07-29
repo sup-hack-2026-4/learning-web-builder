@@ -27,6 +27,10 @@ type projectResponse struct {
 	UpdatedAt time.Time  `json:"updatedAt"`
 }
 
+type projectListResponse struct {
+	Projects []projectResponse `json:"projects"`
+}
+
 func createProject(repository project.Repository) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		identity, ok := requireIdentity(writer, request)
@@ -83,6 +87,61 @@ func updateProject(repository project.Repository) http.HandlerFunc {
 			return
 		}
 		writeJSON(writer, http.StatusOK, newProjectResponse(record))
+	}
+}
+
+func getProject(repository project.Repository) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		identity, ok := requireIdentity(writer, request)
+		if !ok {
+			return
+		}
+		if repository == nil {
+			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"error": "project persistence is unavailable"})
+			return
+		}
+
+		projectID := chi.URLParam(request, "projectId")
+		if _, err := uuid.Parse(projectID); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "projectId must be a UUID"})
+			return
+		}
+		record, err := repository.Get(request.Context(), identity.UserID, projectID)
+		if errors.Is(err, project.ErrNotFound) {
+			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "project not found"})
+			return
+		}
+		if err != nil {
+			log.Printf("get project failed: %v", err)
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "project could not be loaded"})
+			return
+		}
+		writeJSON(writer, http.StatusOK, newProjectResponse(record))
+	}
+}
+
+func listProjects(repository project.Repository) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		identity, ok := requireIdentity(writer, request)
+		if !ok {
+			return
+		}
+		if repository == nil {
+			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"error": "project persistence is unavailable"})
+			return
+		}
+
+		records, err := repository.List(request.Context(), identity.UserID)
+		if err != nil {
+			log.Printf("list projects failed: %v", err)
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "projects could not be loaded"})
+			return
+		}
+		projects := make([]projectResponse, 0, len(records))
+		for _, record := range records {
+			projects = append(projects, newProjectResponse(record))
+		}
+		writeJSON(writer, http.StatusOK, projectListResponse{Projects: projects})
 	}
 }
 

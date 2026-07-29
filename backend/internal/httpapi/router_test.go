@@ -37,6 +37,7 @@ func (authenticator stubAuthenticator) Optional(next http.Handler) http.Handler 
 
 type stubProjectRepository struct {
 	record    projectpkg.Record
+	records   []projectpkg.Record
 	err       error
 	ownerID   string
 	projectID string
@@ -54,6 +55,17 @@ func (repository *stubProjectRepository) Update(_ context.Context, ownerID, proj
 	repository.projectID = projectID
 	repository.model = model
 	return repository.record, repository.err
+}
+
+func (repository *stubProjectRepository) Get(_ context.Context, ownerID, projectID string) (projectpkg.Record, error) {
+	repository.ownerID = ownerID
+	repository.projectID = projectID
+	return repository.record, repository.err
+}
+
+func (repository *stubProjectRepository) List(_ context.Context, ownerID string) ([]projectpkg.Record, error) {
+	repository.ownerID = ownerID
+	return repository.records, repository.err
 }
 
 func TestHealth(t *testing.T) {
@@ -264,6 +276,50 @@ func TestUpdateProjectReturnsNotFoundForOtherOwner(t *testing.T) {
 	}
 	if repository.ownerID != "user_456" || repository.projectID != projectID {
 		t.Fatalf("expected owner-scoped update, got owner=%q project=%q", repository.ownerID, repository.projectID)
+	}
+}
+
+func TestListProjectsReturnsAuthenticatedOwnersProjects(t *testing.T) {
+	model := site.Sample("学校の写真部")
+	repository := &stubProjectRepository{
+		records: []projectpkg.Record{
+			{ID: "11111111-1111-1111-1111-111111111111", OwnerID: "user_123", Site: model, Version: 2},
+		},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "user_123" {
+		t.Fatalf("expected authenticated owner, got %q", repository.ownerID)
+	}
+	if !strings.Contains(response.Body.String(), `"projects":[`) ||
+		!strings.Contains(response.Body.String(), `"version":2`) {
+		t.Fatalf("expected project list response, got %s", response.Body.String())
+	}
+}
+
+func TestGetProjectReturnsNotFoundForOtherOwner(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	repository := &stubProjectRepository{err: projectpkg.ErrNotFound}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectID, nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_456"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "user_456" || repository.projectID != projectID {
+		t.Fatalf("expected owner-scoped lookup, got owner=%q project=%q", repository.ownerID, repository.projectID)
 	}
 }
 

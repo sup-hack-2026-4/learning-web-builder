@@ -10,15 +10,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type queryRower interface {
+type database interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
+	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
 type PostgresRepository struct {
-	db queryRower
+	db database
 }
 
-func NewPostgresRepository(db queryRower) *PostgresRepository {
+func NewPostgresRepository(db database) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 
@@ -64,6 +65,50 @@ func (repository *PostgresRepository) Update(ctx context.Context, ownerID, proje
 		return Record{}, ErrNotFound
 	}
 	return record, err
+}
+
+func (repository *PostgresRepository) Get(ctx context.Context, ownerID, projectID string) (Record, error) {
+	row := repository.db.QueryRow(
+		ctx,
+		`SELECT id, clerk_user_id, site_model, version, created_at, updated_at
+		 FROM projects
+		 WHERE id = $1 AND clerk_user_id = $2`,
+		projectID,
+		ownerID,
+	)
+	record, err := scanRecord(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
+	return record, err
+}
+
+func (repository *PostgresRepository) List(ctx context.Context, ownerID string) ([]Record, error) {
+	rows, err := repository.db.Query(
+		ctx,
+		`SELECT id, clerk_user_id, site_model, version, created_at, updated_at
+		 FROM projects
+		 WHERE clerk_user_id = $1
+		 ORDER BY updated_at DESC`,
+		ownerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list projects: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]Record, 0)
+	for rows.Next() {
+		record, err := scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate projects: %w", err)
+	}
+	return records, nil
 }
 
 func scanRecord(row pgx.Row) (Record, error) {

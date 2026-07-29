@@ -67,6 +67,21 @@ paths:
         "400":
           description: Invalid input
   /projects:
+    get:
+      operationId: listProjects
+      security:
+        - clerkBearer: []
+      responses:
+        "200":
+          description: Projects owned by the authenticated user, ordered by most recently updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectList"
+        "401":
+          description: Authentication is required
+        "503":
+          description: Project persistence is not configured
     post:
       operationId: createProject
       security:
@@ -91,6 +106,32 @@ paths:
         "503":
           description: Project persistence is not configured
   /projects/{projectId}:
+    get:
+      operationId: getProject
+      security:
+        - clerkBearer: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Project owned by the authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          description: Invalid project ID
+        "401":
+          description: Authentication is required
+        "404":
+          description: Project was not found for the authenticated owner
+        "503":
+          description: Project persistence is not configured
     put:
       operationId: updateProject
       security:
@@ -156,6 +197,15 @@ components:
         updatedAt:
           type: string
           format: date-time
+    ProjectList:
+      type: object
+      additionalProperties: false
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
     SiteModel:
       type: object
       required: [id, topic, siteTitle, tagline, theme, sections]
