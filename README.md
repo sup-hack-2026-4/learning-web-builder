@@ -59,6 +59,8 @@ psql $env:DATABASE_URL -f db/migrations/001_initial.sql
 - `GET /api/v1/projects`: 認証ユーザーの保存済みプロジェクトを更新日時順で一覧取得
 - `GET /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを再取得
 - `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新
+- `POST /api/v1/projects/{projectId}/quality-results`: 品質チェック結果を一括保存
+- `GET /api/v1/projects/{projectId}/quality-results`: 品質チェック履歴を新しい順で取得
 - DB未設定時も生成・ゲスト機能は起動し、保存APIだけが`503`を返します
 - ユーザーIDはClerkトークンから取得し、リクエスト本文からは受け取りません
 

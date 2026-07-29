@@ -36,12 +36,14 @@ func (authenticator stubAuthenticator) Optional(next http.Handler) http.Handler 
 }
 
 type stubProjectRepository struct {
-	record    projectpkg.Record
-	records   []projectpkg.Record
-	err       error
-	ownerID   string
-	projectID string
-	model     site.Model
+	record        projectpkg.Record
+	records       []projectpkg.Record
+	qualityInputs []projectpkg.QualityResultInput
+	quality       []projectpkg.QualityResult
+	err           error
+	ownerID       string
+	projectID     string
+	model         site.Model
 }
 
 func (repository *stubProjectRepository) Create(_ context.Context, ownerID string, model site.Model) (projectpkg.Record, error) {
@@ -66,6 +68,28 @@ func (repository *stubProjectRepository) Get(_ context.Context, ownerID, project
 func (repository *stubProjectRepository) List(_ context.Context, ownerID string) ([]projectpkg.Record, error) {
 	repository.ownerID = ownerID
 	return repository.records, repository.err
+}
+
+func (repository *stubProjectRepository) SaveQualityResults(
+	_ context.Context,
+	ownerID string,
+	projectID string,
+	inputs []projectpkg.QualityResultInput,
+) ([]projectpkg.QualityResult, error) {
+	repository.ownerID = ownerID
+	repository.projectID = projectID
+	repository.qualityInputs = inputs
+	return repository.quality, repository.err
+}
+
+func (repository *stubProjectRepository) ListQualityResults(
+	_ context.Context,
+	ownerID string,
+	projectID string,
+) ([]projectpkg.QualityResult, error) {
+	repository.ownerID = ownerID
+	repository.projectID = projectID
+	return repository.quality, repository.err
 }
 
 func TestHealth(t *testing.T) {
@@ -320,6 +344,86 @@ func TestGetProjectReturnsNotFoundForOtherOwner(t *testing.T) {
 	}
 	if repository.ownerID != "user_456" || repository.projectID != projectID {
 		t.Fatalf("expected owner-scoped lookup, got owner=%q project=%q", repository.ownerID, repository.projectID)
+	}
+}
+
+func TestSaveQualityResultsStoresValidatedSnapshot(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	now := time.Date(2026, time.July, 29, 13, 0, 0, 0, time.UTC)
+	repository := &stubProjectRepository{
+		quality: []projectpkg.QualityResult{
+			{
+				ID:        "22222222-2222-2222-2222-222222222222",
+				ProjectID: projectID,
+				CheckKey:  "alt",
+				Passed:    true,
+				Detail:    "表示中の画像に代替テキストがあります。",
+				CheckedAt: now,
+			},
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectID+"/quality-results",
+		strings.NewReader(`{"results":[{"checkKey":"alt","passed":true,"detail":"表示中の画像に代替テキストがあります。"}]}`),
+	)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "user_123" || repository.projectID != projectID {
+		t.Fatalf("expected owner-scoped save, got owner=%q project=%q", repository.ownerID, repository.projectID)
+	}
+	if len(repository.qualityInputs) != 1 || repository.qualityInputs[0].CheckKey != "alt" {
+		t.Fatalf("expected validated quality input, got %#v", repository.qualityInputs)
+	}
+	if !strings.Contains(response.Body.String(), `"checkKey":"alt"`) {
+		t.Fatalf("expected quality result response, got %s", response.Body.String())
+	}
+}
+
+func TestSaveQualityResultsRejectsDuplicateCheckKeys(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	repository := &stubProjectRepository{}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectID+"/quality-results",
+		strings.NewReader(`{"results":[{"checkKey":"alt","passed":false,"detail":"不足"},{"checkKey":"alt","passed":true,"detail":"修正済み"}]}`),
+	)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+	}
+	if len(repository.qualityInputs) != 0 {
+		t.Fatal("expected invalid snapshot not to reach repository")
+	}
+}
+
+func TestListQualityResultsReturnsNotFoundForOtherOwner(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	repository := &stubProjectRepository{err: projectpkg.ErrNotFound}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectID+"/quality-results", nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_456"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "user_456" || repository.projectID != projectID {
+		t.Fatalf("expected owner-scoped history lookup, got owner=%q project=%q", repository.ownerID, repository.projectID)
 	}
 }
 

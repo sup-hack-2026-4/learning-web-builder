@@ -13,6 +13,7 @@ import (
 type database interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 	Query(context.Context, string, ...any) (pgx.Rows, error)
+	Begin(context.Context) (pgx.Tx, error)
 }
 
 type PostgresRepository struct {
@@ -111,6 +112,96 @@ func (repository *PostgresRepository) List(ctx context.Context, ownerID string) 
 	return records, nil
 }
 
+func (repository *PostgresRepository) SaveQualityResults(
+	ctx context.Context,
+	ownerID string,
+	projectID string,
+	inputs []QualityResultInput,
+) ([]QualityResult, error) {
+	transaction, err := repository.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin quality result transaction: %w", err)
+	}
+	defer func() {
+		_ = transaction.Rollback(ctx)
+	}()
+
+	exists, err := projectExistsForOwner(ctx, transaction, ownerID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	results := make([]QualityResult, 0, len(inputs))
+	for _, input := range inputs {
+		detailsJSON, err := json.Marshal(map[string]string{"detail": input.Detail})
+		if err != nil {
+			return nil, fmt.Errorf("marshal quality result details: %w", err)
+		}
+		row := transaction.QueryRow(
+			ctx,
+			`INSERT INTO quality_results (project_id, check_key, passed, details)
+			 VALUES ($1, $2, $3, $4)
+			 RETURNING id, project_id, check_key, passed, details, checked_at`,
+			projectID,
+			input.CheckKey,
+			input.Passed,
+			detailsJSON,
+		)
+		result, err := scanQualityResult(row)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit quality results: %w", err)
+	}
+	return results, nil
+}
+
+func (repository *PostgresRepository) ListQualityResults(
+	ctx context.Context,
+	ownerID string,
+	projectID string,
+) ([]QualityResult, error) {
+	exists, err := projectExistsForOwner(ctx, repository.db, ownerID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	rows, err := repository.db.Query(
+		ctx,
+		`SELECT id, project_id, check_key, passed, details, checked_at
+		 FROM quality_results
+		 WHERE project_id = $1
+		 ORDER BY checked_at DESC, id DESC`,
+		projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list quality results: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]QualityResult, 0)
+	for rows.Next() {
+		result, err := scanQualityResult(rows)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate quality results: %w", err)
+	}
+	return results, nil
+}
+
 func scanRecord(row pgx.Row) (Record, error) {
 	var record Record
 	var siteJSON []byte
@@ -128,4 +219,46 @@ func scanRecord(row pgx.Row) (Record, error) {
 		return Record{}, fmt.Errorf("decode stored site model: %w", err)
 	}
 	return record, nil
+}
+
+type projectExistenceQuery interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func projectExistsForOwner(ctx context.Context, query projectExistenceQuery, ownerID, projectID string) (bool, error) {
+	var exists bool
+	if err := query.QueryRow(
+		ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM projects WHERE id = $1 AND clerk_user_id = $2
+		 )`,
+		projectID,
+		ownerID,
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check project ownership: %w", err)
+	}
+	return exists, nil
+}
+
+func scanQualityResult(row pgx.Row) (QualityResult, error) {
+	var result QualityResult
+	var detailsJSON []byte
+	if err := row.Scan(
+		&result.ID,
+		&result.ProjectID,
+		&result.CheckKey,
+		&result.Passed,
+		&detailsJSON,
+		&result.CheckedAt,
+	); err != nil {
+		return QualityResult{}, fmt.Errorf("scan quality result: %w", err)
+	}
+	var details struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(detailsJSON, &details); err != nil {
+		return QualityResult{}, fmt.Errorf("decode quality result details: %w", err)
+	}
+	result.Detail = details.Detail
+	return result, nil
 }
