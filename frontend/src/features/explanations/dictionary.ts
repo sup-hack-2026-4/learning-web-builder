@@ -5,13 +5,6 @@ export type Explanation = {
   why: string;
 };
 
-const sectionExplanation: Explanation = {
-  title: "section（内容のまとまり）",
-  html: "関連する見出しと文章をsectionでまとめています。",
-  css: "余白は.section、横幅は.section-innerで役割を分けています。",
-  why: "構造と見た目を分けると、内容を増やしても同じ規則で整えられます。",
-};
-
 export const explanationDictionary: Record<string, Explanation> = {
   "site-header": {
     title: "header（サイト上部）",
@@ -21,13 +14,28 @@ export const explanationDictionary: Record<string, Explanation> = {
   },
   hero: {
     title: "h1（ページの主題）",
-    html: "ページ全体の主題なのでh1を1つだけ使います。",
-    css: "clampで画面幅に合わせて文字サイズを変えています。",
-    why: "検索エンジンや支援技術にも、ページの中心テーマを正しく伝えるためです。",
+    html: "ページ全体の主題なのでh1を1つだけ使います。画像プレースホルダーも表示されます。",
+    css: ".section-heroだけ背景にグラデーションと文字色の反転を指定し、他のセクションと視覚的に分けています。",
+    why: "検索エンジンや支援技術にも、ページの中心テーマを正しく伝えるためです。h1は1ページに1つだけ使うのが構造上のルールです。",
   },
-  about: sectionExplanation,
-  features: sectionExplanation,
-  contact: sectionExplanation,
+  about: {
+    title: "about（私たちについてセクション）",
+    html: "h2の見出しと本文、画像の代わりのプレースホルダーを.sectionでまとめています。",
+    css: "about専用のCSSは無く、他の内容セクションと同じ.sectionの余白ルール(padding)と.section-innerの横幅制限(最大980px)に従っています。",
+    why: "「誰に」「何を」伝えるサイトなのかを最初の内容セクションとして端的に説明する役割なので、装飾より文章の分かりやすさを優先しています。",
+  },
+  features: {
+    title: "features（3つの魅力セクション）",
+    html: "aboutと同じsection構造ですが、複数の魅力を短い文章で伝える内容が入ります。",
+    css: ".section-featuresだけ背景色を白(#fff)に指定しており、前後のセクションと視覚的に区切られます。",
+    why: "読み手が内容を素早く比較・理解できるよう、他のセクションと背景色を変えて目立たせているためです。",
+  },
+  contact: {
+    title: "contact（基本情報セクション）",
+    html: "他のセクションと異なり、画像プレースホルダーを出力していません(section.kindがcontactの場合だけ画像用のdivを空文字にしています)。",
+    css: "about/featuresと同じ.sectionの余白ルールを使っており、contact専用のCSSはありません。",
+    why: "所在地や営業時間などの事実情報を扱うセクションなので、装飾的な画像より情報の正確さを優先しています。フォーム機能自体はMVPの対象外です。",
+  },
   "site-footer": {
     title: "footer（補足情報）",
     html: "ページ末尾の補足をfooterに置いています。",
@@ -35,4 +43,3 @@ export const explanationDictionary: Record<string, Explanation> = {
     why: "主要内容と補足情報の優先順位を視覚的にも示すためです。",
   },
 };
-
