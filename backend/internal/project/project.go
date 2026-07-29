@@ -22,4 +22,6 @@ type Record struct {
 type Repository interface {
 	Create(context.Context, string, site.Model) (Record, error)
 	Update(context.Context, string, string, site.Model) (Record, error)
+	Get(context.Context, string, string) (Record, error)
+	List(context.Context, string) ([]Record, error)
 }

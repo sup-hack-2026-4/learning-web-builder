@@ -51,6 +51,8 @@ func NewRouter(config Config) http.Handler {
 		api.With(optionalAuthentication(config.Authenticator)).Get("/session", session)
 		api.Post("/generate", generate(config.Generator))
 		api.With(optionalAuthentication(config.Authenticator)).Post("/projects", createProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects", listProjects(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}", getProject(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Put("/projects/{projectId}", updateProject(config.Projects))
 	})
 
