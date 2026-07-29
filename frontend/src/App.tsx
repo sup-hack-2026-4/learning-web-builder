@@ -61,8 +61,6 @@ export default function App() {
     },
     onSuccess: ({ site: generatedSite, provider }) => {
       setSite(generatedSite, provider);
-      setTouchedThemeKeys([]);
-      setReason("");
       setNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
     },
   });
@@ -110,13 +108,6 @@ export default function App() {
     setReason("");
   };
 
-  const resetBuilder = () => {
-    reset();
-    setTouchedThemeKeys([]);
-    setReason("");
-    setNotice("初期サンプルへ戻しました。");
-  };
-
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
@@ -125,7 +116,7 @@ export default function App() {
           <h1 className="text-lg font-black text-slate-900">答えではなく、考え方を持ち帰る。</h1>
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={resetBuilder}><RotateCcw className="mr-2 size-4" />リセット</Button>
+          <Button variant="ghost" onClick={() => { reset(); setNotice("初期サンプルへ戻しました。"); }}><RotateCcw className="mr-2 size-4" />リセット</Button>
           <Button onClick={() => void exportProject(site, notes, aiUsage)}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
       </header>
