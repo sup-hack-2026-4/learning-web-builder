@@ -164,6 +164,65 @@ paths:
           description: Project was not found for the authenticated owner
         "503":
           description: Project persistence is not configured
+  /projects/{projectId}/quality-results:
+    get:
+      operationId: listQualityResults
+      security:
+        - clerkBearer: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Quality check history ordered by most recently checked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityResultList"
+        "400":
+          description: Invalid project ID
+        "401":
+          description: Authentication is required
+        "404":
+          description: Project was not found for the authenticated owner
+        "503":
+          description: Project persistence is not configured
+    post:
+      operationId: saveQualityResults
+      security:
+        - clerkBearer: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveQualityResultsRequest"
+      responses:
+        "201":
+          description: Quality check snapshot was saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityResultList"
+        "400":
+          description: Invalid project ID or quality results
+        "401":
+          description: Authentication is required
+        "404":
+          description: Project was not found for the authenticated owner
+        "503":
+          description: Project persistence is not configured
 components:
   securitySchemes:
     clerkBearer:
@@ -206,6 +265,59 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Project"
+    SaveQualityResultsRequest:
+      type: object
+      additionalProperties: false
+      required: [results]
+      properties:
+        results:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [checkKey, passed, detail]
+            properties:
+              checkKey:
+                type: string
+                enum: [headings, alt, mobile, axe]
+              passed:
+                type: boolean
+              detail:
+                type: string
+                minLength: 1
+                maxLength: 1000
+    QualityResult:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, checkKey, passed, detail, checkedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        checkKey:
+          type: string
+          enum: [headings, alt, mobile, axe]
+        passed:
+          type: boolean
+        detail:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+    QualityResultList:
+      type: object
+      additionalProperties: false
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/QualityResult"
     SiteModel:
       type: object
       required: [id, topic, siteTitle, tagline, theme, sections]
