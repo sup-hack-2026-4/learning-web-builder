@@ -7,3 +7,16 @@ test("題材を入力し、静的フォールバックでサイトを生成で�
   await expect(page.getByRole("heading", { name: "学校の写真部", exact: true })).toBeVisible();
   await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
 });
+
+test("リセットすると未記録のテーマ変更と理由を破棄する", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+
+  await page.getByRole("button", { name: "リセット" }).click();
+
+  await expect(page.getByLabel("なぜこの変更をしますか？")).toHaveValue("");
+  await page.getByLabel("なぜこの変更をしますか？").fill("別の変更を記録したいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+});
