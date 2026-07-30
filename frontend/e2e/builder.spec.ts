@@ -7,3 +7,10 @@ test("題材を入力し、静的フォールバックでサイトを生成で�
   await expect(page.getByRole("heading", { name: "学校の写真部", exact: true })).toBeVisible();
   await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
 });
+
+test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
+});
