@@ -9,6 +9,7 @@ type BuilderState = {
   notes: LearningNote[];
   aiUsage: AiUsage[];
   setSite: (site: SiteModel, provider: AiUsage["provider"]) => void;
+  loadSite: (site: SiteModel) => void;
   selectElement: (id: string) => void;
   updateTheme: (key: keyof SiteModel["theme"], value: string | number, reason: string) => void;
   updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string) => void;
@@ -31,6 +32,13 @@ export const useBuilderStore = create<BuilderState>()(
           selectedElementId: "hero",
           notes: [],
           aiUsage: [{ provider, purpose: "サイト構成と仮文章の生成", generatedAt: new Date().toISOString() }],
+        }),
+      loadSite: (site) =>
+        set({
+          site,
+          selectedElementId: "hero",
+          notes: [],
+          aiUsage: [],
         }),
       selectElement: (selectedElementId) => set({ selectedElementId }),
       updateTheme: (key, value, reason) =>
