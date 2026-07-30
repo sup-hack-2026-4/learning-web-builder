@@ -17,7 +17,7 @@ test("プレビュー内の要素をクリックすると選択状態になり�
   const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
   await frame.locator("[data-builder-id='about']").click();
 
-  await expect(page.getByText("選択中:")).toBeVisible();
+  await expect(page.getByText("選択中: 私たちについて", { exact: true })).toBeVisible();
   await expect(page.getByText("なぜこのコード？")).toBeVisible();
 });
 
@@ -47,4 +47,11 @@ test("提出物ZIPをダウンロードできる", async ({ page }) => {
   const download = await downloadPromise;
 
   expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+});
+
+test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
 });

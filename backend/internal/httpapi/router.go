@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/project"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
@@ -20,6 +21,7 @@ type Config struct {
 	AllowedOrigins []string
 	Authenticator  SessionAuthenticator
 	Generator      SiteGenerator
+	Projects       project.Repository
 }
 
 type SessionAuthenticator interface {
@@ -48,6 +50,12 @@ func NewRouter(config Config) http.Handler {
 		})
 		api.With(optionalAuthentication(config.Authenticator)).Get("/session", session)
 		api.Post("/generate", generate(config.Generator))
+		api.With(optionalAuthentication(config.Authenticator)).Post("/projects", createProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects", listProjects(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}", getProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Put("/projects/{projectId}", updateProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Post("/projects/{projectId}/quality-results", saveQualityResults(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}/quality-results", listQualityResults(config.Projects))
 	})
 
 	return router

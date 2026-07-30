@@ -6,8 +6,11 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SitePreview } from "@/components/site-preview";
+import { AuthControls } from "@/features/auth/auth-controls";
+import { clerkConfig } from "@/features/auth/config";
 import { explanationDictionary } from "@/features/explanations/dictionary";
 import { exportProject } from "@/features/export/export-project";
+import { ProjectControls } from "@/features/projects/project-controls";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
 import { createSampleSite } from "@/features/site-model/sample";
 import { useBuilderStore } from "@/features/site-model/store";
@@ -16,8 +19,9 @@ import { generateSite } from "@/lib/api";
 export default function App() {
   const [topic, setTopic] = useState("");
   const [reason, setReason] = useState("");
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
-  const { site, selectedElementId, notes, aiUsage, setSite, selectElement, updateTheme, updateSection, addNote, reset } = useBuilderStore();
+  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, updateTheme, updateSection, addNote, reset } = useBuilderStore();
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
@@ -33,6 +37,7 @@ export default function App() {
     },
     onSuccess: ({ site: generatedSite, provider }) => {
       setSite(generatedSite, provider);
+      setCurrentProjectId(null);
       setNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
     },
   });
@@ -66,8 +71,17 @@ export default function App() {
           <p className="text-xs font-bold tracking-[0.2em] text-blue-600">LEARNING WEB BUILDER</p>
           <h1 className="text-lg font-black text-slate-900">答えではなく、考え方を持ち帰る。</h1>
         </div>
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => { reset(); setNotice("初期サンプルへ戻しました。"); }}><RotateCcw className="mr-2 size-4" />リセット</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <AuthControls enabled={clerkConfig.enabled} />
+          <ProjectControls
+            enabled={clerkConfig.enabled}
+            site={site}
+            currentProjectId={currentProjectId}
+            onProjectChange={setCurrentProjectId}
+            onLoad={loadSite}
+            onNotice={setNotice}
+          />
+          <Button variant="ghost" onClick={() => { reset(); setCurrentProjectId(null); setNotice("初期サンプルへ戻しました。"); }}><RotateCcw className="mr-2 size-4" />リセット</Button>
           <Button onClick={() => void exportProject(site, notes, aiUsage)}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
       </header>
