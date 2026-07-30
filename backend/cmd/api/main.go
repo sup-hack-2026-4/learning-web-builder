@@ -33,7 +33,7 @@ func main() {
 	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
 		geminiClient, err := gemini.NewClient(gemini.Config{
 			APIKey:     apiKey,
-			Model:      envOr("GEMINI_MODEL", "gemini-2.5-flash"),
+			Model:      envOr("GEMINI_MODEL", "gemini-3.5-flash"),
 			HTTPClient: &http.Client{Timeout: 20 * time.Second},
 		})
 		if err != nil {
