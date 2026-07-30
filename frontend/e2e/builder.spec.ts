@@ -37,3 +37,10 @@ test("サイトを再生成すると未記録のテーマ変更と理由を破�
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
   await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
 });
+
+test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
+});

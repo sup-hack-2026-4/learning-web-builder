@@ -7,31 +7,41 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
 const (
-	defaultBaseURL      = "https://generativelanguage.googleapis.com"
-	maxResponseBodySize = 512 << 10
+	defaultBaseURL          = "https://generativelanguage.googleapis.com"
+	maxResponseBodySize     = 512 << 10
+	maxGenerateAttempts     = 3
+	maxGenerationDuration   = 24 * time.Second
+	maxPrimaryModelDuration = 8 * time.Second
 )
 
 type Config struct {
-	APIKey     string
-	Model      string
-	BaseURL    string
-	HTTPClient *http.Client
+	APIKey        string
+	Model         string
+	FallbackModel string
+	BaseURL       string
+	HTTPClient    *http.Client
 }
 
 type Client struct {
-	apiKey     string
-	model      string
-	baseURL    string
-	httpClient *http.Client
+	apiKey              string
+	model               string
+	fallbackModel       string
+	baseURL             string
+	httpClient          *http.Client
+	retryDelay          func(int) time.Duration
+	generationTimeout   time.Duration
+	primaryModelTimeout time.Duration
 }
 
 type content struct {
@@ -49,17 +59,33 @@ type generateContentRequest struct {
 }
 
 type generationConfig struct {
-	ResponseMIMEType string         `json:"responseMimeType"`
-	ResponseSchema   map[string]any `json:"responseSchema"`
-	CandidateCount   int            `json:"candidateCount"`
-	MaxOutputTokens  int            `json:"maxOutputTokens"`
-	Temperature      float64        `json:"temperature"`
+	ResponseMIMEType   string         `json:"responseMimeType"`
+	ResponseJSONSchema map[string]any `json:"responseJsonSchema"`
+	CandidateCount     int            `json:"candidateCount"`
+	MaxOutputTokens    int            `json:"maxOutputTokens"`
+	Temperature        float64        `json:"temperature"`
 }
 
 type generateContentResponse struct {
 	Candidates []struct {
 		Content content `json:"content"`
 	} `json:"candidates"`
+}
+
+type errorResponse struct {
+	Error struct {
+		Message string `json:"message"`
+		Status  string `json:"status"`
+	} `json:"error"`
+}
+
+type geminiHTTPError struct {
+	statusCode int
+	details    string
+}
+
+func (err *geminiHTTPError) Error() string {
+	return err.details
 }
 
 type generatedModel struct {
@@ -73,11 +99,16 @@ func NewClient(config Config) (*Client, error) {
 	if strings.TrimSpace(config.APIKey) == "" {
 		return nil, errors.New("Gemini API key is required")
 	}
-	if strings.TrimSpace(config.Model) == "" {
+	model := strings.TrimSpace(config.Model)
+	if model == "" {
 		return nil, errors.New("Gemini model is required")
 	}
 	if config.HTTPClient == nil {
 		return nil, errors.New("HTTP client is required")
+	}
+	fallbackModel := strings.TrimSpace(config.FallbackModel)
+	if fallbackModel == model {
+		fallbackModel = ""
 	}
 
 	baseURL := strings.TrimRight(config.BaseURL, "/")
@@ -90,10 +121,14 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	return &Client{
-		apiKey:     config.APIKey,
-		model:      config.Model,
-		baseURL:    baseURL,
-		httpClient: config.HTTPClient,
+		apiKey:              config.APIKey,
+		model:               model,
+		fallbackModel:       fallbackModel,
+		baseURL:             baseURL,
+		httpClient:          config.HTTPClient,
+		retryDelay:          defaultRetryDelay,
+		generationTimeout:   maxGenerationDuration,
+		primaryModelTimeout: maxPrimaryModelDuration,
 	}, nil
 }
 
@@ -102,11 +137,11 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 		SystemInstruction: content{Parts: []part{{Text: systemPrompt}}},
 		Contents:          []content{{Parts: []part{{Text: fmt.Sprintf("題材: %q", topic)}}}},
 		GenerationConfig: generationConfig{
-			ResponseMIMEType: "application/json",
-			ResponseSchema:   siteModelResponseSchema(),
-			CandidateCount:   1,
-			MaxOutputTokens:  4096,
-			Temperature:      0.7,
+			ResponseMIMEType:   "application/json",
+			ResponseJSONSchema: siteModelJSONSchema(),
+			CandidateCount:     1,
+			MaxOutputTokens:    4096,
+			Temperature:        0.7,
 		},
 	}
 
@@ -115,33 +150,36 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 		return site.Model{}, fmt.Errorf("encode Gemini request: %w", err)
 	}
 
-	endpoint := fmt.Sprintf(
-		"%s/v1beta/models/%s:generateContent",
-		client.baseURL,
-		url.PathEscape(client.model),
-	)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encodedRequest))
-	if err != nil {
-		return site.Model{}, fmt.Errorf("create Gemini request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("x-goog-api-key", client.apiKey)
+	generationCtx, cancelGeneration := context.WithTimeout(ctx, client.generationTimeout)
+	defer cancelGeneration()
 
-	response, err := client.httpClient.Do(request)
-	if err != nil {
-		return site.Model{}, fmt.Errorf("call Gemini: %w", err)
+	var primaryCtx context.Context = generationCtx
+	cancelPrimary := func() {}
+	if client.fallbackModel != "" {
+		primaryCtx, cancelPrimary = context.WithTimeout(generationCtx, client.primaryModelTimeout)
 	}
-	defer response.Body.Close()
+	responseBody, err := client.generateContent(primaryCtx, client.model, encodedRequest)
+	primaryTimedOut := errors.Is(primaryCtx.Err(), context.DeadlineExceeded)
+	cancelPrimary()
 
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBodySize+1))
+	if err != nil &&
+		client.fallbackModel != "" &&
+		generationCtx.Err() == nil &&
+		(isFallbackEligible(err) || primaryTimedOut) {
+		primaryErr := err
+		responseBody, err = client.generateContent(generationCtx, client.fallbackModel, encodedRequest)
+		if err != nil {
+			return site.Model{}, fmt.Errorf(
+				"Gemini primary model %s failed: %v; fallback model %s failed: %w",
+				client.model,
+				primaryErr,
+				client.fallbackModel,
+				err,
+			)
+		}
+	}
 	if err != nil {
-		return site.Model{}, fmt.Errorf("read Gemini response: %w", err)
-	}
-	if len(responseBody) > maxResponseBodySize {
-		return site.Model{}, errors.New("Gemini response is too large")
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return site.Model{}, fmt.Errorf("Gemini returned HTTP %d", response.StatusCode)
+		return site.Model{}, err
 	}
 
 	var envelope generateContentResponse
@@ -180,6 +218,119 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 	return model, nil
 }
 
+func (client *Client) generateContent(ctx context.Context, model string, encodedRequest []byte) ([]byte, error) {
+	endpoint := fmt.Sprintf(
+		"%s/v1beta/models/%s:generateContent",
+		client.baseURL,
+		url.PathEscape(model),
+	)
+	var responseBody []byte
+	for attempt := 0; attempt < maxGenerateAttempts; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encodedRequest))
+		if err != nil {
+			return nil, fmt.Errorf("create Gemini request: %w", err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("x-goog-api-key", client.apiKey)
+
+		response, err := client.httpClient.Do(request)
+		if err != nil {
+			requestErr := fmt.Errorf("call Gemini: %w", err)
+			if ctx.Err() != nil || attempt == maxGenerateAttempts-1 {
+				return nil, requestErr
+			}
+			if err := waitForRetry(ctx, client.retryDelay(attempt)); err != nil {
+				return nil, fmt.Errorf("wait to retry Gemini: %w", err)
+			}
+			continue
+		}
+
+		responseBody, err = io.ReadAll(io.LimitReader(response.Body, maxResponseBodySize+1))
+		response.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read Gemini response: %w", err)
+		}
+		if len(responseBody) > maxResponseBodySize {
+			return nil, errors.New("Gemini response is too large")
+		}
+		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			break
+		}
+
+		responseErr := newHTTPError(response.StatusCode, responseBody)
+		if !isRetryableStatus(response.StatusCode) || attempt == maxGenerateAttempts-1 {
+			return nil, responseErr
+		}
+		if err := waitForRetry(ctx, client.retryDelay(attempt)); err != nil {
+			return nil, fmt.Errorf("wait to retry Gemini: %w", err)
+		}
+	}
+
+	return responseBody, nil
+}
+
+func defaultRetryDelay(attempt int) time.Duration {
+	exponentialDelay := 200 * time.Millisecond * time.Duration(1<<attempt)
+	jitter := time.Duration(rand.IntN(100)) * time.Millisecond
+	return exponentialDelay + jitter
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isRetryableStatus(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
+}
+
+func isFallbackEligible(err error) bool {
+	var responseErr *geminiHTTPError
+	return errors.As(err, &responseErr) && isRetryableStatus(responseErr.statusCode)
+}
+
+func newHTTPError(statusCode int, responseBody []byte) error {
+	var envelope errorResponse
+	if err := json.Unmarshal(responseBody, &envelope); err != nil {
+		return &geminiHTTPError{
+			statusCode: statusCode,
+			details:    fmt.Sprintf("Gemini returned HTTP %d", statusCode),
+		}
+	}
+
+	status := strings.TrimSpace(envelope.Error.Status)
+	message := strings.Join(strings.Fields(envelope.Error.Message), " ")
+	messageRunes := []rune(message)
+	if len(messageRunes) > 300 {
+		message = string(messageRunes[:300]) + "..."
+	}
+	switch {
+	case status != "" && message != "":
+		return &geminiHTTPError{
+			statusCode: statusCode,
+			details:    fmt.Sprintf("Gemini returned HTTP %d status=%s message=%s", statusCode, status, message),
+		}
+	case status != "":
+		return &geminiHTTPError{
+			statusCode: statusCode,
+			details:    fmt.Sprintf("Gemini returned HTTP %d status=%s", statusCode, status),
+		}
+	default:
+		return &geminiHTTPError{
+			statusCode: statusCode,
+			details:    fmt.Sprintf("Gemini returned HTTP %d", statusCode),
+		}
+	}
+}
+
 func decodeStrictJSON(reader io.Reader, destination any) error {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
@@ -201,41 +352,41 @@ const systemPrompt = `あなたは学習用の静的紹介サイトの構成案�
 hero、about、features、gallery、contactから2〜8個のセクションを作り、セクションIDは重複させないでください。
 出力は指定されたJSONスキーマだけに従ってください。`
 
-func siteModelResponseSchema() map[string]any {
+func siteModelJSONSchema() map[string]any {
 	return map[string]any{
-		"type":                 "OBJECT",
+		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{"siteTitle", "tagline", "theme", "sections"},
 		"properties": map[string]any{
-			"siteTitle": map[string]any{"type": "STRING"},
-			"tagline":   map[string]any{"type": "STRING"},
+			"siteTitle": map[string]any{"type": "string"},
+			"tagline":   map[string]any{"type": "string"},
 			"theme": map[string]any{
-				"type":                 "OBJECT",
+				"type":                 "object",
 				"additionalProperties": false,
 				"required":             []string{"primary", "background", "text", "fontFamily", "spacing"},
 				"properties": map[string]any{
-					"primary":    map[string]any{"type": "STRING"},
-					"background": map[string]any{"type": "STRING"},
-					"text":       map[string]any{"type": "STRING"},
-					"fontFamily": map[string]any{"type": "STRING", "enum": []string{"sans", "serif", "rounded"}},
-					"spacing":    map[string]any{"type": "INTEGER", "minimum": 2, "maximum": 10},
+					"primary":    map[string]any{"type": "string"},
+					"background": map[string]any{"type": "string"},
+					"text":       map[string]any{"type": "string"},
+					"fontFamily": map[string]any{"type": "string", "enum": []string{"sans", "serif", "rounded"}},
+					"spacing":    map[string]any{"type": "integer", "minimum": 2, "maximum": 10},
 				},
 			},
 			"sections": map[string]any{
-				"type":     "ARRAY",
+				"type":     "array",
 				"minItems": 2,
 				"maxItems": 8,
 				"items": map[string]any{
-					"type":                 "OBJECT",
+					"type":                 "object",
 					"additionalProperties": false,
 					"required":             []string{"id", "kind", "title", "body", "imageAlt", "visible"},
 					"properties": map[string]any{
-						"id":       map[string]any{"type": "STRING"},
-						"kind":     map[string]any{"type": "STRING", "enum": []string{"hero", "about", "features", "gallery", "contact"}},
-						"title":    map[string]any{"type": "STRING"},
-						"body":     map[string]any{"type": "STRING"},
-						"imageAlt": map[string]any{"type": "STRING"},
-						"visible":  map[string]any{"type": "BOOLEAN"},
+						"id":       map[string]any{"type": "string"},
+						"kind":     map[string]any{"type": "string", "enum": []string{"hero", "about", "features", "gallery", "contact"}},
+						"title":    map[string]any{"type": "string"},
+						"body":     map[string]any{"type": "string"},
+						"imageAlt": map[string]any{"type": "string"},
+						"visible":  map[string]any{"type": "boolean"},
 					},
 				},
 			},

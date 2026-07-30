@@ -9,6 +9,7 @@ type BuilderState = {
   notes: LearningNote[];
   aiUsage: AiUsage[];
   setSite: (site: SiteModel, provider: AiUsage["provider"]) => void;
+  loadSite: (site: SiteModel) => void;
   selectElement: (id: string) => void;
   // テーマの更新はプレビュー反映のみ。学習メモはApp側の明示的な記録操作でaddNoteする。
   previewTheme: (key: keyof SiteModel["theme"], value: string | number) => void;
@@ -32,6 +33,13 @@ export const useBuilderStore = create<BuilderState>()(
           selectedElementId: "hero",
           notes: [],
           aiUsage: [{ provider, purpose: "サイト構成と仮文章の生成", generatedAt: new Date().toISOString() }],
+        }),
+      loadSite: (site) =>
+        set({
+          site,
+          selectedElementId: "hero",
+          notes: [],
+          aiUsage: [],
         }),
       selectElement: (selectedElementId) => set({ selectedElementId }),
       previewTheme: (key, value) =>

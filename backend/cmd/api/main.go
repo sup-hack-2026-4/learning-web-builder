@@ -32,9 +32,10 @@ func main() {
 	}
 	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
 		geminiClient, err := gemini.NewClient(gemini.Config{
-			APIKey:     apiKey,
-			Model:      envOr("GEMINI_MODEL", "gemini-2.5-flash"),
-			HTTPClient: &http.Client{Timeout: 20 * time.Second},
+			APIKey:        apiKey,
+			Model:         envOr("GEMINI_MODEL", "gemini-3.5-flash"),
+			FallbackModel: envOr("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite"),
+			HTTPClient:    &http.Client{Timeout: 20 * time.Second},
 		})
 		if err != nil {
 			log.Fatalf("configure Gemini client: %v", err)
