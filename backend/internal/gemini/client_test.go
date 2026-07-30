@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGenerateReturnsValidatedModel(t *testing.T) {
@@ -106,7 +107,9 @@ func TestGenerateRejectsUnknownGeneratedField(t *testing.T) {
 }
 
 func TestGenerateRejectsHTTPError(t *testing.T) {
+	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requestCount++
 		writer.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"error": map[string]any{
@@ -134,6 +137,58 @@ func TestGenerateRejectsHTTPError(t *testing.T) {
 		!strings.Contains(err.Error(), "status=INVALID_ARGUMENT") ||
 		!strings.Contains(err.Error(), "message=Invalid JSON payload received. Unknown name responseSchema.") {
 		t.Fatalf("expected HTTP error, got %v", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("expected non-retryable error to make one request, got %d", requestCount)
+	}
+}
+
+func TestGenerateRetriesTemporaryHTTPError(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		if requestCount < maxGenerateAttempts {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"error": map[string]any{
+					"message": "The model is currently experiencing high demand.",
+					"status":  "UNAVAILABLE",
+				},
+			})
+			return
+		}
+		writeCandidate(t, writer, `{
+			"siteTitle":"学校の写真部",
+			"tagline":"写真で学校の日常を記録します。",
+			"theme":{"primary":"#2563eb","background":"#f8fafc","text":"#172033","fontFamily":"sans","spacing":6},
+			"sections":[
+				{"id":"hero","kind":"hero","title":"学校の写真部","body":"活動を紹介します。","imageAlt":"","visible":true},
+				{"id":"about","kind":"about","title":"私たちについて","body":"写真を学んでいます。","imageAlt":"撮影中の部員","visible":true}
+			]
+		}`)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		APIKey:     "test-key",
+		Model:      "gemini-test",
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.retryDelay = func(int) time.Duration { return 0 }
+
+	model, err := client.Generate(context.Background(), "学校の写真部")
+	if err != nil {
+		t.Fatalf("generate after retries: %v", err)
+	}
+	if model.SiteTitle != "学校の写真部" {
+		t.Fatalf("unexpected model: %#v", model)
+	}
+	if requestCount != maxGenerateAttempts {
+		t.Fatalf("expected %d requests, got %d", maxGenerateAttempts, requestCount)
 	}
 }
 
