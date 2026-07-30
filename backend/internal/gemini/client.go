@@ -49,17 +49,24 @@ type generateContentRequest struct {
 }
 
 type generationConfig struct {
-	ResponseMIMEType string         `json:"responseMimeType"`
-	ResponseSchema   map[string]any `json:"responseSchema"`
-	CandidateCount   int            `json:"candidateCount"`
-	MaxOutputTokens  int            `json:"maxOutputTokens"`
-	Temperature      float64        `json:"temperature"`
+	ResponseMIMEType   string         `json:"responseMimeType"`
+	ResponseJSONSchema map[string]any `json:"responseJsonSchema"`
+	CandidateCount     int            `json:"candidateCount"`
+	MaxOutputTokens    int            `json:"maxOutputTokens"`
+	Temperature        float64        `json:"temperature"`
 }
 
 type generateContentResponse struct {
 	Candidates []struct {
 		Content content `json:"content"`
 	} `json:"candidates"`
+}
+
+type errorResponse struct {
+	Error struct {
+		Message string `json:"message"`
+		Status  string `json:"status"`
+	} `json:"error"`
 }
 
 type generatedModel struct {
@@ -102,11 +109,11 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 		SystemInstruction: content{Parts: []part{{Text: systemPrompt}}},
 		Contents:          []content{{Parts: []part{{Text: fmt.Sprintf("題材: %q", topic)}}}},
 		GenerationConfig: generationConfig{
-			ResponseMIMEType: "application/json",
-			ResponseSchema:   siteModelResponseSchema(),
-			CandidateCount:   1,
-			MaxOutputTokens:  4096,
-			Temperature:      0.7,
+			ResponseMIMEType:   "application/json",
+			ResponseJSONSchema: siteModelJSONSchema(),
+			CandidateCount:     1,
+			MaxOutputTokens:    4096,
+			Temperature:        0.7,
 		},
 	}
 
@@ -141,7 +148,7 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 		return site.Model{}, errors.New("Gemini response is too large")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return site.Model{}, fmt.Errorf("Gemini returned HTTP %d", response.StatusCode)
+		return site.Model{}, newHTTPError(response.StatusCode, responseBody)
 	}
 
 	var envelope generateContentResponse
@@ -180,6 +187,28 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 	return model, nil
 }
 
+func newHTTPError(statusCode int, responseBody []byte) error {
+	var envelope errorResponse
+	if err := json.Unmarshal(responseBody, &envelope); err != nil {
+		return fmt.Errorf("Gemini returned HTTP %d", statusCode)
+	}
+
+	status := strings.TrimSpace(envelope.Error.Status)
+	message := strings.Join(strings.Fields(envelope.Error.Message), " ")
+	messageRunes := []rune(message)
+	if len(messageRunes) > 300 {
+		message = string(messageRunes[:300]) + "..."
+	}
+	switch {
+	case status != "" && message != "":
+		return fmt.Errorf("Gemini returned HTTP %d status=%s message=%s", statusCode, status, message)
+	case status != "":
+		return fmt.Errorf("Gemini returned HTTP %d status=%s", statusCode, status)
+	default:
+		return fmt.Errorf("Gemini returned HTTP %d", statusCode)
+	}
+}
+
 func decodeStrictJSON(reader io.Reader, destination any) error {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
@@ -201,41 +230,41 @@ const systemPrompt = `あなたは学習用の静的紹介サイトの構成案�
 hero、about、features、gallery、contactから2〜8個のセクションを作り、セクションIDは重複させないでください。
 出力は指定されたJSONスキーマだけに従ってください。`
 
-func siteModelResponseSchema() map[string]any {
+func siteModelJSONSchema() map[string]any {
 	return map[string]any{
-		"type":                 "OBJECT",
+		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{"siteTitle", "tagline", "theme", "sections"},
 		"properties": map[string]any{
-			"siteTitle": map[string]any{"type": "STRING"},
-			"tagline":   map[string]any{"type": "STRING"},
+			"siteTitle": map[string]any{"type": "string"},
+			"tagline":   map[string]any{"type": "string"},
 			"theme": map[string]any{
-				"type":                 "OBJECT",
+				"type":                 "object",
 				"additionalProperties": false,
 				"required":             []string{"primary", "background", "text", "fontFamily", "spacing"},
 				"properties": map[string]any{
-					"primary":    map[string]any{"type": "STRING"},
-					"background": map[string]any{"type": "STRING"},
-					"text":       map[string]any{"type": "STRING"},
-					"fontFamily": map[string]any{"type": "STRING", "enum": []string{"sans", "serif", "rounded"}},
-					"spacing":    map[string]any{"type": "INTEGER", "minimum": 2, "maximum": 10},
+					"primary":    map[string]any{"type": "string"},
+					"background": map[string]any{"type": "string"},
+					"text":       map[string]any{"type": "string"},
+					"fontFamily": map[string]any{"type": "string", "enum": []string{"sans", "serif", "rounded"}},
+					"spacing":    map[string]any{"type": "integer", "minimum": 2, "maximum": 10},
 				},
 			},
 			"sections": map[string]any{
-				"type":     "ARRAY",
+				"type":     "array",
 				"minItems": 2,
 				"maxItems": 8,
 				"items": map[string]any{
-					"type":                 "OBJECT",
+					"type":                 "object",
 					"additionalProperties": false,
 					"required":             []string{"id", "kind", "title", "body", "imageAlt", "visible"},
 					"properties": map[string]any{
-						"id":       map[string]any{"type": "STRING"},
-						"kind":     map[string]any{"type": "STRING", "enum": []string{"hero", "about", "features", "gallery", "contact"}},
-						"title":    map[string]any{"type": "STRING"},
-						"body":     map[string]any{"type": "STRING"},
-						"imageAlt": map[string]any{"type": "STRING"},
-						"visible":  map[string]any{"type": "BOOLEAN"},
+						"id":       map[string]any{"type": "string"},
+						"kind":     map[string]any{"type": "string", "enum": []string{"hero", "about", "features", "gallery", "contact"}},
+						"title":    map[string]any{"type": "string"},
+						"body":     map[string]any{"type": "string"},
+						"imageAlt": map[string]any{"type": "string"},
+						"visible":  map[string]any{"type": "boolean"},
 					},
 				},
 			},

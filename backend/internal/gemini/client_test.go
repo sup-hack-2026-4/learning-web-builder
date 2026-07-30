@@ -22,8 +22,22 @@ func TestGenerateReturnsValidatedModel(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if _, exists := body["generationConfig"]; !exists {
+		generationConfig, ok := body["generationConfig"].(map[string]any)
+		if !ok {
 			t.Error("expected generationConfig")
+		}
+		if _, exists := generationConfig["responseSchema"]; exists {
+			t.Error("responseSchema must not be sent")
+		}
+		responseSchema, ok := generationConfig["responseJsonSchema"].(map[string]any)
+		if !ok {
+			t.Fatal("expected responseJsonSchema")
+		}
+		if responseSchema["type"] != "object" {
+			t.Errorf("expected JSON Schema object type, got %#v", responseSchema["type"])
+		}
+		if responseSchema["additionalProperties"] != false {
+			t.Error("expected unknown properties to be rejected")
 		}
 
 		writeCandidate(t, writer, `{
@@ -93,7 +107,14 @@ func TestGenerateRejectsUnknownGeneratedField(t *testing.T) {
 
 func TestGenerateRejectsHTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		http.Error(writer, "unavailable", http.StatusServiceUnavailable)
+		writer.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"error": map[string]any{
+				"code":    http.StatusBadRequest,
+				"message": "Invalid JSON payload received.\nUnknown name responseSchema.",
+				"status":  "INVALID_ARGUMENT",
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -108,7 +129,10 @@ func TestGenerateRejectsHTTPError(t *testing.T) {
 	}
 
 	_, err = client.Generate(context.Background(), "写真部")
-	if err == nil || !strings.Contains(err.Error(), "HTTP 503") {
+	if err == nil ||
+		!strings.Contains(err.Error(), "HTTP 400") ||
+		!strings.Contains(err.Error(), "status=INVALID_ARGUMENT") ||
+		!strings.Contains(err.Error(), "message=Invalid JSON payload received. Unknown name responseSchema.") {
 		t.Fatalf("expected HTTP error, got %v", err)
 	}
 }
