@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
@@ -18,6 +20,7 @@ import (
 const (
 	defaultBaseURL      = "https://generativelanguage.googleapis.com"
 	maxResponseBodySize = 512 << 10
+	maxGenerateAttempts = 3
 )
 
 type Config struct {
@@ -32,6 +35,7 @@ type Client struct {
 	model      string
 	baseURL    string
 	httpClient *http.Client
+	retryDelay func(int) time.Duration
 }
 
 type content struct {
@@ -101,6 +105,7 @@ func NewClient(config Config) (*Client, error) {
 		model:      config.Model,
 		baseURL:    baseURL,
 		httpClient: config.HTTPClient,
+		retryDelay: defaultRetryDelay,
 	}, nil
 }
 
@@ -127,28 +132,46 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 		client.baseURL,
 		url.PathEscape(client.model),
 	)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encodedRequest))
-	if err != nil {
-		return site.Model{}, fmt.Errorf("create Gemini request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("x-goog-api-key", client.apiKey)
+	var responseBody []byte
+	for attempt := 0; attempt < maxGenerateAttempts; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encodedRequest))
+		if err != nil {
+			return site.Model{}, fmt.Errorf("create Gemini request: %w", err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("x-goog-api-key", client.apiKey)
 
-	response, err := client.httpClient.Do(request)
-	if err != nil {
-		return site.Model{}, fmt.Errorf("call Gemini: %w", err)
-	}
-	defer response.Body.Close()
+		response, err := client.httpClient.Do(request)
+		if err != nil {
+			requestErr := fmt.Errorf("call Gemini: %w", err)
+			if ctx.Err() != nil || attempt == maxGenerateAttempts-1 {
+				return site.Model{}, requestErr
+			}
+			if err := waitForRetry(ctx, client.retryDelay(attempt)); err != nil {
+				return site.Model{}, fmt.Errorf("wait to retry Gemini: %w", err)
+			}
+			continue
+		}
 
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBodySize+1))
-	if err != nil {
-		return site.Model{}, fmt.Errorf("read Gemini response: %w", err)
-	}
-	if len(responseBody) > maxResponseBodySize {
-		return site.Model{}, errors.New("Gemini response is too large")
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return site.Model{}, newHTTPError(response.StatusCode, responseBody)
+		responseBody, err = io.ReadAll(io.LimitReader(response.Body, maxResponseBodySize+1))
+		response.Body.Close()
+		if err != nil {
+			return site.Model{}, fmt.Errorf("read Gemini response: %w", err)
+		}
+		if len(responseBody) > maxResponseBodySize {
+			return site.Model{}, errors.New("Gemini response is too large")
+		}
+		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			break
+		}
+
+		responseErr := newHTTPError(response.StatusCode, responseBody)
+		if !isRetryableStatus(response.StatusCode) || attempt == maxGenerateAttempts-1 {
+			return site.Model{}, responseErr
+		}
+		if err := waitForRetry(ctx, client.retryDelay(attempt)); err != nil {
+			return site.Model{}, fmt.Errorf("wait to retry Gemini: %w", err)
+		}
 	}
 
 	var envelope generateContentResponse
@@ -185,6 +208,29 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 	}
 
 	return model, nil
+}
+
+func defaultRetryDelay(attempt int) time.Duration {
+	exponentialDelay := 200 * time.Millisecond * time.Duration(1<<attempt)
+	jitter := time.Duration(rand.IntN(100)) * time.Millisecond
+	return exponentialDelay + jitter
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isRetryableStatus(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
 }
 
 func newHTTPError(statusCode int, responseBody []byte) error {
