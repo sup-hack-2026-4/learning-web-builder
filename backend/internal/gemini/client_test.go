@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -251,6 +252,89 @@ func TestGenerateFallsBackAfterTemporaryHTTPFailures(t *testing.T) {
 	}
 	if fallbackRequestCount != 1 {
 		t.Fatalf("expected one fallback request, got %d", fallbackRequestCount)
+	}
+}
+
+func TestGenerateFallsBackWhenPrimaryModelTimesOut(t *testing.T) {
+	primaryRequestCount := 0
+	fallbackRequestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1beta/models/gemini-primary:generateContent":
+			primaryRequestCount++
+			time.Sleep(200 * time.Millisecond)
+		case "/v1beta/models/gemini-fallback:generateContent":
+			fallbackRequestCount++
+			writeCandidate(t, writer, `{
+				"siteTitle":"学校の写真部",
+				"tagline":"写真で学校の日常を記録します。",
+				"theme":{"primary":"#2563eb","background":"#f8fafc","text":"#172033","fontFamily":"sans","spacing":6},
+				"sections":[
+					{"id":"hero","kind":"hero","title":"学校の写真部","body":"活動を紹介します。","imageAlt":"","visible":true},
+					{"id":"about","kind":"about","title":"私たちについて","body":"写真を学んでいます。","imageAlt":"撮影中の部員","visible":true}
+				]
+			}`)
+		default:
+			t.Fatalf("unexpected request path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		APIKey:        "test-key",
+		Model:         "gemini-primary",
+		FallbackModel: "gemini-fallback",
+		BaseURL:       server.URL,
+		HTTPClient:    server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.primaryModelTimeout = 50 * time.Millisecond
+	client.generationTimeout = time.Second
+
+	model, err := client.Generate(context.Background(), "学校の写真部")
+	if err != nil {
+		t.Fatalf("generate after primary timeout: %v", err)
+	}
+	if model.SiteTitle != "学校の写真部" {
+		t.Fatalf("unexpected model: %#v", model)
+	}
+	if primaryRequestCount != 1 {
+		t.Fatalf("expected one timed-out primary request, got %d", primaryRequestCount)
+	}
+	if fallbackRequestCount != 1 {
+		t.Fatalf("expected one fallback request, got %d", fallbackRequestCount)
+	}
+}
+
+func TestGenerateReturnsWithinTotalTimeBudget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		APIKey:        "test-key",
+		Model:         "gemini-primary",
+		FallbackModel: "gemini-fallback",
+		BaseURL:       server.URL,
+		HTTPClient:    server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.primaryModelTimeout = 50 * time.Millisecond
+	client.generationTimeout = 150 * time.Millisecond
+
+	startedAt := time.Now()
+	_, err = client.Generate(context.Background(), "学校の写真部")
+	elapsed := time.Since(startedAt)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected generation deadline error, got %v", err)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("expected generation to respect time budget, took %v", elapsed)
 	}
 }
 

@@ -18,9 +18,11 @@ import (
 )
 
 const (
-	defaultBaseURL      = "https://generativelanguage.googleapis.com"
-	maxResponseBodySize = 512 << 10
-	maxGenerateAttempts = 3
+	defaultBaseURL          = "https://generativelanguage.googleapis.com"
+	maxResponseBodySize     = 512 << 10
+	maxGenerateAttempts     = 3
+	maxGenerationDuration   = 24 * time.Second
+	maxPrimaryModelDuration = 8 * time.Second
 )
 
 type Config struct {
@@ -32,12 +34,14 @@ type Config struct {
 }
 
 type Client struct {
-	apiKey        string
-	model         string
-	fallbackModel string
-	baseURL       string
-	httpClient    *http.Client
-	retryDelay    func(int) time.Duration
+	apiKey              string
+	model               string
+	fallbackModel       string
+	baseURL             string
+	httpClient          *http.Client
+	retryDelay          func(int) time.Duration
+	generationTimeout   time.Duration
+	primaryModelTimeout time.Duration
 }
 
 type content struct {
@@ -117,12 +121,14 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	return &Client{
-		apiKey:        config.APIKey,
-		model:         model,
-		fallbackModel: fallbackModel,
-		baseURL:       baseURL,
-		httpClient:    config.HTTPClient,
-		retryDelay:    defaultRetryDelay,
+		apiKey:              config.APIKey,
+		model:               model,
+		fallbackModel:       fallbackModel,
+		baseURL:             baseURL,
+		httpClient:          config.HTTPClient,
+		retryDelay:          defaultRetryDelay,
+		generationTimeout:   maxGenerationDuration,
+		primaryModelTimeout: maxPrimaryModelDuration,
 	}, nil
 }
 
@@ -144,10 +150,24 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 		return site.Model{}, fmt.Errorf("encode Gemini request: %w", err)
 	}
 
-	responseBody, err := client.generateContent(ctx, client.model, encodedRequest)
-	if err != nil && client.fallbackModel != "" && isFallbackEligible(err) {
+	generationCtx, cancelGeneration := context.WithTimeout(ctx, client.generationTimeout)
+	defer cancelGeneration()
+
+	var primaryCtx context.Context = generationCtx
+	cancelPrimary := func() {}
+	if client.fallbackModel != "" {
+		primaryCtx, cancelPrimary = context.WithTimeout(generationCtx, client.primaryModelTimeout)
+	}
+	responseBody, err := client.generateContent(primaryCtx, client.model, encodedRequest)
+	primaryTimedOut := errors.Is(primaryCtx.Err(), context.DeadlineExceeded)
+	cancelPrimary()
+
+	if err != nil &&
+		client.fallbackModel != "" &&
+		generationCtx.Err() == nil &&
+		(isFallbackEligible(err) || primaryTimedOut) {
 		primaryErr := err
-		responseBody, err = client.generateContent(ctx, client.fallbackModel, encodedRequest)
+		responseBody, err = client.generateContent(generationCtx, client.fallbackModel, encodedRequest)
 		if err != nil {
 			return site.Model{}, fmt.Errorf(
 				"Gemini primary model %s failed: %v; fallback model %s failed: %w",
