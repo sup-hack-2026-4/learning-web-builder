@@ -42,13 +42,18 @@ function describeThemeChange(key: ThemeKey, theme: { primary: string; background
   return `${label}を ${theme.background} に`;
 }
 
+// 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
+// あとで理由欄が書き換わっても過去の変更には影響しないようにする。
+type TouchedThemeChange = { key: ThemeKey; reason: string };
+
 export default function App() {
   const [topic, setTopic] = useState("");
   const [reason, setReason] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
-  // 記録ボタンを押すまでに変更したテーマ項目を覚えておき、記録時にまとめて1件のメモにする。
-  const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
+  // 記録ボタンを押すまでに変更したテーマ項目を、そのとき入力されていた理由と対にして覚えておく。
+  // 記録時はこの理由を使うため、途中で理由欄を書き換えても過去の変更には紐づかない。
+  const [touchedThemeChanges, setTouchedThemeChanges] = useState<TouchedThemeChange[]>([]);
   const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
@@ -58,7 +63,7 @@ export default function App() {
   // 記録されないまま残っている「変更中の状態」を捨てる。
   // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
   const discardUnrecordedChanges = () => {
-    setTouchedThemeKeys([]);
+    setTouchedThemeChanges([]);
     setReason("");
   };
 
@@ -91,31 +96,47 @@ export default function App() {
   // 理由未入力のうちは変更させず、先に「なぜ変えるか」を言語化させる（理解確認）。
   // 変更した項目は覚えておき、記録時に「何をどの値に変えたか」をまとめてメモへ残す。
   const changeTheme = (key: ThemeKey, value: string | number) => {
-    if (!reason.trim()) {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
     previewTheme(key, value);
-    setTouchedThemeKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
+    // 同じ項目を触り直したときは、そのときの理由で上書きする。
+    setTouchedThemeChanges((changes) => [
+      ...changes.filter((change) => change.key !== key),
+      { key, reason: trimmedReason },
+    ]);
   };
 
-  // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由を1件のメモへ残す。
+  // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由をメモへ残す。
+  // 理由は入力欄の現在値ではなく、変更時に記録しておいた理由を使う。
+  // 異なる理由で変更した項目が混在している場合は、理由ごとに分けて1件ずつ残す。
   const recordThemeReason = () => {
     if (!reason.trim()) {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
-    if (touchedThemeKeys.length === 0) {
+    if (touchedThemeChanges.length === 0) {
       setNotice("先に色・余白・フォントを変更してください。");
       return;
     }
-    const summary = touchedThemeKeys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
-    addNote(`デザイン変更（${summary}）`, reason.trim());
+    const groupedByReason = touchedThemeChanges.reduce<{ reason: string; keys: ThemeKey[] }[]>((groups, change) => {
+      const group = groups.find((candidate) => candidate.reason === change.reason);
+      if (group) group.keys.push(change.key);
+      else groups.push({ reason: change.reason, keys: [change.key] });
+      return groups;
+    }, []);
+    for (const group of groupedByReason) {
+      const summary = group.keys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
+      addNote(`デザイン変更（${summary}）`, group.reason);
+    }
     setNotice("デザイン変更の内容と理由を学習メモへ記録しました。");
-    setTouchedThemeKeys([]);
+    setTouchedThemeChanges([]);
     setReason("");
   };
 
+  // 理由欄をクリアしても、未記録のデザイン変更は変更時の理由を保持しているため影響を受けない。
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
     addNote(`内容変更（${selectedSection.title}）`, reason.trim());
