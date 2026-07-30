@@ -6,6 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SitePreview } from "@/components/site-preview";
+import { AuthControls } from "@/features/auth/auth-controls";
+import { clerkConfig } from "@/features/auth/config";
 import { explanationDictionary } from "@/features/explanations/dictionary";
 import { exportProject } from "@/features/export/export-project";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
@@ -66,7 +68,8 @@ export default function App() {
           <p className="text-xs font-bold tracking-[0.2em] text-blue-600">LEARNING WEB BUILDER</p>
           <h1 className="text-lg font-black text-slate-900">答えではなく、考え方を持ち帰る。</h1>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <AuthControls enabled={clerkConfig.enabled} />
           <Button variant="ghost" onClick={() => { reset(); setNotice("初期サンプルへ戻しました。"); }}><RotateCcw className="mr-2 size-4" />リセット</Button>
           <Button onClick={() => void exportProject(site, notes, aiUsage)}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
