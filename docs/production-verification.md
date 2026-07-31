@@ -3,6 +3,23 @@
 発表前に、Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認するための手順です。
 秘密鍵、トークン、DB接続文字列はスクリーンショットやIssueへ貼り付けません。
 
+## 2026年7月31日の確認結果
+
+- Cloudflare Pagesの`develop`環境は
+  `https://develop.learning-web-builder.pages.dev`で200応答
+- Cloudflare PagesのビルドにはClerk公開鍵が設定済み
+- Cloudflare PagesのビルドにRender API URLがなく、`/api/v1`がHTMLへフォールバックしている
+- Renderは上記Cloudflare Originを403で拒否している
+
+本番縦断確認の前に、次の2設定を反映して再デプロイします。
+
+| 設定先 | キー | 値 |
+|---|---|---|
+| Cloudflare Pages | `VITE_API_BASE_URL` | `https://learning-web-builder-api.onrender.com/api/v1` |
+| Render | `FRONTEND_ORIGIN` | `https://develop.learning-web-builder.pages.dev` |
+
+公開URLを別のURLへ切り替えた場合は、`FRONTEND_ORIGIN`も実際の公開URLへ合わせます。
+
 ## 事前条件
 
 - Cloudflare Pagesの本番URLが分かっている
