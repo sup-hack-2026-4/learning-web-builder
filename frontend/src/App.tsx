@@ -16,16 +16,56 @@ import { createSampleSite } from "@/features/site-model/sample";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 
+type ThemeKey = "primary" | "background" | "fontFamily" | "spacing";
+
+// 学習メモ・ZIP出力に載る、テーマ項目の日本語ラベル。
+const themeKeyLabels: Record<ThemeKey, string> = {
+  primary: "メインカラー",
+  background: "背景色",
+  fontFamily: "フォント",
+  spacing: "余白",
+};
+
+// フォントの内部値を、画面のセレクトと同じ日本語表記へ変換する。
+const fontLabels: Record<string, string> = {
+  sans: "ゴシック",
+  serif: "明朝",
+  rounded: "丸ゴシック",
+};
+
+// テーマ項目の現在値を「メインカラーを #e11d48 に」のような読める文へ整形する。
+function describeThemeChange(key: ThemeKey, theme: { primary: string; background: string; fontFamily: string; spacing: number }): string {
+  const label = themeKeyLabels[key];
+  if (key === "fontFamily") return `${label}を ${fontLabels[theme.fontFamily] ?? theme.fontFamily} に`;
+  if (key === "spacing") return `${label}を ${theme.spacing} に`;
+  if (key === "primary") return `${label}を ${theme.primary} に`;
+  return `${label}を ${theme.background} に`;
+}
+
+// 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
+// あとで理由欄が書き換わっても過去の変更には影響しないようにする。
+type TouchedThemeChange = { key: ThemeKey; reason: string };
+
 export default function App() {
   const [topic, setTopic] = useState("");
   const [reason, setReason] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
-  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, updateTheme, updateSection, addNote, reset } = useBuilderStore();
+  // 記録ボタンを押すまでに変更したテーマ項目を、そのとき入力されていた理由と対にして覚えておく。
+  // 記録時はこの理由を使うため、途中で理由欄を書き換えても過去の変更には紐づかない。
+  const [touchedThemeChanges, setTouchedThemeChanges] = useState<TouchedThemeChange[]>([]);
+  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
   const explanation = explanationDictionary[selectedElementId] ?? explanationDictionary.about;
+
+  // 記録されないまま残っている「変更中の状態」を捨てる。
+  // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
+  const discardUnrecordedChanges = () => {
+    setTouchedThemeChanges([]);
+    setReason("");
+  };
 
   const generation = useMutation({
     mutationFn: async (nextTopic: string) => {
@@ -37,6 +77,9 @@ export default function App() {
     },
     onSuccess: ({ site: generatedSite, provider }) => {
       setSite(generatedSite, provider);
+      // サイトが差し替わると、記録前の変更内容は新しいサイトに対して意味を持たない。
+      // 残したままだと、触れていない初期値を変更として誤記録してしまう。
+      discardUnrecordedChanges();
       setCurrentProjectId(null);
       setNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
     },
@@ -48,20 +91,69 @@ export default function App() {
     generation.mutate(topic.trim());
   };
 
-  const applyTheme = (key: "primary" | "background" | "fontFamily" | "spacing", value: string | number) => {
+  // 色・余白・フォントの変更はプレビューへ即時反映するだけで、メモは残さない。
+  // カラーピッカー等は操作ごとに大量のイベントが発火するため、記録は明示ボタンで行う。
+  // 理由未入力のうちは変更させず、先に「なぜ変えるか」を言語化させる（理解確認）。
+  // 変更した項目は覚えておき、記録時に「何をどの値に変えたか」をまとめてメモへ残す。
+  const changeTheme = (key: ThemeKey, value: string | number) => {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      setNotice("先に『なぜ変えるか』を入力してください。");
+      return;
+    }
+    previewTheme(key, value);
+    // 同じ項目を触り直したときは、そのときの理由で上書きする。
+    setTouchedThemeChanges((changes) => [
+      ...changes.filter((change) => change.key !== key),
+      { key, reason: trimmedReason },
+    ]);
+  };
+
+  // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由をメモへ残す。
+  // 理由は入力欄の現在値ではなく、変更時に記録しておいた理由を使う。
+  // 異なる理由で変更した項目が混在している場合は、理由ごとに分けて1件ずつ残す。
+  const recordThemeReason = () => {
     if (!reason.trim()) {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
-    updateTheme(key, value, reason.trim());
-    setNotice("変更と理由を学習メモへ記録しました。");
+    if (touchedThemeChanges.length === 0) {
+      setNotice("先に色・余白・フォントを変更してください。");
+      return;
+    }
+    const groupedByReason = touchedThemeChanges.reduce<{ reason: string; keys: ThemeKey[] }[]>((groups, change) => {
+      const group = groups.find((candidate) => candidate.reason === change.reason);
+      if (group) group.keys.push(change.key);
+      else groups.push({ reason: change.reason, keys: [change.key] });
+      return groups;
+    }, []);
+    for (const group of groupedByReason) {
+      const summary = group.keys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
+      addNote(`デザイン変更（${summary}）`, group.reason);
+    }
+    setNotice("デザイン変更の内容と理由を学習メモへ記録しました。");
+    setTouchedThemeChanges([]);
+    setReason("");
   };
 
+  // 理由欄をクリアしても、未記録のデザイン変更は変更時の理由を保持しているため影響を受けない。
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
-    addNote(`内容: ${selectedSection.title}`, reason.trim());
+    addNote(`内容変更（${selectedSection.title}）`, reason.trim());
     setNotice("内容変更の理由を学習メモへ記録しました。");
     setReason("");
+  };
+
+  const resetBuilder = () => {
+    reset();
+    discardUnrecordedChanges();
+    setCurrentProjectId(null);
+    setNotice("初期サンプルへ戻しました。");
+  };
+
+  const loadProject = (loadedSite: typeof site) => {
+    loadSite(loadedSite);
+    discardUnrecordedChanges();
   };
 
   return (
@@ -78,10 +170,10 @@ export default function App() {
             site={site}
             currentProjectId={currentProjectId}
             onProjectChange={setCurrentProjectId}
-            onLoad={loadSite}
+            onLoad={loadProject}
             onNotice={setNotice}
           />
-          <Button variant="ghost" onClick={() => { reset(); setCurrentProjectId(null); setNotice("初期サンプルへ戻しました。"); }}><RotateCcw className="mr-2 size-4" />リセット</Button>
+          <Button variant="ghost" onClick={resetBuilder}><RotateCcw className="mr-2 size-4" />リセット</Button>
           <Button onClick={() => void exportProject(site, notes, aiUsage)}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
       </header>
@@ -119,7 +211,7 @@ export default function App() {
         </aside>
 
         <main className="flex min-h-[70vh] flex-col p-4">
-          <div className="mb-3 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-900"><Info className="size-4 shrink-0" />{notice}</div>
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
           <div className="flex items-center justify-between pb-3">
             <div><span className="text-xs font-bold text-slate-500">LIVE PREVIEW</span><h2 className="font-black">{site.siteTitle}</h2></div>
             <span className="rounded-full bg-white px-3 py-1 text-xs text-slate-500">クリックしてコードを解説</span>
@@ -130,14 +222,22 @@ export default function App() {
         <aside className="border-l border-slate-200 bg-white p-4">
           <h2 className="text-base font-black">調整と学習</h2>
           <label className="mt-3 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
-          <Input id="reason" className="mt-1" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：落ち着いた印象にしたい" />
+          <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
+          <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-amber-400 focus-visible:ring-amber-400"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
 
-          <Card className="mt-4 space-y-4 p-4">
+          <Card className="relative mt-4 space-y-4 p-4">
             <h3 className="text-sm font-black">デザイン</h3>
-            <label className="block text-xs font-bold">メインカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.primary} onChange={(event) => applyTheme("primary", event.target.value)} /></label>
-            <label className="block text-xs font-bold">背景色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.background} onChange={(event) => applyTheme("background", event.target.value)} /></label>
-            <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => applyTheme("spacing", Number(event.target.value))} /></label>
-            <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => applyTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
+            <label className="block text-xs font-bold">メインカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.primary} onChange={(event) => changeTheme("primary", event.target.value)} /></label>
+            <label className="block text-xs font-bold">背景色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.background} onChange={(event) => changeTheme("background", event.target.value)} /></label>
+            <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => changeTheme("spacing", Number(event.target.value))} /></label>
+            <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
+            <Button className="w-full" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
+            {!reason.trim() && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl bg-white/75 px-4 text-center backdrop-blur-[1px]">
+                <span className="text-sm font-black text-slate-700">まず変更の理由を入力</span>
+                <span className="text-xs text-slate-500">上の欄に理由を書くと調整できます。</span>
+              </div>
+            )}
           </Card>
 
           {selectedSection && <Card className="mt-4 space-y-3 p-4">
