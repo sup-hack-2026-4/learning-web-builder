@@ -333,6 +333,8 @@ components:
             primary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
             background: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
             text: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+            # 見出し(h2)の色。任意項目で、未指定ならクライアントがprimaryを使う。
+            heading: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
             fontFamily: { type: string, enum: [sans, serif, rounded] }
             spacing: { type: integer, minimum: 2, maximum: 10 }
         sections:

@@ -266,6 +266,70 @@ func TestCreateProjectSavesValidatedSiteForAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestCreateProjectAcceptsOptionalHeadingColor(t *testing.T) {
+	// フロントエンドは「見出しの色」を変えたときだけ theme.heading を送る。
+	// 保存リクエストは未知フィールドを拒否するため、この項目を受け取れないと
+	// 見出しの色を変えたプロジェクトが400で保存できなくなる。
+	model := site.Sample("学校の写真部")
+	model.Theme.Heading = "#b91c1c"
+	now := time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
+	repository := &stubProjectRepository{
+		record: projectpkg.Record{
+			ID:        "11111111-1111-1111-1111-111111111111",
+			OwnerID:   "user_123",
+			Site:      model,
+			Version:   1,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", projectRequestBody(t, model))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.model.Theme.Heading != "#b91c1c" {
+		t.Fatalf("expected heading to reach repository, got %q", repository.model.Theme.Heading)
+	}
+	// 保存して読み直しても色が戻らないよう、レスポンスにも残ることを確認する。
+	if !strings.Contains(response.Body.String(), `"heading":"#b91c1c"`) {
+		t.Fatalf("expected heading in response, got %s", response.Body.String())
+	}
+}
+
+func TestCreateProjectOmitsHeadingWhenUnset(t *testing.T) {
+	// 既存の保存済みプロジェクトへ空の heading を足さないことを確認する。
+	model := site.Sample("学校の写真部")
+	repository := &stubProjectRepository{
+		record: projectpkg.Record{
+			ID:      "11111111-1111-1111-1111-111111111111",
+			OwnerID: "user_123",
+			Site:    model,
+			Version: 1,
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", projectRequestBody(t, model))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), `"heading"`) {
+		t.Fatalf("expected heading to be omitted, got %s", response.Body.String())
+	}
+}
+
 func TestCreateProjectRejectsInvalidSite(t *testing.T) {
 	model := site.Sample("学校の写真部")
 	model.Theme.Primary = "blue"
