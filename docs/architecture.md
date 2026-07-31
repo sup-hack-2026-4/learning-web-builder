@@ -1,5 +1,11 @@
 # アーキテクチャ
 
+発表スライドへ貼り付けられる構成図は
+[SVG版](assets/backend-architecture.svg)と
+[PNG版](assets/backend-architecture.png)にあります。
+本番環境の縦断確認は
+[production-verification.md](production-verification.md)に沿って実施します。
+
 ## 基本方針
 
 編集の正本はReactコンポーネントではなく`SiteModel`です。同じモデルからプレビュー、品質判定、ZIP提出物を生成し、画面と提出コードの不一致を防ぎます。
@@ -28,4 +34,3 @@ SiteModel（Zustand + localStorage）
 ## MVPの境界
 
 今回の初期実装は、静的紹介サイト1テンプレートの縦断動作を対象にします。教員ダッシュボード、成績連携、不正判定、自由コード編集、公開機能は含みません。
-
