@@ -43,6 +43,11 @@ func Validate(model Model) error {
 		}
 	}
 
+	// 見出しの色は任意。指定された場合だけ色として検証する。
+	if model.Theme.Heading != "" && !hexColorPattern.MatchString(model.Theme.Heading) {
+		validationErrors = append(validationErrors, errors.New("theme.heading must be a six-digit hex color"))
+	}
+
 	switch model.Theme.FontFamily {
 	case "sans", "serif", "rounded":
 	default:
