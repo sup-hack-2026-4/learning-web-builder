@@ -64,4 +64,17 @@ describe("siteModelSchema", () => {
     site.topic = "😀".repeat(101); // コードポイント101 > 100
     expect(() => siteModelSchema.parse(site)).toThrow();
   });
+
+  it("theme.headingは任意。バックエンドが返さないJSONも受け入れる", () => {
+    // バックエンド/Geminiはheadingを返さない。必須にすると生成結果が全て弾かれるため任意にしている。
+    const site = createSampleSite();
+    expect(site.theme.heading).toBeUndefined();
+    expect(() => siteModelSchema.parse(site)).not.toThrow();
+  });
+
+  it("theme.headingを指定した場合はカラーコードとして検証する", () => {
+    const site = createSampleSite();
+    expect(() => siteModelSchema.parse({ ...site, theme: { ...site.theme, heading: "#b91c1c" } })).not.toThrow();
+    expect(() => siteModelSchema.parse({ ...site, theme: { ...site.theme, heading: "red" } })).toThrow();
+  });
 });

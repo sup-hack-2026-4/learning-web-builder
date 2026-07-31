@@ -39,6 +39,9 @@ export const siteModelSchema = z.object({
     primary: z.string().regex(/^#[0-9a-fA-F]{6}$/),
     background: z.string().regex(/^#[0-9a-fA-F]{6}$/),
     text: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    // 見出し(h2)の色。未指定ならメインカラーを使う。
+    // バックエンド/Geminiは現状この項目を返さないため、契約を壊さないよう任意にしている。
+    heading: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
     fontFamily: z.enum(["sans", "serif", "rounded"]),
     spacing: z.number().int().min(2).max(10),
   }),

@@ -92,6 +92,9 @@ test("プレビュー内の要素をクリックすると選択状態になり�
   await frame.locator("[data-builder-id='about']").click();
 
   await expect(page.getByText("選択中: 私たちについて", { exact: true })).toBeVisible();
+
+  // 解説は「解説」タブに入っている（右カラムは常に1パネルだけ表示する）。
+  await page.getByRole("tab", { name: "解説" }).click();
   await expect(page.getByText("なぜこのコード？")).toBeVisible();
 });
 
@@ -101,12 +104,17 @@ test("画像のaltを入力すると品質チェックが失敗から成功に�
   await page.getByRole("button", { name: "たたき台を生成" }).click();
   await expect(page.getByRole("heading", { name: "スミレ即売会", exact: true })).toBeVisible();
 
+  // 品質チェックは「品質」タブに入っている。
+  await page.getByRole("tab", { name: "品質" }).click();
   await expect(page.getByText(/の画像説明が空です。/)).toBeVisible();
 
+  // altの入力欄は「調整」タブ側にあるため、いったん戻して入力する。
+  await page.getByRole("tab", { name: "調整" }).click();
   const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
   await frame.locator("[data-builder-id='hero']").click();
   await page.getByLabel("画像の説明（alt）").fill("スミレの鉢植えが並ぶ即売会の様子");
 
+  await page.getByRole("tab", { name: "品質" }).click();
   await expect(page.getByText("表示中の画像に代替テキストがあります。")).toBeVisible();
 });
 

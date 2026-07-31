@@ -15,7 +15,7 @@ export const explanationDictionary: Record<string, Explanation> = {
   hero: {
     title: "h1（ページの主題）",
     html: "ページ全体の主題なのでh1を1つだけ使います。画像プレースホルダーも表示されます。",
-    css: ".section-heroだけ背景にグラデーションと文字色の反転を指定し、他のセクションと視覚的に分けています。",
+    css: ".section-heroだけ背景にメインカラーと文字色の反転を指定し、他のセクションと視覚的に分けています。",
     why: "検索エンジンや支援技術にも、ページの中心テーマを正しく伝えるためです。h1は1ページに1つだけ使うのが構造上のルールです。",
   },
   about: {
@@ -27,7 +27,7 @@ export const explanationDictionary: Record<string, Explanation> = {
   features: {
     title: "features（3つの魅力セクション）",
     html: "aboutと同じsection構造ですが、複数の魅力を短い文章で伝える内容が入ります。",
-    css: ".section-featuresだけ背景色を白(#fff)に指定しており、前後のセクションと視覚的に区切られます。",
+    css: ".section-featuresだけ背景色に--surfaceを指定しており、前後のセクションと視覚的に区切られます。--surfaceは背景色から少しずらした色なので、テーマの背景色を変えても区切りが保たれます。",
     why: "読み手が内容を素早く比較・理解できるよう、他のセクションと背景色を変えて目立たせているためです。",
   },
   contact: {
