@@ -16,6 +16,38 @@ const fontFamilies: Record<SiteModel["theme"]["fontFamily"], string> = {
   rounded: '"M PLUS Rounded 1c", "Noto Sans JP", sans-serif',
 };
 
+// 背景色の上に置く文字色を、白か黒かで選ぶ。
+// ヒーローは全面がメインカラーなので、明るい色を選ばれると白文字が読めなくなる。
+// 品質チェックにコントラスト検査は無く、生徒が自力で気付けないため生成側で担保する。
+const HERO_TEXT_LIGHT = "#ffffff";
+// 真っ黒より柔らかく、かつ本文色(--text)の既定値と揃う濃紺。
+const HERO_TEXT_DARK = "#111827";
+
+// WCAG相対輝度。sRGBをガンマ展開してから輝度に落とす。
+function relativeLuminance(hexColor: string): number {
+  const hex = hexColor.replace("#", "");
+  const channel = (offset: number) => {
+    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+function contrastRatio(a: string, b: string): number {
+  const [light, dark] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+// 背景色の上に置く文字色を、白か濃紺かで選ぶ。
+// ヒーローは全面がメインカラーなので、明るい色を選ばれると白文字が読めなくなる。
+// 品質チェックにコントラスト検査は無く、生徒が自力で気付けないため生成側で担保する。
+// 実際に使う2色でコントラスト比を測り、大きい方を採る。
+export function readableTextOn(hexColor: string): string {
+  return contrastRatio(hexColor, HERO_TEXT_LIGHT) >= contrastRatio(hexColor, HERO_TEXT_DARK)
+    ? HERO_TEXT_LIGHT
+    : HERO_TEXT_DARK;
+}
+
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
     const entities: Record<string, string> = {
@@ -78,6 +110,8 @@ export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {
   --text: ${model.theme.text};
   /* 見出し(h2)の色。未指定ならメインカラーを引き継ぐ。 */
   --heading: ${model.theme.heading ?? model.theme.primary};
+  /* メインカラーの上に載せる文字色。明るい色を選んでも読めるよう明度から決める。 */
+  --on-primary: ${readableTextOn(model.theme.primary)};
   --space: ${model.theme.spacing * 4}px;
   /* ヘッダー・フッター等の面と境界線。背景色からのみ作る。
      テキストカラーを混ぜると、文字色を変えただけで背景まで動いてしまうため使わない。 */
@@ -95,7 +129,7 @@ body { margin: 0; color: var(--text); background: var(--background); line-height
 .site-header span { color: var(--text-muted); font-size: 13px; }
 .section { padding: calc(var(--space) * 2.5) clamp(20px, 8vw, 120px); }
 .section-inner { width: min(980px, 100%); margin: 0 auto; }
-.section-hero { min-height: 64vh; display: grid; align-items: center; color: #fff; background: var(--primary); }
+.section-hero { min-height: 64vh; display: grid; align-items: center; color: var(--on-primary); background: var(--primary); }
 h1 { max-width: 780px; margin: 0 0 20px; font-size: clamp(42px, 8vw, 88px); line-height: 1.05; }
 h2 { margin: 0 0 16px; color: var(--heading); font-size: clamp(28px, 4vw, 46px); }
 p { max-width: 720px; margin: 0 0 28px; }

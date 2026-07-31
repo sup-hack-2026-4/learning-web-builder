@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSiteArtifacts } from "../artifacts/build-site-artifacts";
+import { buildSiteArtifacts, readableTextOn } from "../artifacts/build-site-artifacts";
 import { createSampleSite } from "../site-model/sample";
 import { explanationDictionary } from "./dictionary";
 
@@ -59,6 +59,49 @@ describe("explanationDictionary", () => {
     // ヘッダー・フッターとも背景に#fff等をハードコードしない。
     expect(artifacts.css).toContain("background: var(--surface); border-bottom: 1px solid var(--border);");
     expect(artifacts.css).toContain("footer { padding: calc(var(--space) * 1.4);");
+  });
+
+  it("メインカラーが明るくてもヒーローの文字が読める色になる", () => {
+    const site = createSampleSite();
+    const readOnPrimary = (primary: string) =>
+      buildSiteArtifacts({ ...site, theme: { ...site.theme, primary } }).css.match(/--on-primary: (#[0-9a-f]{6});/)?.[1];
+
+    // 明るいメインカラー(黄・水色)では暗い文字にする。従来は#fff固定で読めなかった。
+    expect(readOnPrimary("#fde047")).toBe("#111827");
+    expect(readOnPrimary("#7dd3fc")).toBe("#111827");
+    // 暗いメインカラーでは白のまま。
+    expect(readOnPrimary("#2563eb")).toBe("#ffffff");
+    expect(readOnPrimary("#111827")).toBe("#ffffff");
+
+    // ヒーローは固定色ではなくこの変数を参照する。
+    expect(buildSiteArtifacts(site).css).toContain("color: var(--on-primary); background: var(--primary);");
+  });
+
+  it("どのメインカラーでもヒーローの見出しがWCAG AA Large(3:1)を満たす", () => {
+    // ヒーローのh1はclamp(42px,8vw,88px)で常に大きいテキスト。基準は3:1。
+    // 白/濃紺の2色から選ぶ方式では4.5:1を全色では満たせない(中間明度で最悪4.21)ため、
+    // 大きいテキストの基準で担保する。実装を変えるときはこの前提ごと見直すこと。
+    const luminance = (hex: string) => {
+      const channel = (offset: number) => {
+        const value = parseInt(hex.replace("#", "").slice(offset, offset + 2), 16) / 255;
+        return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+    };
+    const contrast = (a: string, b: string) => {
+      const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (light + 0.05) / (dark + 0.05);
+    };
+
+    // 色空間を粗く走査し、選ばれうる全域で基準を満たすことを確かめる。
+    for (let r = 0; r < 256; r += 51) {
+      for (let g = 0; g < 256; g += 51) {
+        for (let b = 0; b < 256; b += 51) {
+          const primary = `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+          expect(contrast(primary, readableTextOn(primary))).toBeGreaterThanOrEqual(3);
+        }
+      }
+    }
   });
 
   it("提出物のCSSに編集用のスタイルが混ざらない", () => {

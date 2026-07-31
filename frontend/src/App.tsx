@@ -186,9 +186,11 @@ export default function App() {
     discardUnrecordedChanges();
   };
 
+  // ヘッダーはflex-wrapで高さが変わるため、縦flexで残り高さをグリッドへ渡し、
+  // 高さの決め打ち(calc(100vh-73px))を避ける。
   return (
-    <div className="min-h-screen bg-slate-100">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
+    <div className="flex min-h-screen flex-col bg-slate-100 xl:h-screen">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
         <h1 className="text-2xl font-black tracking-tight text-blue-600">Whyve</h1>
         <div className="flex flex-wrap items-center gap-2">
           <AuthControls enabled={clerkConfig.enabled} />
@@ -206,13 +208,14 @@ export default function App() {
       </header>
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
-      <div className={`grid grid-cols-1 xl:h-[calc(100vh-73px)] ${setupOpen ? "xl:grid-cols-[290px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
-        <aside className={`min-h-0 overflow-hidden border-r border-slate-200 bg-slate-100 xl:flex ${mobileView === "setup" ? "flex" : "hidden"}`}>
+      <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[290px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
+        <aside id="view-setup" className={`min-h-0 overflow-hidden border-r border-slate-200 bg-slate-100 xl:flex ${mobileView === "setup" ? "flex" : "hidden"}`}>
           {/* 畳んだときに残るつまみ。xl未満では下部バーで切り替えるため出さない。 */}
           <div className="order-2 hidden w-10 shrink-0 flex-col items-center bg-slate-100 py-3 xl:flex">
             <button
               type="button"
               onClick={() => setSetupOpen((open) => !open)}
+              aria-expanded={setupOpen}
               title={setupOpen ? "題材・メモを畳んでプレビューを広げる" : "題材・メモを開く"}
               className="w-10 rounded-r-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
             >
@@ -252,18 +255,20 @@ export default function App() {
           </div>
         </aside>
 
-        <main className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}>
+        <main id="view-preview" className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}>
           <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
           <div className="pb-3">
-            <span className="text-xs font-bold text-slate-500">LIVE PREVIEW</span>
+            <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
             <h2 className="font-black">{site.siteTitle}</h2>
           </div>
           <SitePreview site={site} onElementSelect={selectElement} />
         </main>
 
-        <aside className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}>
+        <aside id="view-panel" className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}>
           {/* フォルダのつまみのような縦タブ。畳んでいる間もここだけは残る。 */}
-          <div className="flex w-14 shrink-0 flex-col items-end gap-1 py-3" role="tablist">
+          <div className="flex w-14 shrink-0 flex-col items-end py-3">
+          {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
+          <div className="flex flex-col items-end gap-1" role="tablist" aria-label="調整と学習">
             {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
               const selected = panelOpen && activePanel === key;
               return (
@@ -271,7 +276,9 @@ export default function App() {
                   key={key}
                   type="button"
                   role="tab"
+                  id={`panel-tab-${key}`}
                   aria-selected={selected}
+                  aria-controls="panel-content"
                   title={panelLabels[key]}
                   onClick={() => {
                     // 畳んだ状態でタブを押したら開く。開いている同じタブを押したら畳む。
@@ -279,7 +286,7 @@ export default function App() {
                     if (activePanel === key) { setPanelOpen(false); return; }
                     setActivePanel(key);
                   }}
-                  className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "bg-white text-slate-900" : "text-slate-500 hover:bg-white/60 hover:text-slate-800"}`}
+                  className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "bg-white text-slate-900" : "text-slate-600 hover:bg-white/60 hover:text-slate-800"}`}
                 >
                   {/* 縦書き。折り返すと1文字ずつ横に割れるため、折り返しを禁止する。 */}
                   <span className="whitespace-nowrap [writing-mode:vertical-rl]">{panelLabels[key]}</span>
@@ -289,9 +296,11 @@ export default function App() {
                 </button>
               );
             })}
+          </div>
             <button
               type="button"
               onClick={() => setPanelOpen((open) => !open)}
+              aria-expanded={panelOpen}
               title={panelOpen ? "パネルを畳んでプレビューを広げる" : "パネルを開く"}
               className="mt-1 hidden w-12 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700 xl:block"
             >
@@ -300,7 +309,12 @@ export default function App() {
           </div>
 
           {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
-          <div className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${panelOpen ? "block" : "block xl:hidden"}`}>
+          <div
+            id="panel-content"
+            role="tabpanel"
+            aria-labelledby={`panel-tab-${activePanel}`}
+            className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${panelOpen ? "block" : "block xl:hidden"}`}
+          >
           <h2 className="text-base font-black">調整と学習</h2>
 
           {activePanel === "design" && <>
@@ -358,15 +372,16 @@ export default function App() {
       </div>
 
       {/* 狭い画面用の切替バー。3カラムを縦積みすると見づらいため、1つずつ表示する。 */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" role="tablist">
+      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" role="tablist" aria-label="表示の切り替え">
         {(Object.keys(mobileViewLabels) as MobileView[]).map((key) => (
           <button
             key={key}
             type="button"
             role="tab"
             aria-selected={mobileView === key}
+            aria-controls={`view-${key}`}
             onClick={() => setMobileView(key)}
-            className={`relative flex-1 py-3 text-xs font-bold transition ${mobileView === key ? "text-blue-700" : "text-slate-500"}`}
+            className={`relative flex-1 py-3 text-xs font-bold transition ${mobileView === key ? "text-blue-700" : "text-slate-600"}`}
           >
             {mobileViewLabels[key]}
             {key === "panel" && quality.some((item) => !item.passed) && (
