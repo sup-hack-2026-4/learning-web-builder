@@ -35,15 +35,46 @@ docs/         設計・役割分担・開発規約
 
 ```powershell
 cd frontend
-Copy-Item .env.example .env.local
-npm.cmd install
+npm.cmd ci
 
 cd ../backend
-Copy-Item .env.example .env
 go mod download
 ```
 
-秘密情報はGitへ追加しないでください。初期状態ではAPIキーやDBなしでもサンプルモードで動作します。
+`npm install`ではなく`npm ci`を使います。`npm install`は`package-lock.json`を書き換えることがあり、各自が実行すると不要な差分と競合が発生します。
+
+初期状態ではAPIキーやDBなしでもサンプルモードで動作します。秘密情報はGitへ追加しないでください。
+
+## 環境変数
+
+### フロントエンド
+
+`frontend/.env.local`を読み込みます。未作成でも`VITE_API_BASE_URL`は`/api/v1`が既定値になり、Vite開発サーバーが`localhost:8080`へプロキシするため、ローカル開発では作成しなくても動作します。Clerkを試す場合に作成してください。
+
+```powershell
+cd frontend
+Copy-Item .env.example .env.local
+```
+
+### バックエンド
+
+**`.env`は読み込みません。** `os.Getenv`のみを参照するため、キーを使う場合はシェルの環境変数として渡します。
+
+```powershell
+cd backend
+$env:GEMINI_API_KEY = "..."
+$env:CLERK_SECRET_KEY = "..."
+$env:DATABASE_URL = "..."
+go run ./cmd/api
+```
+
+`backend/.env.example`は、Renderなど実行環境へ設定する項目の一覧として使います。
+
+未設定の項目は次のように動作します。
+
+- `GEMINI_API_KEY`なし: 生成は静的サンプルへフォールバック
+- `CLERK_SECRET_KEY`なし: ゲストモードになり、保存UIはログイン案内を表示
+- `DATABASE_URL`なし: 生成とゲスト機能は起動し、保存APIだけが`503`を返す
 
 ## PostgreSQL／Neonへの保存
 
@@ -53,7 +84,7 @@ go mod download
 psql $env:DATABASE_URL -f db/migrations/001_initial.sql
 ```
 
-その後、バックエンドの`DATABASE_URL`と`CLERK_SECRET_KEY`を設定してください。
+その後、バックエンドの`DATABASE_URL`と`CLERK_SECRET_KEY`を環境変数として渡してください（[環境変数](#環境変数)を参照）。
 
 - `POST /api/v1/projects`: 認証ユーザーのプロジェクトを新規保存
 - `GET /api/v1/projects`: 認証ユーザーの保存済みプロジェクトを更新日時順で一覧取得
@@ -93,6 +124,15 @@ npm.cmd run build
 
 cd ../backend
 go test ./...
+go vet ./...
+```
+
+E2Eを実行する場合は、初回だけブラウザを取得します。`test:e2e`はビルドとプレビュー起動まで自動で行うため、開発サーバーを別途起動する必要はありません。
+
+```powershell
+cd frontend
+npx playwright install chromium
+npm.cmd run test:e2e
 ```
 
 詳しい設計は[docs/architecture.md](docs/architecture.md)、共同開発手順は[CONTRIBUTING.md](CONTRIBUTING.md)を参照してください。
