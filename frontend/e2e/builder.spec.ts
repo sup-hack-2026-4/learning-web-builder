@@ -161,7 +161,7 @@ test("デスクトップでは左右カラムを畳んでプレビューを広�
   expect(await widthOf()).toBeCloseTo(initial, 0);
 });
 
-test("デスクトップで選択中タブを再クリックするとパネルが畳まれる", async ({ page }) => {
+test("デスクトップでタブを再クリックしてもパネルは畳まれない", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
 
@@ -169,15 +169,16 @@ test("デスクトップで選択中タブを再クリックするとパネル�
   await expect(designTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
 
-  // 同じタブを押すと畳まれ、中身が隠れる。
-  // 選択中のパネルが変わったわけではないので、aria-selectedはtrueのまま。
-  await designTab.click();
-  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
-  await expect(designTab).toHaveAttribute("aria-selected", "true");
-
-  // もう一度押すと開く。
+  // 畳みは専用ボタンの役割。タブは切り替えだけを担うので、再クリックしても開いたまま。
   await designTab.click();
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+
+  // 畳んだ状態でタブを押すと、そのパネルを開く。
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
+  await page.getByRole("tab", { name: "解説", exact: true }).click();
+  await expect(page.getByText("なぜこのコード？")).toBeVisible();
 });
 
 test("モバイルでは3つの画面を下部バーで切り替えられる", async ({ page }) => {
@@ -209,6 +210,26 @@ test("モバイルで選択中タブを再クリックしても選択状態と�
   await designTab.click();
   await expect(designTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  // 選択中タブの背景も消えないこと（aria属性だけでなく見た目でも選択が分かる）。
+  await expect(designTab).toHaveClass(/bg-white/);
+});
+
+// レビュー指摘の再現ケース。
+// タブクリックでpanelOpenを畳んでいたころは、モバイルでの再クリックが
+// デスクトップ用の折り畳み状態として残り、幅を広げた瞬間にパネルが畳まれていた。
+test("モバイルでタブを再クリックしてもデスクトップ幅でパネルは畳まれない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  await designTab.click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+
+  // デスクトップ幅へ広げても、パネルは開いたまま。
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(designTab).toHaveClass(/bg-white/);
 });
 
 test("デスクトップで畳んだ状態からモバイル幅にすると内容が見える", async ({ page }) => {
