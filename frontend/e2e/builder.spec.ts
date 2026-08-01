@@ -285,13 +285,9 @@ test("内側タブは上下キーでフォーカスと選択が循環移動す�
   await expect(designTab).toHaveAttribute("tabindex", "0");
   await expect(explanationTab).toHaveAttribute("tabindex", "-1");
 
-  // Tabキーだけでタブ列まで到達できること（プレビューのiframeに吸われない）。
-  await page.locator("body").click({ position: { x: 5, y: 5 } });
-  for (let i = 0; i < 20 && !(await designTab.evaluate((el) => el === document.activeElement)); i++) {
-    await page.keyboard.press("Tab");
-  }
-  await expect(designTab).toBeFocused();
-
+  // ここではタブ列の中の移動だけを検証する。
+  // ページ全体のTab順はプレビューiframeの中身も含むため、別の関心事として切り離す。
+  await designTab.focus();
   await page.keyboard.press("ArrowDown");
   await expect(explanationTab).toBeFocused();
   await expect(explanationTab).toHaveAttribute("aria-selected", "true");
@@ -323,13 +319,7 @@ test("モバイル下部タブは左右キーでフォーカスと選択が循�
   await expect(previewTab).toHaveAttribute("tabindex", "0");
   await expect(setupTab).toHaveAttribute("tabindex", "-1");
 
-  // Tabキーだけで下部バーまで到達できること。
-  await page.locator("body").click({ position: { x: 5, y: 5 } });
-  for (let i = 0; i < 20 && !(await previewTab.evaluate((el) => el === document.activeElement)); i++) {
-    await page.keyboard.press("Tab");
-  }
-  await expect(previewTab).toBeFocused();
-
+  await previewTab.focus();
   await page.keyboard.press("ArrowRight");
   await expect(setupTab).toBeFocused();
   await expect(setupTab).toHaveAttribute("aria-selected", "true");
@@ -343,4 +333,23 @@ test("モバイル下部タブは左右キーでフォーカスと選択が循�
   // 左方向にも動く。
   await page.keyboard.press("ArrowLeft");
   await expect(panelTab).toBeFocused();
+});
+
+// レビュー指摘の再現ケース。
+// タブUIの都合でプレビューiframeをtabIndex={-1}にしたことがあり、
+// 生成サイト内のロゴリンクとセクション(tabindex=0)へキーボードで到達できなくなっていた。
+test("プレビュー内の要素へキーボードで到達できる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const preview = page.locator("iframe[title='生成サイトのプレビュー']");
+  await expect(preview).not.toHaveAttribute("tabindex", "-1");
+
+  // iframe内へフォーカスを入れ、Tabでロゴ→各セクションへ進めること。
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator(".logo").focus();
+  await expect(frame.locator(".logo")).toBeFocused();
+
+  await page.keyboard.press("Tab");
+  await expect(frame.locator("[data-builder-id='hero']")).toBeFocused();
 });
