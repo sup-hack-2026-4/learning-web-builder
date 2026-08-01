@@ -109,7 +109,7 @@ test("画像のaltを入力すると品質チェックが失敗から成功に�
   await expect(page.getByText(/の画像説明が空です。/)).toBeVisible();
 
   // altの入力欄は「調整」タブ側にあるため、いったん戻して入力する。
-  await page.getByRole("tab", { name: "調整" }).click();
+  await page.getByRole("tab", { name: "調整", exact: true }).click();
   const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
   await frame.locator("[data-builder-id='hero']").click();
   await page.getByLabel("画像の説明（alt）").fill("スミレの鉢植えが並ぶ即売会の様子");
@@ -136,4 +136,91 @@ test("Clerk未設定時はプロジェクト保存を実行できない", async 
 
   await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
+});
+
+test("デスクトップでは左右カラムを畳んでプレビューを広げられる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const preview = page.locator("iframe[title='生成サイトのプレビュー']");
+  const widthOf = async () => (await preview.boundingBox())!.width;
+  const initial = await widthOf();
+
+  // 右パネルを畳む → プレビューが広がる。
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  const afterRight = await widthOf();
+  expect(afterRight).toBeGreaterThan(initial);
+
+  // 左カラムも畳む → さらに広がる。
+  await page.getByRole("button", { name: "題材・メモを畳んでプレビューを広げる" }).click();
+  expect(await widthOf()).toBeGreaterThan(afterRight);
+
+  // 開き直すと元の幅に戻る。
+  await page.getByRole("button", { name: "題材・メモを開く" }).click();
+  await page.getByRole("button", { name: "パネルを開く" }).click();
+  expect(await widthOf()).toBeCloseTo(initial, 0);
+});
+
+test("デスクトップで選択中タブを再クリックするとパネルが畳まれる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+
+  // 同じタブを押すと畳まれ、中身が隠れる。
+  // 選択中のパネルが変わったわけではないので、aria-selectedはtrueのまま。
+  await designTab.click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+
+  // もう一度押すと開く。
+  await designTab.click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+});
+
+test("モバイルでは3つの画面を下部バーで切り替えられる", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  // 初期はプレビュー。
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+  await expect(page.getByLabel("紹介サイトの題材")).toBeHidden();
+
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await expect(page.getByLabel("紹介サイトの題材")).toBeVisible();
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeHidden();
+
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(page.getByLabel("紹介サイトの題材")).toBeHidden();
+});
+
+test("モバイルで選択中タブを再クリックしても選択状態と表示が食い違わない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+
+  // モバイルは畳めないので、再クリックしても選択状態と中身が保たれる。
+  await designTab.click();
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+});
+
+test("デスクトップで畳んだ状態からモバイル幅にすると内容が見える", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
+
+  // 畳んだままモバイル幅へ。中身が見える以上、タブも選択状態でなければ食い違う。
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "調整", exact: true })).toHaveAttribute("aria-selected", "true");
 });

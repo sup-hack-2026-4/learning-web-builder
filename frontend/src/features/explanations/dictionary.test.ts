@@ -67,8 +67,8 @@ describe("explanationDictionary", () => {
       buildSiteArtifacts({ ...site, theme: { ...site.theme, primary } }).css.match(/--on-primary: (#[0-9a-f]{6});/)?.[1];
 
     // 明るいメインカラー(黄・水色)では暗い文字にする。従来は#fff固定で読めなかった。
-    expect(readOnPrimary("#fde047")).toBe("#111827");
-    expect(readOnPrimary("#7dd3fc")).toBe("#111827");
+    expect(readOnPrimary("#fde047")).toBe("#000000");
+    expect(readOnPrimary("#7dd3fc")).toBe("#000000");
     // 暗いメインカラーでは白のまま。
     expect(readOnPrimary("#2563eb")).toBe("#ffffff");
     expect(readOnPrimary("#111827")).toBe("#ffffff");
@@ -77,10 +77,10 @@ describe("explanationDictionary", () => {
     expect(buildSiteArtifacts(site).css).toContain("color: var(--on-primary); background: var(--primary);");
   });
 
-  it("どのメインカラーでもヒーローの見出しがWCAG AA Large(3:1)を満たす", () => {
-    // ヒーローのh1はclamp(42px,8vw,88px)で常に大きいテキスト。基準は3:1。
-    // 白/濃紺の2色から選ぶ方式では4.5:1を全色では満たせない(中間明度で最悪4.21)ため、
-    // 大きいテキストの基準で担保する。実装を変えるときはこの前提ごと見直すこと。
+  it("どのメインカラーでもヒーロー本文がWCAG AA(4.5:1)を満たす", () => {
+    // --on-primaryは大見出しだけでなくヒーロー内の本文にも継承されるため、
+    // 大きいテキストの3:1ではなく通常文字の4.5:1で担保する必要がある。
+    // 候補を純白・純黒から外すと満たせない色域が生まれる(#111827では#006effが4.49)。
     const luminance = (hex: string) => {
       const channel = (offset: number) => {
         const value = parseInt(hex.replace("#", "").slice(offset, offset + 2), 16) / 255;
@@ -93,12 +93,15 @@ describe("explanationDictionary", () => {
       return (light + 0.05) / (dark + 0.05);
     };
 
-    // 色空間を粗く走査し、選ばれうる全域で基準を満たすことを確かめる。
-    for (let r = 0; r < 256; r += 51) {
-      for (let g = 0; g < 256; g += 51) {
-        for (let b = 0; b < 256; b += 51) {
+    // レビューで指摘された実例。境界に近いので個別に固定しておく。
+    expect(contrast("#006eff", readableTextOn("#006eff"))).toBeGreaterThanOrEqual(4.5);
+
+    // 色空間を走査し、選ばれうる全域で基準を満たすことを確かめる。
+    for (let r = 0; r < 256; r += 15) {
+      for (let g = 0; g < 256; g += 15) {
+        for (let b = 0; b < 256; b += 15) {
           const primary = `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
-          expect(contrast(primary, readableTextOn(primary))).toBeGreaterThanOrEqual(3);
+          expect(contrast(primary, readableTextOn(primary))).toBeGreaterThanOrEqual(4.5);
         }
       }
     }

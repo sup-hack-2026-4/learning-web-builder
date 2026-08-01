@@ -270,7 +270,9 @@ export default function App() {
           {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
           <div className="flex flex-col items-end gap-1" role="tablist" aria-label="調整と学習">
             {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
-              const selected = panelOpen && activePanel === key;
+              // 選択状態は「どのパネルを選んでいるか」だけで決める。
+              // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
+              const selected = activePanel === key;
               return (
                 <button
                   key={key}
@@ -282,11 +284,12 @@ export default function App() {
                   title={panelLabels[key]}
                   onClick={() => {
                     // 畳んだ状態でタブを押したら開く。開いている同じタブを押したら畳む。
+                    // モバイルではパネルが常時表示なので、畳んでも見た目は変わらない。
                     if (!panelOpen) { setActivePanel(key); setPanelOpen(true); return; }
                     if (activePanel === key) { setPanelOpen(false); return; }
                     setActivePanel(key);
                   }}
-                  className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "bg-white text-slate-900" : "text-slate-600 hover:bg-white/60 hover:text-slate-800"}`}
+                  className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "text-slate-900 xl:bg-white" : "text-slate-600 hover:bg-white/60 hover:text-slate-800"} ${selected && panelOpen ? "bg-white" : ""}`}
                 >
                   {/* 縦書き。折り返すと1文字ずつ横に割れるため、折り返しを禁止する。 */}
                   <span className="whitespace-nowrap [writing-mode:vertical-rl]">{panelLabels[key]}</span>

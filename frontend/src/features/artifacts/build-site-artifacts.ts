@@ -16,12 +16,11 @@ const fontFamilies: Record<SiteModel["theme"]["fontFamily"], string> = {
   rounded: '"M PLUS Rounded 1c", "Noto Sans JP", sans-serif',
 };
 
-// 背景色の上に置く文字色を、白か黒かで選ぶ。
-// ヒーローは全面がメインカラーなので、明るい色を選ばれると白文字が読めなくなる。
-// 品質チェックにコントラスト検査は無く、生徒が自力で気付けないため生成側で担保する。
+// ヒーローの文字色の候補。純白・純黒から外すとコントラストが足りない色域が生まれる。
+// 例えば黒側を#111827にすると、#006effで4.49となり通常文字のAA(4.5:1)を満たせない。
+// 見た目の好みより可読性を優先し、ここは純色のままにする。
 const HERO_TEXT_LIGHT = "#ffffff";
-// 真っ黒より柔らかく、かつ本文色(--text)の既定値と揃う濃紺。
-const HERO_TEXT_DARK = "#111827";
+const HERO_TEXT_DARK = "#000000";
 
 // WCAG相対輝度。sRGBをガンマ展開してから輝度に落とす。
 function relativeLuminance(hexColor: string): number {
@@ -38,10 +37,11 @@ function contrastRatio(a: string, b: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
-// 背景色の上に置く文字色を、白か濃紺かで選ぶ。
+// 背景色の上に置く文字色を、白か黒かで選ぶ。
 // ヒーローは全面がメインカラーなので、明るい色を選ばれると白文字が読めなくなる。
+// この色は大見出しだけでなくヒーロー内の本文にも継承されるため、
+// 通常文字のAA(4.5:1)を全色域で満たす必要がある。
 // 品質チェックにコントラスト検査は無く、生徒が自力で気付けないため生成側で担保する。
-// 実際に使う2色でコントラスト比を測り、大きい方を採る。
 export function readableTextOn(hexColor: string): string {
   return contrastRatio(hexColor, HERO_TEXT_LIGHT) >= contrastRatio(hexColor, HERO_TEXT_DARK)
     ? HERO_TEXT_LIGHT
