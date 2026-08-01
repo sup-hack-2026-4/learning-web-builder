@@ -92,6 +92,9 @@ test("プレビュー内の要素をクリックすると選択状態になり�
   await frame.locator("[data-builder-id='about']").click();
 
   await expect(page.getByText("選択中: 私たちについて", { exact: true })).toBeVisible();
+
+  // 解説は「解説」タブに入っている（右カラムは常に1パネルだけ表示する）。
+  await page.getByRole("tab", { name: "解説" }).click();
   await expect(page.getByText("なぜこのコード？")).toBeVisible();
 });
 
@@ -101,12 +104,17 @@ test("画像のaltを入力すると品質チェックが失敗から成功に�
   await page.getByRole("button", { name: "たたき台を生成" }).click();
   await expect(page.getByRole("heading", { name: "スミレ即売会", exact: true })).toBeVisible();
 
+  // 品質チェックは「品質」タブに入っている。
+  await page.getByRole("tab", { name: "品質" }).click();
   await expect(page.getByText(/の画像説明が空です。/)).toBeVisible();
 
+  // altの入力欄は「調整」タブ側にあるため、いったん戻して入力する。
+  await page.getByRole("tab", { name: "調整", exact: true }).click();
   const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
   await frame.locator("[data-builder-id='hero']").click();
   await page.getByLabel("画像の説明（alt）").fill("スミレの鉢植えが並ぶ即売会の様子");
 
+  await page.getByRole("tab", { name: "品質" }).click();
   await expect(page.getByText("表示中の画像に代替テキストがあります。")).toBeVisible();
 });
 
@@ -128,4 +136,220 @@ test("Clerk未設定時はプロジェクト保存を実行できない", async 
 
   await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
+});
+
+test("デスクトップでは左右カラムを畳んでプレビューを広げられる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const preview = page.locator("iframe[title='生成サイトのプレビュー']");
+  const widthOf = async () => (await preview.boundingBox())!.width;
+  const initial = await widthOf();
+
+  // 右パネルを畳む → プレビューが広がる。
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  const afterRight = await widthOf();
+  expect(afterRight).toBeGreaterThan(initial);
+
+  // 左カラムも畳む → さらに広がる。
+  await page.getByRole("button", { name: "題材・メモを畳んでプレビューを広げる" }).click();
+  expect(await widthOf()).toBeGreaterThan(afterRight);
+
+  // 開き直すと元の幅に戻る。
+  await page.getByRole("button", { name: "題材・メモを開く" }).click();
+  await page.getByRole("button", { name: "パネルを開く" }).click();
+  expect(await widthOf()).toBeCloseTo(initial, 0);
+});
+
+test("デスクトップでタブを再クリックしてもパネルは畳まれない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+
+  // 畳みは専用ボタンの役割。タブは切り替えだけを担うので、再クリックしても開いたまま。
+  await designTab.click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+
+  // 畳むとタブ列ごと隠れる。押しても結果が見えないタブを残さないため。
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
+  await expect(designTab).toBeHidden();
+
+  // 開き直すと、畳む前に選んでいたパネルが出る。
+  await page.getByRole("button", { name: "パネルを開く" }).click();
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+});
+
+test("モバイルでは3つの画面を下部バーで切り替えられる", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  // 初期はプレビュー。
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+  await expect(page.getByLabel("紹介サイトの題材")).toBeHidden();
+
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await expect(page.getByLabel("紹介サイトの題材")).toBeVisible();
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeHidden();
+
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(page.getByLabel("紹介サイトの題材")).toBeHidden();
+});
+
+test("モバイルで選択中タブを再クリックしても選択状態と表示が食い違わない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+
+  // モバイルは畳めないので、再クリックしても選択状態と中身が保たれる。
+  await designTab.click();
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  // 選択中タブの背景も消えないこと（aria属性だけでなく見た目でも選択が分かる）。
+  await expect(designTab).toHaveClass(/bg-white/);
+});
+
+// レビュー指摘の再現ケース。
+// タブクリックでpanelOpenを畳んでいたころは、モバイルでの再クリックが
+// デスクトップ用の折り畳み状態として残り、幅を広げた瞬間にパネルが畳まれていた。
+test("モバイルでタブを再クリックしてもデスクトップ幅でパネルは畳まれない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  await designTab.click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+
+  // デスクトップ幅へ広げても、パネルは開いたまま。
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(designTab).toHaveClass(/bg-white/);
+});
+
+test("デスクトップで畳んだ状態からモバイル幅にすると内容が見える", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
+
+  // 畳んだままモバイル幅へ。中身が見える以上、タブも選択状態でなければ食い違う。
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "調整", exact: true })).toHaveAttribute("aria-selected", "true");
+});
+
+// レビュー指摘の再現ケース。
+// 内側タブのクリックでsetPanelOpen(true)していたころは、モバイルでタブを切り替えると
+// デスクトップで畳んでおいた状態が展開されてしまっていた。
+test("デスクトップで畳んだ状態は、モバイルでタブを切り替えても保たれる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 1. デスクトップで右パネルを畳む。
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
+
+  // 2. モバイル幅へ縮小し、3. 内側の別タブを押す。
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByRole("tab", { name: "解説", exact: true }).click();
+  await expect(page.getByText("なぜこのコード？")).toBeVisible();
+
+  // 4. デスクトップ幅へ戻すと、畳んだ状態が保たれている。
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByText("なぜこのコード？")).toBeHidden();
+  await expect(page.getByRole("button", { name: "パネルを開く" })).toBeVisible();
+});
+
+test("内側タブは上下キーでフォーカスと選択が循環移動する", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
+  const qualityTab = page.getByRole("tab", { name: "品質", exact: true });
+
+  // 選択中だけがタブ順に含まれる。
+  await expect(designTab).toHaveAttribute("tabindex", "0");
+  await expect(explanationTab).toHaveAttribute("tabindex", "-1");
+
+  // ここではタブ列の中の移動だけを検証する。
+  // ページ全体のTab順はプレビューiframeの中身も含むため、別の関心事として切り離す。
+  await designTab.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(explanationTab).toBeFocused();
+  await expect(explanationTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこのコード？")).toBeVisible();
+
+  // 末尾から先頭へ循環する。
+  await page.keyboard.press("ArrowDown");
+  await expect(qualityTab).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(designTab).toBeFocused();
+
+  // 上方向にも動き、Home/Endも効く。
+  await page.keyboard.press("ArrowUp");
+  await expect(qualityTab).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(designTab).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(qualityTab).toBeFocused();
+});
+
+test("モバイル下部タブは左右キーでフォーカスと選択が循環移動する", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const previewTab = page.getByRole("tab", { name: "プレビュー" });
+  const setupTab = page.getByRole("tab", { name: "題材・メモ" });
+  const panelTab = page.getByRole("tab", { name: "調整と学習" });
+
+  await expect(previewTab).toHaveAttribute("tabindex", "0");
+  await expect(setupTab).toHaveAttribute("tabindex", "-1");
+
+  await previewTab.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(setupTab).toBeFocused();
+  await expect(setupTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("紹介サイトの題材")).toBeVisible();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(panelTab).toBeFocused();
+  // 末尾から先頭へ循環する。
+  await page.keyboard.press("ArrowRight");
+  await expect(previewTab).toBeFocused();
+  // 左方向にも動く。
+  await page.keyboard.press("ArrowLeft");
+  await expect(panelTab).toBeFocused();
+});
+
+// レビュー指摘の再現ケース。
+// タブUIの都合でプレビューiframeをtabIndex={-1}にしたことがあり、
+// 生成サイト内のロゴリンクとセクション(tabindex=0)へキーボードで到達できなくなっていた。
+test("プレビュー内の要素へキーボードで到達できる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const preview = page.locator("iframe[title='生成サイトのプレビュー']");
+  await expect(preview).not.toHaveAttribute("tabindex", "-1");
+
+  // iframe内へフォーカスを入れ、Tabでロゴ→各セクションへ進めること。
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator(".logo").focus();
+  await expect(frame.locator(".logo")).toBeFocused();
+
+  await page.keyboard.press("Tab");
+  await expect(frame.locator("[data-builder-id='hero']")).toBeFocused();
 });

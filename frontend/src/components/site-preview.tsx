@@ -40,19 +40,22 @@ export function SitePreview({ site, onElementSelect }: Props) {
       return;
     }
     // themeのみ変更: iframe内スクリプトへCSSを送り、styleタグだけ差し替えてもらう。
+    // 編集用スタイル込みのCSSを送る（提出物用のcssを送るとホバー枠が消える）。
     iframeRef.current?.contentWindow?.postMessage(
-      { type: "learning-builder:theme", css: artifacts.css },
+      { type: "learning-builder:theme", css: artifacts.editorCss },
       "*",
     );
-  }, [structureHtml, artifacts.srcdoc, artifacts.css]);
+  }, [structureHtml, artifacts.srcdoc, artifacts.editorCss]);
 
+  // 高さは親(main)いっぱいに収める。スクロールはiframe内のサイト側で行うため、
+  // min-hで親を押し広げると外側にも余計なスクロールバーが出る。
   return (
     <iframe
       ref={iframeRef}
       title="生成サイトのプレビュー"
       sandbox="allow-scripts"
       srcDoc={srcDoc}
-      className="min-h-[720px] w-full flex-1 rounded-2xl border border-slate-300 bg-white shadow-xl"
+      className="min-h-[420px] w-full flex-1 rounded-2xl border border-slate-300 bg-white shadow-xl xl:min-h-0"
     />
   );
 }

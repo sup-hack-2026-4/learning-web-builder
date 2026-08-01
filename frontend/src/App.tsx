@@ -1,6 +1,6 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,15 +13,37 @@ import { exportProject } from "@/features/export/export-project";
 import { ProjectControls } from "@/features/projects/project-controls";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
 import { createSampleSite } from "@/features/site-model/sample";
+import type { SiteModel } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 
-type ThemeKey = "primary" | "background" | "fontFamily" | "spacing";
+type ThemeKey = "primary" | "background" | "text" | "heading" | "fontFamily" | "spacing";
+
+// 右カラムのパネル。縦積みだと画面に収まらないため、タブで1つずつ表示する。
+type PanelKey = "design" | "explanation" | "quality";
+
+const panelLabels: Record<PanelKey, string> = {
+  design: "調整",
+  explanation: "解説",
+  quality: "品質",
+};
+
+// 狭い画面では3カラムを縦に積むと極端に見づらいため、
+// プレビューを主役に据え、他はここで切り替える。
+type MobileView = "preview" | "setup" | "panel";
+
+const mobileViewLabels: Record<MobileView, string> = {
+  preview: "プレビュー",
+  setup: "題材・メモ",
+  panel: "調整と学習",
+};
 
 // 学習メモ・ZIP出力に載る、テーマ項目の日本語ラベル。
 const themeKeyLabels: Record<ThemeKey, string> = {
   primary: "メインカラー",
   background: "背景色",
+  text: "テキストカラー",
+  heading: "見出しの色",
   fontFamily: "フォント",
   spacing: "余白",
 };
@@ -34,17 +56,45 @@ const fontLabels: Record<string, string> = {
 };
 
 // テーマ項目の現在値を「メインカラーを #e11d48 に」のような読める文へ整形する。
-function describeThemeChange(key: ThemeKey, theme: { primary: string; background: string; fontFamily: string; spacing: number }): string {
+function describeThemeChange(key: ThemeKey, theme: SiteModel["theme"]): string {
   const label = themeKeyLabels[key];
   if (key === "fontFamily") return `${label}を ${fontLabels[theme.fontFamily] ?? theme.fontFamily} に`;
   if (key === "spacing") return `${label}を ${theme.spacing} に`;
-  if (key === "primary") return `${label}を ${theme.primary} に`;
-  return `${label}を ${theme.background} に`;
+  // 見出しの色は未指定ならメインカラーを引き継ぐため、その場合は実際に適用される色を書く。
+  if (key === "heading") return `${label}を ${theme.heading ?? theme.primary} に`;
+  return `${label}を ${theme[key]} に`;
 }
 
 // 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
 // あとで理由欄が書き換わっても過去の変更には影響しないようにする。
 type TouchedThemeChange = { key: ThemeKey; reason: string };
+
+// WAI-ARIAのタブは、Tabキーでタブ列に入ったあと方向キーで移動する。
+// 選択中だけをタブ順に含め(tabIndex=0)、方向キーでフォーカスと選択を循環させる。
+function handleTabKeyDown<T extends string>(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  keys: readonly T[],
+  current: T,
+  orientation: "vertical" | "horizontal",
+  tabId: (key: T) => string,
+  select: (key: T) => void,
+) {
+  const [previous, next] = orientation === "vertical"
+    ? ["ArrowUp", "ArrowDown"]
+    : ["ArrowLeft", "ArrowRight"];
+  const step = event.key === next ? 1 : event.key === previous ? -1 : 0;
+  let index = keys.indexOf(current);
+  if (step !== 0) index = (index + step + keys.length) % keys.length;
+  else if (event.key === "Home") index = 0;
+  else if (event.key === "End") index = keys.length - 1;
+  else return;
+
+  event.preventDefault();
+  select(keys[index]);
+  // 選択と同時にフォーカスも移す（ARIAの自動アクティベーション）。
+  // 子要素の並び順ではなくidで引く。タブ以外が同居しても壊れないようにするため。
+  document.getElementById(tabId(keys[index]))?.focus();
+}
 
 export default function App() {
   const [topic, setTopic] = useState("");
@@ -54,6 +104,13 @@ export default function App() {
   // 記録ボタンを押すまでに変更したテーマ項目を、そのとき入力されていた理由と対にして覚えておく。
   // 記録時はこの理由を使うため、途中で理由欄を書き換えても過去の変更には紐づかない。
   const [touchedThemeChanges, setTouchedThemeChanges] = useState<TouchedThemeChange[]>([]);
+  // 右カラムは縦に積むと画面へ収まらないため、常に1パネルだけ表示する。
+  const [activePanel, setActivePanel] = useState<PanelKey>("design");
+  // 畳むとプレビューがPC幅まで広がり、出力時に近い見た目を確認できる。
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [setupOpen, setSetupOpen] = useState(true);
+  // 狭い画面用。xl以上では使わず、3カラムを同時に表示する。
+  const [mobileView, setMobileView] = useState<MobileView>("preview");
   const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
@@ -156,13 +213,12 @@ export default function App() {
     discardUnrecordedChanges();
   };
 
+  // ヘッダーはflex-wrapで高さが変わるため、縦flexで残り高さをグリッドへ渡し、
+  // 高さの決め打ち(calc(100vh-73px))を避ける。
   return (
-    <div className="min-h-screen bg-slate-100">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
-        <div>
-          <p className="text-xs font-bold tracking-[0.2em] text-blue-600">LEARNING WEB BUILDER</p>
-          <h1 className="text-lg font-black text-slate-900">答えではなく、考え方を持ち帰る。</h1>
-        </div>
+    <div className="flex min-h-screen flex-col bg-slate-100 xl:h-screen">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
+        <h1 className="text-2xl font-black tracking-tight text-blue-600">Whyve</h1>
         <div className="flex flex-wrap items-center gap-2">
           <AuthControls enabled={clerkConfig.enabled} />
           <ProjectControls
@@ -178,8 +234,30 @@ export default function App() {
         </div>
       </header>
 
-      <div className="grid min-h-[calc(100vh-73px)] grid-cols-1 xl:grid-cols-[290px_minmax(480px,1fr)_350px]">
-        <aside className="border-r border-slate-200 bg-white p-4">
+      {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
+      <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[290px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
+        {/* 下部バーのタブから参照されるパネル。xl以上では3カラム同時表示になるが、
+            タブ列自体がxl:hiddenで消えるため、関連付けが残っていても支障はない。 */}
+        <aside
+          id="view-setup"
+          role="tabpanel"
+          aria-labelledby="view-tab-setup"
+          className={`min-h-0 overflow-hidden border-r border-slate-200 bg-slate-100 xl:flex ${mobileView === "setup" ? "flex" : "hidden"}`}
+        >
+          {/* 畳んだときに残るつまみ。xl未満では下部バーで切り替えるため出さない。 */}
+          <div className="order-2 hidden w-10 shrink-0 flex-col items-center bg-slate-100 py-3 xl:flex">
+            <button
+              type="button"
+              onClick={() => setSetupOpen((open) => !open)}
+              aria-expanded={setupOpen}
+              title={setupOpen ? "題材・メモを畳んでプレビューを広げる" : "題材・メモを開く"}
+              className="w-10 rounded-r-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
+            >
+              {setupOpen ? <ChevronLeft className="mx-auto size-4" /> : <ChevronRight className="mx-auto size-4" />}
+            </button>
+          </div>
+
+          <div className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${setupOpen ? "block" : "block xl:hidden"}`}>
           <form onSubmit={submitTopic} className="space-y-3">
             <label className="text-sm font-bold" htmlFor="topic">紹介サイトの題材</label>
             <Textarea id="topic" rows={3} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />
@@ -208,30 +286,107 @@ export default function App() {
               <div key={note.id} className="rounded-xl bg-slate-50 p-3 text-xs"><strong>{note.target}</strong><p className="mt-1 text-slate-600">{note.reason}</p></div>
             ))}
           </div>
+          </div>
         </aside>
 
-        <main className="flex min-h-[70vh] flex-col p-4">
+        <main
+          id="view-preview"
+          role="tabpanel"
+          aria-labelledby="view-tab-preview"
+          className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
+        >
           <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
-          <div className="flex items-center justify-between pb-3">
-            <div><span className="text-xs font-bold text-slate-500">LIVE PREVIEW</span><h2 className="font-black">{site.siteTitle}</h2></div>
-            <span className="rounded-full bg-white px-3 py-1 text-xs text-slate-500">クリックしてコードを解説</span>
+          <div className="pb-3">
+            <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
+            <h2 className="font-black">{site.siteTitle}</h2>
           </div>
           <SitePreview site={site} onElementSelect={selectElement} />
         </main>
 
-        <aside className="border-l border-slate-200 bg-white p-4">
+        <aside
+          id="view-panel"
+          role="tabpanel"
+          aria-labelledby="view-tab-panel"
+          className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}
+        >
+          {/* フォルダのつまみのような縦タブ。畳んでいる間もここだけは残る。 */}
+          <div className="flex w-14 shrink-0 flex-col items-end py-3">
+          {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。
+              デスクトップで畳んでいる間は、押しても結果が見えないタブを並べない。
+              モバイルには畳みの概念がないため常に出す。 */}
+          <div className={`flex-col items-end gap-1 ${panelOpen ? "flex" : "flex xl:hidden"}`} role="tablist" aria-label="調整と学習" aria-orientation="vertical">
+            {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
+              // 選択状態は「どのパネルを選んでいるか」だけで決める。
+              // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
+              // 畳んでいる間はタブ列しか見えないため、選択表示が残っていて差し支えない。
+              const selected = activePanel === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  id={`panel-tab-${key}`}
+                  aria-selected={selected}
+                  aria-controls="panel-content"
+                  tabIndex={selected ? 0 : -1}
+                  title={panelLabels[key]}
+                  onKeyDown={(event) =>
+                    handleTabKeyDown(event, Object.keys(panelLabels) as PanelKey[], activePanel, "vertical", (k) => `panel-tab-${k}`, setActivePanel)
+                  }
+                  onClick={() => {
+                    // タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
+                    // モバイルではパネルが常時表示なので、ここでpanelOpenを触ると
+                    // 画面に出ていない「デスクトップの畳み状態」を勝手に書き換えてしまう。
+                    setActivePanel(key);
+                  }}
+                  className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "bg-white text-slate-900" : "text-slate-600 hover:bg-white/60 hover:text-slate-800"}`}
+                >
+                  {/* 縦書き。折り返すと1文字ずつ横に割れるため、折り返しを禁止する。 */}
+                  <span className="whitespace-nowrap [writing-mode:vertical-rl]">{panelLabels[key]}</span>
+                  {key === "quality" && quality.some((item) => !item.passed) && (
+                    <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-600" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+            <button
+              type="button"
+              onClick={() => setPanelOpen((open) => !open)}
+              aria-expanded={panelOpen}
+              title={panelOpen ? "パネルを畳んでプレビューを広げる" : "パネルを開く"}
+              className="mt-1 hidden w-12 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700 xl:block"
+            >
+              {panelOpen ? <ChevronRight className="mx-auto size-4" /> : <ChevronLeft className="mx-auto size-4" />}
+            </button>
+          </div>
+
+          {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
+          <div
+            id="panel-content"
+            role="tabpanel"
+            aria-labelledby={`panel-tab-${activePanel}`}
+            className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${panelOpen ? "block" : "block xl:hidden"}`}
+          >
           <h2 className="text-base font-black">調整と学習</h2>
-          <label className="mt-3 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
+
+          {activePanel === "design" && <>
+          <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
           <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
           <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-amber-400 focus-visible:ring-amber-400"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
 
           <Card className="relative mt-4 space-y-4 p-4">
             <h3 className="text-sm font-black">デザイン</h3>
-            <label className="block text-xs font-bold">メインカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.primary} onChange={(event) => changeTheme("primary", event.target.value)} /></label>
-            <label className="block text-xs font-bold">背景色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.background} onChange={(event) => changeTheme("background", event.target.value)} /></label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs font-bold">メインカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.primary} onChange={(event) => changeTheme("primary", event.target.value)} /></label>
+              <label className="block text-xs font-bold">背景色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.background} onChange={(event) => changeTheme("background", event.target.value)} /></label>
+              <label className="block text-xs font-bold">テキストカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.text} onChange={(event) => changeTheme("text", event.target.value)} /></label>
+              {/* 見出しの色は未指定ならメインカラーを引き継ぐ。ピッカーにはその実効値を表示する。 */}
+              <label className="block text-xs font-bold">見出しの色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.heading ?? site.theme.primary} onChange={(event) => changeTheme("heading", event.target.value)} /></label>
+            </div>
             <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => changeTheme("spacing", Number(event.target.value))} /></label>
             <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
-            <Button className="w-full" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
+            <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
             {!reason.trim() && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl bg-white/75 px-4 text-center backdrop-blur-[1px]">
                 <span className="text-sm font-black text-slate-700">まず変更の理由を入力</span>
@@ -245,23 +400,55 @@ export default function App() {
             <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
             <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} /></label>
             {selectedSection.kind !== "contact" && <label className="block text-xs font-bold">画像の説明（alt）<Input className="mt-1" value={selectedSection.imageAlt} onChange={(event) => updateSection(selectedSection.id, { imageAlt: event.target.value })} placeholder="画像が見えない人にも伝わる説明" /></label>}
-            <Button className="w-full" variant="secondary" disabled={!reason.trim()} onClick={recordContentReason}>内容変更の理由を記録</Button>
+            <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordContentReason}>内容変更の理由を記録</Button>
           </Card>}
+          </>}
 
-          <Card className="mt-4 p-4">
+          {activePanel === "explanation" && <Card className="mt-4 p-4">
             <h3 className="text-sm font-black">なぜこのコード？</h3>
-            <p className="mt-2 text-sm font-bold text-blue-700">{explanation.title}</p>
+            {/* プレビュー上に置くと画面を圧迫するため、操作案内はこのタブ内に置く。 */}
+            <p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">
+              プレビュー内の要素を<strong>クリック</strong>すると、その部分の解説に切り替わります。
+            </p>
+            <p className="mt-3 text-sm font-bold text-blue-700">{explanation.title}</p>
             <p className="mt-2 text-xs leading-5"><strong>HTML:</strong> {explanation.html}</p>
             <p className="mt-1 text-xs leading-5"><strong>CSS:</strong> {explanation.css}</p>
             <p className="mt-1 text-xs leading-5 text-slate-600">{explanation.why}</p>
-          </Card>
+          </Card>}
 
-          <Card className="mt-4 p-4">
+          {activePanel === "quality" && <Card className="mt-4 p-4">
             <h3 className="text-sm font-black">品質チェック</h3>
             <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
-          </Card>
+          </Card>}
+          </div>
         </aside>
       </div>
+
+      {/* 狭い画面用の切替バー。3カラムを縦積みすると見づらいため、1つずつ表示する。 */}
+      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" role="tablist" aria-label="表示の切り替え">
+        {(Object.keys(mobileViewLabels) as MobileView[]).map((key) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            id={`view-tab-${key}`}
+            aria-selected={mobileView === key}
+            aria-controls={`view-${key}`}
+            tabIndex={mobileView === key ? 0 : -1}
+            onKeyDown={(event) =>
+              handleTabKeyDown(event, Object.keys(mobileViewLabels) as MobileView[], mobileView, "horizontal", (k) => `view-tab-${k}`, setMobileView)
+            }
+            onClick={() => setMobileView(key)}
+            className={`relative flex-1 py-3 text-xs font-bold transition ${mobileView === key ? "text-blue-700" : "text-slate-600"}`}
+          >
+            {mobileViewLabels[key]}
+            {key === "panel" && quality.some((item) => !item.passed) && (
+              <span className="ml-1 inline-block size-1.5 rounded-full bg-red-600 align-middle" />
+            )}
+            {mobileView === key && <span className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-blue-700" />}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
