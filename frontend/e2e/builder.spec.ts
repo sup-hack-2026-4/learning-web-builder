@@ -174,11 +174,15 @@ test("デスクトップでタブを再クリックしてもパネルは畳ま�
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
   await expect(designTab).toHaveAttribute("aria-selected", "true");
 
-  // 畳んだ状態でタブを押すと、そのパネルを開く。
+  // 畳むとタブ列ごと隠れる。押しても結果が見えないタブを残さないため。
   await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
   await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
-  await page.getByRole("tab", { name: "解説", exact: true }).click();
-  await expect(page.getByText("なぜこのコード？")).toBeVisible();
+  await expect(designTab).toBeHidden();
+
+  // 開き直すと、畳む前に選んでいたパネルが出る。
+  await page.getByRole("button", { name: "パネルを開く" }).click();
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
 });
 
 test("モバイルでは3つの画面を下部バーで切り替えられる", async ({ page }) => {
@@ -244,4 +248,27 @@ test("デスクトップで畳んだ状態からモバイル幅にすると内�
   await page.getByRole("tab", { name: "調整と学習" }).click();
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
   await expect(page.getByRole("tab", { name: "調整", exact: true })).toHaveAttribute("aria-selected", "true");
+});
+
+// レビュー指摘の再現ケース。
+// 内側タブのクリックでsetPanelOpen(true)していたころは、モバイルでタブを切り替えると
+// デスクトップで畳んでおいた状態が展開されてしまっていた。
+test("デスクトップで畳んだ状態は、モバイルでタブを切り替えても保たれる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 1. デスクトップで右パネルを畳む。
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+  await expect(page.getByText("なぜこの変更をしますか？")).toBeHidden();
+
+  // 2. モバイル幅へ縮小し、3. 内側の別タブを押す。
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByRole("tab", { name: "解説", exact: true }).click();
+  await expect(page.getByText("なぜこのコード？")).toBeVisible();
+
+  // 4. デスクトップ幅へ戻すと、畳んだ状態が保たれている。
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByText("なぜこのコード？")).toBeHidden();
+  await expect(page.getByRole("button", { name: "パネルを開く" })).toBeVisible();
 });

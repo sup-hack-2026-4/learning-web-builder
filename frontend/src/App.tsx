@@ -209,7 +209,14 @@ export default function App() {
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
       <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[290px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
-        <aside id="view-setup" className={`min-h-0 overflow-hidden border-r border-slate-200 bg-slate-100 xl:flex ${mobileView === "setup" ? "flex" : "hidden"}`}>
+        {/* 下部バーのタブから参照されるパネル。xl以上では3カラム同時表示になるが、
+            タブ列自体がxl:hiddenで消えるため、関連付けが残っていても支障はない。 */}
+        <aside
+          id="view-setup"
+          role="tabpanel"
+          aria-labelledby="view-tab-setup"
+          className={`min-h-0 overflow-hidden border-r border-slate-200 bg-slate-100 xl:flex ${mobileView === "setup" ? "flex" : "hidden"}`}
+        >
           {/* 畳んだときに残るつまみ。xl未満では下部バーで切り替えるため出さない。 */}
           <div className="order-2 hidden w-10 shrink-0 flex-col items-center bg-slate-100 py-3 xl:flex">
             <button
@@ -255,7 +262,12 @@ export default function App() {
           </div>
         </aside>
 
-        <main id="view-preview" className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}>
+        <main
+          id="view-preview"
+          role="tabpanel"
+          aria-labelledby="view-tab-preview"
+          className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
+        >
           <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
           <div className="pb-3">
             <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
@@ -264,11 +276,18 @@ export default function App() {
           <SitePreview site={site} onElementSelect={selectElement} />
         </main>
 
-        <aside id="view-panel" className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}>
+        <aside
+          id="view-panel"
+          role="tabpanel"
+          aria-labelledby="view-tab-panel"
+          className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}
+        >
           {/* フォルダのつまみのような縦タブ。畳んでいる間もここだけは残る。 */}
           <div className="flex w-14 shrink-0 flex-col items-end py-3">
-          {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
-          <div className="flex flex-col items-end gap-1" role="tablist" aria-label="調整と学習">
+          {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。
+              デスクトップで畳んでいる間は、押しても結果が見えないタブを並べない。
+              モバイルには畳みの概念がないため常に出す。 */}
+          <div className={`flex-col items-end gap-1 ${panelOpen ? "flex" : "flex xl:hidden"}`} role="tablist" aria-label="調整と学習">
             {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
               // 選択状態は「どのパネルを選んでいるか」だけで決める。
               // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
@@ -284,10 +303,10 @@ export default function App() {
                   aria-controls="panel-content"
                   title={panelLabels[key]}
                   onClick={() => {
-                    // タブはパネルの切り替えだけを担う。畳みはデスクトップ専用ボタンの役割。
-                    // ここでpanelOpenを触ると、畳めないモバイルの操作でデスクトップの状態が変わる。
+                    // タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
+                    // モバイルではパネルが常時表示なので、ここでpanelOpenを触ると
+                    // 画面に出ていない「デスクトップの畳み状態」を勝手に書き換えてしまう。
                     setActivePanel(key);
-                    setPanelOpen(true);
                   }}
                   className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "bg-white text-slate-900" : "text-slate-600 hover:bg-white/60 hover:text-slate-800"}`}
                 >
@@ -381,6 +400,7 @@ export default function App() {
             key={key}
             type="button"
             role="tab"
+            id={`view-tab-${key}`}
             aria-selected={mobileView === key}
             aria-controls={`view-${key}`}
             onClick={() => setMobileView(key)}
