@@ -55,6 +55,9 @@ export function SitePreview({ site, onElementSelect }: Props) {
       title="生成サイトのプレビュー"
       sandbox="allow-scripts"
       srcDoc={srcDoc}
+      // プレビューは閲覧用。Tabキーでiframe内へ入ると外へ戻りにくく、
+      // 後ろにある調整パネルのタブまで辿り着けなくなる。
+      tabIndex={-1}
       className="min-h-[420px] w-full flex-1 rounded-2xl border border-slate-300 bg-white shadow-xl xl:min-h-0"
     />
   );

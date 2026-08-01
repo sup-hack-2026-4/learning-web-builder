@@ -272,3 +272,75 @@ test("デスクトップで畳んだ状態は、モバイルでタブを切り�
   await expect(page.getByText("なぜこのコード？")).toBeHidden();
   await expect(page.getByRole("button", { name: "パネルを開く" })).toBeVisible();
 });
+
+test("内側タブは上下キーでフォーカスと選択が循環移動する", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const designTab = page.getByRole("tab", { name: "調整", exact: true });
+  const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
+  const qualityTab = page.getByRole("tab", { name: "品質", exact: true });
+
+  // 選択中だけがタブ順に含まれる。
+  await expect(designTab).toHaveAttribute("tabindex", "0");
+  await expect(explanationTab).toHaveAttribute("tabindex", "-1");
+
+  // Tabキーだけでタブ列まで到達できること（プレビューのiframeに吸われない）。
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  for (let i = 0; i < 20 && !(await designTab.evaluate((el) => el === document.activeElement)); i++) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(designTab).toBeFocused();
+
+  await page.keyboard.press("ArrowDown");
+  await expect(explanationTab).toBeFocused();
+  await expect(explanationTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("なぜこのコード？")).toBeVisible();
+
+  // 末尾から先頭へ循環する。
+  await page.keyboard.press("ArrowDown");
+  await expect(qualityTab).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(designTab).toBeFocused();
+
+  // 上方向にも動き、Home/Endも効く。
+  await page.keyboard.press("ArrowUp");
+  await expect(qualityTab).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(designTab).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(qualityTab).toBeFocused();
+});
+
+test("モバイル下部タブは左右キーでフォーカスと選択が循環移動する", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const previewTab = page.getByRole("tab", { name: "プレビュー" });
+  const setupTab = page.getByRole("tab", { name: "題材・メモ" });
+  const panelTab = page.getByRole("tab", { name: "調整と学習" });
+
+  await expect(previewTab).toHaveAttribute("tabindex", "0");
+  await expect(setupTab).toHaveAttribute("tabindex", "-1");
+
+  // Tabキーだけで下部バーまで到達できること。
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  for (let i = 0; i < 20 && !(await previewTab.evaluate((el) => el === document.activeElement)); i++) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(previewTab).toBeFocused();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(setupTab).toBeFocused();
+  await expect(setupTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("紹介サイトの題材")).toBeVisible();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(panelTab).toBeFocused();
+  // 末尾から先頭へ循環する。
+  await page.keyboard.press("ArrowRight");
+  await expect(previewTab).toBeFocused();
+  // 左方向にも動く。
+  await page.keyboard.press("ArrowLeft");
+  await expect(panelTab).toBeFocused();
+});

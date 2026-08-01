@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import { useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,33 @@ function describeThemeChange(key: ThemeKey, theme: SiteModel["theme"]): string {
 // 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
 // あとで理由欄が書き換わっても過去の変更には影響しないようにする。
 type TouchedThemeChange = { key: ThemeKey; reason: string };
+
+// WAI-ARIAのタブは、Tabキーでタブ列に入ったあと方向キーで移動する。
+// 選択中だけをタブ順に含め(tabIndex=0)、方向キーでフォーカスと選択を循環させる。
+function handleTabKeyDown<T extends string>(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  keys: readonly T[],
+  current: T,
+  orientation: "vertical" | "horizontal",
+  tabId: (key: T) => string,
+  select: (key: T) => void,
+) {
+  const [previous, next] = orientation === "vertical"
+    ? ["ArrowUp", "ArrowDown"]
+    : ["ArrowLeft", "ArrowRight"];
+  const step = event.key === next ? 1 : event.key === previous ? -1 : 0;
+  let index = keys.indexOf(current);
+  if (step !== 0) index = (index + step + keys.length) % keys.length;
+  else if (event.key === "Home") index = 0;
+  else if (event.key === "End") index = keys.length - 1;
+  else return;
+
+  event.preventDefault();
+  select(keys[index]);
+  // 選択と同時にフォーカスも移す（ARIAの自動アクティベーション）。
+  // 子要素の並び順ではなくidで引く。タブ以外が同居しても壊れないようにするため。
+  document.getElementById(tabId(keys[index]))?.focus();
+}
 
 export default function App() {
   const [topic, setTopic] = useState("");
@@ -287,7 +314,7 @@ export default function App() {
           {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。
               デスクトップで畳んでいる間は、押しても結果が見えないタブを並べない。
               モバイルには畳みの概念がないため常に出す。 */}
-          <div className={`flex-col items-end gap-1 ${panelOpen ? "flex" : "flex xl:hidden"}`} role="tablist" aria-label="調整と学習">
+          <div className={`flex-col items-end gap-1 ${panelOpen ? "flex" : "flex xl:hidden"}`} role="tablist" aria-label="調整と学習" aria-orientation="vertical">
             {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
               // 選択状態は「どのパネルを選んでいるか」だけで決める。
               // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
@@ -301,7 +328,11 @@ export default function App() {
                   id={`panel-tab-${key}`}
                   aria-selected={selected}
                   aria-controls="panel-content"
+                  tabIndex={selected ? 0 : -1}
                   title={panelLabels[key]}
+                  onKeyDown={(event) =>
+                    handleTabKeyDown(event, Object.keys(panelLabels) as PanelKey[], activePanel, "vertical", (k) => `panel-tab-${k}`, setActivePanel)
+                  }
                   onClick={() => {
                     // タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
                     // モバイルではパネルが常時表示なので、ここでpanelOpenを触ると
@@ -403,6 +434,10 @@ export default function App() {
             id={`view-tab-${key}`}
             aria-selected={mobileView === key}
             aria-controls={`view-${key}`}
+            tabIndex={mobileView === key ? 0 : -1}
+            onKeyDown={(event) =>
+              handleTabKeyDown(event, Object.keys(mobileViewLabels) as MobileView[], mobileView, "horizontal", (k) => `view-tab-${k}`, setMobileView)
+            }
             onClick={() => setMobileView(key)}
             className={`relative flex-1 py-3 text-xs font-bold transition ${mobileView === key ? "text-blue-700" : "text-slate-600"}`}
           >
