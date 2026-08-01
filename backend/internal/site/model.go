@@ -13,6 +13,10 @@ type Theme struct {
 	Primary    string `json:"primary"`
 	Background string `json:"background"`
 	Text       string `json:"text"`
+	// 見出し(h2)の色。任意項目で、未指定ならフロントエンドがPrimaryを使う。
+	// 保存リクエストは未知フィールドを拒否するため、この項目が無いと
+	// 見出しの色を変えたプロジェクトを保存できなくなる。
+	Heading    string `json:"heading,omitempty"`
 	FontFamily string `json:"fontFamily"`
 	Spacing    int    `json:"spacing"`
 }

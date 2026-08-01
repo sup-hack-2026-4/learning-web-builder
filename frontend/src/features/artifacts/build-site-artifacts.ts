@@ -2,8 +2,11 @@ import type { SiteModel } from "../site-model/schema";
 
 export type SiteArtifacts = {
   html: string;
+  /** 提出物(ZIP)に入れるCSS。編集用のスタイルは含めない。 */
   css: string;
   javascript: string;
+  /** 編集画面のプレビュー用。cssに選択枠などを上乗せしたもの。 */
+  editorCss: string;
   srcdoc: string;
 };
 
@@ -12,6 +15,38 @@ const fontFamilies: Record<SiteModel["theme"]["fontFamily"], string> = {
   serif: '"Noto Serif JP", Georgia, serif',
   rounded: '"M PLUS Rounded 1c", "Noto Sans JP", sans-serif',
 };
+
+// ヒーローの文字色の候補。純白・純黒から外すとコントラストが足りない色域が生まれる。
+// 例えば黒側を#111827にすると、#006effで4.49となり通常文字のAA(4.5:1)を満たせない。
+// 見た目の好みより可読性を優先し、ここは純色のままにする。
+const HERO_TEXT_LIGHT = "#ffffff";
+const HERO_TEXT_DARK = "#000000";
+
+// WCAG相対輝度。sRGBをガンマ展開してから輝度に落とす。
+function relativeLuminance(hexColor: string): number {
+  const hex = hexColor.replace("#", "");
+  const channel = (offset: number) => {
+    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+function contrastRatio(a: string, b: string): number {
+  const [light, dark] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+// 背景色の上に置く文字色を、白か黒かで選ぶ。
+// ヒーローは全面がメインカラーなので、明るい色を選ばれると白文字が読めなくなる。
+// この色は大見出しだけでなくヒーロー内の本文にも継承されるため、
+// 通常文字のAA(4.5:1)を全色域で満たす必要がある。
+// 品質チェックにコントラスト検査は無く、生徒が自力で気付けないため生成側で担保する。
+export function readableTextOn(hexColor: string): string {
+  return contrastRatio(hexColor, HERO_TEXT_LIGHT) >= contrastRatio(hexColor, HERO_TEXT_DARK)
+    ? HERO_TEXT_LIGHT
+    : HERO_TEXT_DARK;
+}
 
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
@@ -73,27 +108,36 @@ export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {
   --primary: ${model.theme.primary};
   --background: ${model.theme.background};
   --text: ${model.theme.text};
+  /* 見出し(h2)の色。未指定ならメインカラーを引き継ぐ。 */
+  --heading: ${model.theme.heading ?? model.theme.primary};
+  /* メインカラーの上に載せる文字色。明るい色を選んでも読めるよう明度から決める。 */
+  --on-primary: ${readableTextOn(model.theme.primary)};
   --space: ${model.theme.spacing * 4}px;
+  /* ヘッダー・フッター等の面と境界線。背景色からのみ作る。
+     テキストカラーを混ぜると、文字色を変えただけで背景まで動いてしまうため使わない。 */
+  --surface: color-mix(in srgb, var(--background) 92%, #64748b);
+  --border: color-mix(in srgb, var(--background) 82%, #64748b);
+  /* 補助テキスト。こちらは文字色なので--textに追従してよい。 */
+  --text-muted: color-mix(in srgb, var(--text) 65%, var(--background));
   font-family: ${fontFamilies[model.theme.fontFamily]};
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; color: var(--text); background: var(--background); line-height: 1.75; }
-.site-header { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 18px clamp(20px, 6vw, 80px); background: #fff; border-bottom: 1px solid #dbe3ef; }
+.site-header { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: calc(var(--space) * 0.9) clamp(20px, 6vw, 80px); color: var(--text); background: var(--surface); border-bottom: 1px solid var(--border); }
 .logo { color: var(--primary); font-weight: 800; text-decoration: none; }
-.site-header span { color: #5b6474; font-size: 13px; }
-.section { padding: calc(var(--space) * 2.5) clamp(20px, 8vw, 120px); cursor: pointer; }
-.section:focus, .section:hover { outline: 3px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -6px; }
+.site-header span { color: var(--text-muted); font-size: 13px; }
+.section { padding: calc(var(--space) * 2.5) clamp(20px, 8vw, 120px); }
 .section-inner { width: min(980px, 100%); margin: 0 auto; }
-.section-hero { min-height: 64vh; display: grid; align-items: center; color: #fff; background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 56%, #111827)); }
+.section-hero { min-height: 64vh; display: grid; align-items: center; color: var(--on-primary); background: var(--primary); }
 h1 { max-width: 780px; margin: 0 0 20px; font-size: clamp(42px, 8vw, 88px); line-height: 1.05; }
-h2 { margin: 0 0 16px; color: var(--primary); font-size: clamp(28px, 4vw, 46px); }
+h2 { margin: 0 0 16px; color: var(--heading); font-size: clamp(28px, 4vw, 46px); }
 p { max-width: 720px; margin: 0 0 28px; }
-.image-placeholder { min-height: 220px; display: grid; place-items: center; color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, #fff); border: 2px dashed color-mix(in srgb, var(--primary) 35%, #fff); border-radius: 20px; font-weight: 800; letter-spacing: .18em; }
-.section-features { background: #fff; }
-footer { padding: 28px; text-align: center; color: #667085; background: #eef2f7; font-size: 13px; }
+.image-placeholder { min-height: 220px; display: grid; place-items: center; color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--background)); border: 2px dashed color-mix(in srgb, var(--primary) 35%, var(--background)); border-radius: 20px; font-weight: 800; letter-spacing: .18em; }
+.section-features { background: var(--surface); }
+footer { padding: calc(var(--space) * 1.4); text-align: center; color: var(--text-muted); background: var(--surface); border-top: 1px solid var(--border); font-size: 13px; }
 @media (max-width: 640px) {
-  .site-header { align-items: flex-start; flex-direction: column; }
+  .site-header { align-items: flex-start; flex-direction: column; gap: calc(var(--space) * 0.4); padding: calc(var(--space) * 0.8) 20px; }
   .section { padding: calc(var(--space) * 2) 20px; }
   .section-hero { min-height: 54vh; }
 }`;
@@ -107,11 +151,28 @@ footer { padding: 28px; text-align: center; color: #667085; background: #eef2f7;
       elementId: element.getAttribute('data-builder-id')
     }, '*');
   });
+});
+
+// 親（エディタ）からのテーマ更新を受け取り、styleタグの中身だけ差し替える。
+// srcDocごと再ロードするとちらつき・スクロール位置リセットが起きるため、CSSのみ更新する。
+// 送信元は親ウィンドウに限定し、想定したメッセージ型・文字列のみを反映する。
+window.addEventListener('message', (event) => {
+  if (event.source !== window.parent) return;
+  var data = event.data;
+  if (!data || data.type !== 'learning-builder:theme' || typeof data.css !== 'string') return;
+  var style = document.getElementById('builder-theme');
+  if (style) style.textContent = data.css;
 });`;
 
+  // 編集画面でだけ使うスタイル。クリックで選択できることを示すためのもので、
+  // 提出物のHTML/CSSには含めない（生徒の成果物に編集用の見た目を残さない）。
+  const editorCss = `${css}
+.section { cursor: pointer; }
+.section:focus, .section:hover { outline: 3px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -6px; }`;
+
   const srcdoc = html
-    .replace('<link rel="stylesheet" href="style.css">', `<style>${css}</style>`)
+    .replace('<link rel="stylesheet" href="style.css">', `<style id="builder-theme">${editorCss}</style>`)
     .replace('<script src="script.js"></script>', `<script>${javascript}</script>`);
 
-  return { html, css, javascript, srcdoc };
+  return { html, css, javascript, editorCss, srcdoc };
 }

@@ -15,7 +15,13 @@ describe("buildSiteArtifacts", () => {
     expect(artifacts.html).toContain("<!doctype html>");
     expect(artifacts.css).toContain("@media (max-width: 640px)");
     expect(artifacts.javascript).toContain("postMessage");
-    expect(artifacts.srcdoc).toContain("<style>");
+    expect(artifacts.srcdoc).toContain('<style id="builder-theme">');
+  });
+
+  it("親からのテーマ更新メッセージを受け取るスクリプトを含む", () => {
+    const artifacts = buildSiteArtifacts(createSampleSite());
+    expect(artifacts.javascript).toContain("learning-builder:theme");
+    expect(artifacts.javascript).toContain("builder-theme");
   });
 });
 

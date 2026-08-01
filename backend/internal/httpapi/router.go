@@ -1,18 +1,35 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/project"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
 type Config struct {
-	FrontendOrigin string
+	AllowedOrigins []string
+	Authenticator  SessionAuthenticator
+	Generator      SiteGenerator
+	Projects       project.Repository
+}
+
+type SessionAuthenticator interface {
+	Optional(http.Handler) http.Handler
+}
+
+type SiteGenerator interface {
+	Generate(context.Context, string) (site.Model, error)
 }
 
 type generateRequest struct {
@@ -25,49 +42,86 @@ func NewRouter(config Config) http.Handler {
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
-	router.Use(cors(config.FrontendOrigin))
+	router.Use(cors(config.AllowedOrigins))
 
 	router.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", func(writer http.ResponseWriter, _ *http.Request) {
 			writeJSON(writer, http.StatusOK, map[string]string{"service": "learning-web-builder-api", "status": "ok", "version": "0.1.0"})
 		})
-		api.Post("/generate", generate)
+		api.With(optionalAuthentication(config.Authenticator)).Get("/session", session)
+		api.Post("/generate", generate(config.Generator))
+		api.With(optionalAuthentication(config.Authenticator)).Post("/projects", createProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects", listProjects(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}", getProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Put("/projects/{projectId}", updateProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Post("/projects/{projectId}/quality-results", saveQualityResults(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}/quality-results", listQualityResults(config.Projects))
 	})
 
 	return router
 }
 
-func generate(writer http.ResponseWriter, request *http.Request) {
-	request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
-	var input generateRequest
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
+func optionalAuthentication(authenticator SessionAuthenticator) func(http.Handler) http.Handler {
+	if authenticator == nil {
+		return func(next http.Handler) http.Handler {
+			return next
+		}
 	}
-	input.Topic = strings.TrimSpace(input.Topic)
-	if input.Topic == "" || len([]rune(input.Topic)) > 100 {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "topic must be between 1 and 100 characters"})
-		return
-	}
-
-	// 初期版は常に監修済み静的サンプルを返す。Gemini連携時も同じ構造へ検証してから返す。
-	writeJSON(writer, http.StatusOK, map[string]any{"site": site.Sample(input.Topic), "provider": "static-sample"})
+	return authenticator.Optional
 }
 
-func cors(origin string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			writer.Header().Set("Access-Control-Allow-Origin", origin)
-			writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			if request.Method == http.MethodOptions {
-				writer.WriteHeader(http.StatusNoContent)
+func session(writer http.ResponseWriter, request *http.Request) {
+	identity, authenticated := authn.IdentityFromContext(request.Context())
+	if !authenticated {
+		writeJSON(writer, http.StatusOK, map[string]any{"authenticated": false, "mode": "guest"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"authenticated": true,
+		"mode":          "clerk",
+		"userId":        identity.UserID,
+	})
+}
+
+func generate(generator SiteGenerator) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
+		var input generateRequest
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		input.Topic = strings.TrimSpace(input.Topic)
+		if input.Topic == "" || len([]rune(input.Topic)) > 100 {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "topic must be between 1 and 100 characters"})
+			return
+		}
+
+		if generator != nil {
+			generatedSite, err := generator.Generate(request.Context(), input.Topic)
+			if err == nil {
+				err = site.Validate(generatedSite)
+			}
+			if err == nil {
+				writeJSON(writer, http.StatusOK, map[string]any{"site": generatedSite, "provider": "gemini"})
 				return
 			}
-			next.ServeHTTP(writer, request)
-		})
+			log.Printf("Gemini generation failed; using static fallback request_id=%s error=%v", middleware.GetReqID(request.Context()), err)
+		}
+
+		fallback := site.Sample(input.Topic)
+		if err := site.Validate(fallback); err != nil {
+			log.Printf("static fallback validation failed request_id=%s error=%v", middleware.GetReqID(request.Context()), err)
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "site generation failed"})
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]any{"site": fallback, "provider": "static-sample"})
 	}
 }
 
