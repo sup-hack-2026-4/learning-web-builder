@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Code2, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,9 @@ import { CodePanel } from "@/components/code-panel";
 import { SitePreview } from "@/components/site-preview";
 import { VerticalSplitter } from "@/components/vertical-splitter";
 import { handleTabKeyDown } from "@/lib/tab-keyboard";
+import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
+import { collectChangedLineTexts } from "@/features/code-view/annotate-code";
+import { countPassedAspects, evaluateReason } from "@/features/reasoning/evaluate-reason";
 import { AuthControls } from "@/features/auth/auth-controls";
 import { clerkConfig } from "@/features/auth/config";
 import { explanationDictionary } from "@/features/explanations/dictionary";
@@ -123,6 +126,27 @@ export default function App() {
   );
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
+  // 書いている途中の理由を、何を・なぜ・どう良くなるかの3点で見る。記録は止めず、書き足す観点を示す。
+  const reasonChecks = useMemo(() => evaluateReason(reason), [reason]);
+  const passedAspects = countPassedAspects(reasonChecks);
+
+  // 記録するデザイン変更が、実際にCSSのどこを動かしたかを取り出す。
+  // 対象の項目だけを基準値から動かして比べるため、まとめて変更しても項目ごとに分けて残せる。
+  const cssChangesForThemeKeys = (keys: ThemeKey[]): string[] => {
+    const changedTheme = { ...themeBaseline };
+    for (const key of keys) Object.assign(changedTheme, { [key]: site.theme[key] });
+    return collectChangedLineTexts(
+      buildSiteArtifacts({ ...site, theme: changedTheme }).css,
+      buildSiteArtifacts({ ...site, theme: themeBaseline }).css,
+    );
+  };
+
+  // 内容の変更はHTMLに出る。表示切替も文章の書き換えも同じ見かたで取り出せる。
+  const htmlChangesFromBaseline = (sections: SiteModel["sections"]): string[] =>
+    collectChangedLineTexts(
+      buildSiteArtifacts({ ...site, sections }).html,
+      buildSiteArtifacts({ ...site, sections: sectionsBaseline }).html,
+    );
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
   const explanation = explanationDictionary[selectedElementId] ?? explanationDictionary.about;
 
@@ -141,8 +165,22 @@ export default function App() {
   // 記録できたときだけ、コード上の「未記録の変更」の基準を進める。
   const toggleSection = (id: string, visible: boolean) => {
     const trimmedReason = reason.trim();
-    updateSection(id, { visible }, trimmedReason || undefined);
+    const nextSections = site.sections.map((section) => (section.id === id ? { ...section, visible } : section));
+    updateSection(
+      id,
+      { visible },
+      trimmedReason || undefined,
+      trimmedReason ? htmlChangesFromBaseline(nextSections) : undefined,
+    );
     if (trimmedReason) setSectionsBaseline(useBuilderStore.getState().site.sections);
+  };
+
+  // 記録は止めないが、書けていない観点があれば次に何を書けばよいかを添える。
+  // 理由が書けたこと自体を理解の証拠にせず、説明を組み立てる手がかりを返すため。
+  const noticeForRecordedReason = (message: string): string => {
+    const missing = reasonChecks.filter((check) => !check.passed);
+    if (missing.length === 0) return `${message} 何を・なぜ・どう良くなるかがそろっています。`;
+    return `${message} 次は「${missing.map((check) => check.label).join("」「")}」も書けると、変更を自分の言葉で説明できます。`;
   };
 
   const generation = useMutation({
@@ -207,9 +245,9 @@ export default function App() {
     }, []);
     for (const group of groupedByReason) {
       const summary = group.keys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
-      addNote(`デザイン変更（${summary}）`, group.reason);
+      addNote(`デザイン変更（${summary}）`, group.reason, cssChangesForThemeKeys(group.keys));
     }
-    setNotice("デザイン変更の内容と理由を学習メモへ記録しました。");
+    setNotice(noticeForRecordedReason("デザイン変更の内容と理由を学習メモへ記録しました。"));
     setThemeBaseline(site.theme);
     setTouchedThemeChanges([]);
     setReason("");
@@ -218,8 +256,8 @@ export default function App() {
   // 理由欄をクリアしても、未記録のデザイン変更は変更時の理由を保持しているため影響を受けない。
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
-    addNote(`内容変更（${selectedSection.title}）`, reason.trim());
-    setNotice("内容変更の理由を学習メモへ記録しました。");
+    addNote(`内容変更（${selectedSection.title}）`, reason.trim(), htmlChangesFromBaseline(site.sections));
+    setNotice(noticeForRecordedReason("内容変更の理由を学習メモへ記録しました。"));
     setSectionsBaseline(site.sections);
     setReason("");
   };
@@ -306,7 +344,18 @@ export default function App() {
           <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
           <div className="max-h-52 space-y-2 overflow-auto">
             {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
-              <div key={note.id} className="rounded-xl bg-slate-50 p-3 text-xs"><strong>{note.target}</strong><p className="mt-1 text-slate-600">{note.reason}</p></div>
+              <div key={note.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+                <strong>{note.target}</strong>
+                <p className="mt-1 text-slate-600">{note.reason}</p>
+                {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
+                {note.codeChanges && note.codeChanges.length > 0 && (
+                  <ul className="mt-2 space-y-0.5 border-t border-slate-200 pt-2">
+                    {note.codeChanges.map((line) => (
+                      <li key={line} className="truncate font-mono text-[10px] text-slate-500" title={line}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             ))}
           </div>
           </div>
@@ -418,6 +467,24 @@ export default function App() {
           <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
           <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
           <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-amber-400 focus-visible:ring-amber-400"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
+
+          {/* 書けている観点をその場で返す。記録は止めず、足りない観点の書き足しかたを示す。 */}
+          <ul className="mt-2 space-y-1" aria-label="理由の書けている観点">
+            {reasonChecks.map((check) => (
+              <li key={check.id} className="flex gap-1.5 text-[11px] leading-4">
+                {check.passed
+                  ? <Check className="mt-px size-3.5 shrink-0 text-emerald-600" aria-hidden />
+                  : <Circle className="mt-px size-3.5 shrink-0 text-slate-300" aria-hidden />}
+                <span className={check.passed ? "text-emerald-700" : "text-slate-500"}>
+                  <strong className="font-bold">{check.label}</strong>
+                  {check.passed ? <span className="sr-only">：書けています</span> : `：${check.hint}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {passedAspects === reasonChecks.length && (
+            <p className="mt-1 text-[11px] font-bold text-emerald-700">3つそろいました。記録すると、変わったコードも一緒に残ります。</p>
+          )}
 
           <Card className="relative mt-4 space-y-4 p-4">
             <h3 className="text-sm font-black">デザイン</h3>

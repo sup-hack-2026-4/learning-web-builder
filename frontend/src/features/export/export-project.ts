@@ -11,10 +11,7 @@ export async function exportProject(site: SiteModel, notes: LearningNote[], aiUs
   zip.file("index.html", artifacts.html);
   zip.file("style.css", artifacts.css);
   zip.file("script.js", artifacts.javascript);
-  zip.file(
-    "learning-notes.md",
-    `# 学習メモ\n\n${notes.length ? notes.map((note) => `- ${note.target}: ${note.reason}`).join("\n") : "- まだ学習メモはありません。"}\n`,
-  );
+  zip.file("learning-notes.md", buildLearningNotes(notes));
   zip.file(
     "quality-report.md",
     `# 品質レポート\n\n${quality.map((item) => `- ${item.passed ? "✅" : "❌"} ${item.label}: ${item.detail}`).join("\n")}\n`,
@@ -32,6 +29,23 @@ export async function exportProject(site: SiteModel, notes: LearningNote[], aiUs
   anchor.download = `${toSafeFileName(site.topic)}-site.zip`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+// 書いた理由と、そのとき実際に変わったコードを並べて残す。
+// 提出後に読み返したとき、理由と変更が対応しているかを自分で確かめられるようにするため。
+export function buildLearningNotes(notes: LearningNote[]): string {
+  if (notes.length === 0) return "# 学習メモ\n\n- まだ学習メモはありません。\n";
+
+  const body = notes
+    .map((note) => {
+      const heading = `- ${note.target}: ${note.reason}`;
+      if (!note.codeChanges?.length) return heading;
+      const changes = note.codeChanges.map((line) => `    - \`${line}\``).join("\n");
+      return `${heading}\n  - 変わったコード:\n${changes}`;
+    })
+    .join("\n");
+
+  return `# 学習メモ\n\n${body}\n`;
 }
 
 function toSafeFileName(value: string) {

@@ -461,3 +461,53 @@ test("モバイルのプレビュー画面でもコードを一緒に見られ�
   await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
   await expect(page.getByRole("region", { name: "生成されたコード" })).toBeVisible();
 });
+
+// 「理由を書けた＝理解できている」とは限らないという指摘への対応。
+// 何を・なぜ・どう良くなるかの3点を、書いている最中に示す。
+test("理由を書くと、書けている観点がその場で示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const aspects = page.getByRole("list", { name: "理由の書けている観点" });
+  // 空欄のうちは、3つとも書き足しかたの案内が出ている。
+  await expect(aspects).toContainText("色・余白・見出しなど、変えた部分の名前を入れましょう。");
+  await expect(aspects).toContainText("「〜だから」「〜のため」と、根拠まで書きましょう。");
+
+  // 変えた部分だけを書くと、その観点だけが満たされる。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を変えた");
+  await expect(aspects).not.toContainText("色・余白・見出しなど、変えた部分の名前を入れましょう。");
+  await expect(aspects).toContainText("「〜だから」「〜のため」と、根拠まで書きましょう。");
+
+  // 根拠と効果まで書くと3つそろう。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を濃くした。背景との差が小さいと読みにくいから");
+  await expect(page.getByText("3つそろいました。記録すると、変わったコードも一緒に残ります。")).toBeVisible();
+});
+
+test("理由を記録すると、そのとき変わったコードが学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("余白を広げた。文章のまとまりが見やすくなるから");
+  // サンプルの初期値(6)と違う値にする。
+  await page.getByLabel(/^余白/).fill("9");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // メモには理由と、実際に変わったCSSの行が並ぶ。
+  const note = page.locator("div").filter({ hasText: /^デザイン変更（余白を 9 に）/ }).last();
+  await expect(note).toContainText("文章のまとまりが見やすくなるから");
+  await expect(note).toContainText("--space: 36px;");
+});
+
+test("観点が足りない理由でも記録でき、次に書く観点を案内する", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 変えた部分は書いているが、根拠と効果がない理由。
+  await page.getByLabel("なぜこの変更をしますか？").fill("メインカラーを赤にした");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // 記録は止めない。そのうえで、書けていない観点を示す。
+  await expect(page.getByText("デザイン変更の内容と理由を学習メモへ記録しました。")).toBeVisible();
+  await expect(page.getByText(/次は「なぜ変えるか」「どう良くなるか」も書けると/)).toBeVisible();
+});

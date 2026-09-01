@@ -457,3 +457,13 @@ export function findChangedLines(currentCode: string, baselineCode: string): Set
   });
   return changed;
 }
+
+// 変わった行そのものを取り出す。学習メモへ「理由」と一緒に残し、
+// あとから理由と実際のコード変更を突き合わせられるようにするために使う。
+export function collectChangedLineTexts(currentCode: string, baselineCode: string): string[] {
+  const changed = findChangedLines(currentCode, baselineCode);
+  return currentCode
+    .split("\n")
+    .filter((_, index) => changed.has(index + 1))
+    .map((line) => line.trim());
+}

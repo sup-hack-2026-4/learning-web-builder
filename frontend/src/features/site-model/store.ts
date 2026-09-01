@@ -13,8 +13,8 @@ type BuilderState = {
   selectElement: (id: string) => void;
   // テーマの更新はプレビュー反映のみ。学習メモはApp側の明示的な記録操作でaddNoteする。
   previewTheme: (key: keyof SiteModel["theme"], value: string | number) => void;
-  updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string) => void;
-  addNote: (target: string, reason: string) => void;
+  updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string, codeChanges?: string[]) => void;
+  addNote: (target: string, reason: string, codeChanges?: string[]) => void;
   reset: () => void;
 };
 
@@ -46,7 +46,7 @@ export const useBuilderStore = create<BuilderState>()(
         set((state) => ({
           site: { ...state.site, theme: { ...state.site.theme, [key]: value } },
         })),
-      updateSection: (id, values, reason) =>
+      updateSection: (id, values, reason, codeChanges) =>
         set((state) => {
           const target = state.site.sections.find((section) => section.id === id);
           const targetLabel = target?.title ?? id;
@@ -58,13 +58,13 @@ export const useBuilderStore = create<BuilderState>()(
               ),
             },
             notes: reason
-              ? [...state.notes, { id: crypto.randomUUID(), target: `表示切替（${targetLabel}）`, reason, createdAt: new Date().toISOString() }]
+              ? [...state.notes, { id: crypto.randomUUID(), target: `表示切替（${targetLabel}）`, reason, createdAt: new Date().toISOString(), codeChanges }]
               : state.notes,
           };
         }),
-      addNote: (target, reason) =>
+      addNote: (target, reason, codeChanges) =>
         set((state) => ({
-          notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString() }],
+          notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString(), codeChanges }],
         })),
       reset: () => set({ site: createSampleSite(), selectedElementId: "hero", notes: [], aiUsage: [] }),
     }),
