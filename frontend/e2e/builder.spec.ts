@@ -353,3 +353,111 @@ test("プレビュー内の要素へキーボードで到達できる", async ({
   await page.keyboard.press("Tab");
   await expect(frame.locator("[data-builder-id='hero']")).toBeFocused();
 });
+
+// 「理由を書くときに、目の前にコードがある」状態を作るための表示。
+// プレビューとコードを同時に見せ、選んだ要素がコードのどこかを示す。
+test("プレビューの下に生成コードが並び、選んだ要素の行が示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await expect(codeView).toBeVisible();
+  // プレビューを隠さずに、同時に見えていること。
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+
+  // 初期表示はindex.html。提出物ZIPと同じファイル名で示す。
+  await expect(codeView.getByRole("tab", { name: "index.html" })).toHaveAttribute("aria-selected", "true");
+  await expect(codeView).toContainText("<!doctype html>");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+
+  await expect(codeView).toContainText("選んだ要素: 私たちについて");
+  const selectedLines = codeView.locator("li[data-selected='true']");
+  // 選んだセクションを書いている行だけが示される。
+  await expect(selectedLines.filter({ hasText: "私たちについて" })).toHaveCount(1);
+  await expect(selectedLines.filter({ hasText: "3つの魅力" })).toHaveCount(0);
+});
+
+test("CSSタブでは、選んだ要素に効いているルールが示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+
+  const selectedLines = codeView.locator("li[data-selected='true']");
+  // ヒーローはh1と.section-heroの両方で装飾されている。
+  // .section-heroは通常時と@media内の2か所にあり、どちらもヒーローに効いている。
+  await expect(selectedLines.filter({ hasText: ".section-hero {" })).toHaveCount(2);
+  await expect(selectedLines.filter({ hasText: "h1 {" })).toHaveCount(1);
+  // 他のセクションだけに効くルールは対象外。
+  await expect(selectedLines.filter({ hasText: "h2 {" })).toHaveCount(0);
+});
+
+// 「なぜ変えるか」を書く場面で、自分の操作がコードのどこを動かしたかを見せる。
+test("デザインを変えると、コード上に未記録の変更として示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+  await expect(codeView.locator("li[data-changed='true']")).toHaveCount(0);
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("元気な印象にしたいから");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+
+  const changedLines = codeView.locator("li[data-changed='true']");
+  await expect(changedLines.filter({ hasText: "--primary:" })).toHaveCount(1);
+  await expect(changedLines.filter({ hasText: "#e11d48" }).first()).toBeVisible();
+  await expect(codeView).toContainText("未記録の変更");
+
+  // 理由を記録すると、そこが新しい基準になり「未記録」ではなくなる。
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(codeView.locator("li[data-changed='true']")).toHaveCount(0);
+  await expect(codeView).not.toContainText("未記録の変更");
+});
+
+test("コードを隠すとプレビューが縦に広がる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const preview = page.locator("iframe[title='生成サイトのプレビュー']");
+  const initialPreviewHeight = (await preview.boundingBox())!.height;
+
+  await page.getByRole("button", { name: "コードを隠す" }).click();
+  await expect(codeView).toBeHidden();
+  expect((await preview.boundingBox())!.height).toBeGreaterThan(initialPreviewHeight);
+
+  await page.getByRole("button", { name: "コードを見る" }).click();
+  await expect(codeView).toBeVisible();
+});
+
+test("プレビューとコードの高さを境目で調整できる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const heightOf = async () => (await codeView.boundingBox())!.height;
+  const initial = await heightOf();
+
+  // ドラッグできない環境でも変えられるよう、キーボードでも操作できる。
+  await page.getByRole("separator", { name: "プレビューとコードの高さを調整" }).focus();
+  await page.keyboard.press("ArrowUp");
+  expect(await heightOf()).toBeGreaterThan(initial);
+
+  await page.keyboard.press("ArrowDown");
+  expect(await heightOf()).toBeCloseTo(initial, 0);
+});
+
+test("モバイルのプレビュー画面でもコードを一緒に見られる", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+  await expect(page.getByRole("region", { name: "生成されたコード" })).toBeVisible();
+});

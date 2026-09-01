@@ -17,6 +17,7 @@ Go API ── Gemini（失敗時は静的サンプル）
   ↓ Zodで検証
 SiteModel（Zustand + localStorage）
   ├─ buildSiteArtifacts → iframe srcdoc
+  │                     └ annotateCode → コード表示（選択要素の行・未記録の変更行）
   ├─ qualityChecks      → 品質レポート
   ├─ learningNotes      → 学習メモ
   └─ JSZip              → 提出物一式

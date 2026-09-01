@@ -1,11 +1,14 @@
-import { useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Code2, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { CodePanel } from "@/components/code-panel";
 import { SitePreview } from "@/components/site-preview";
+import { VerticalSplitter } from "@/components/vertical-splitter";
+import { handleTabKeyDown } from "@/lib/tab-keyboard";
 import { AuthControls } from "@/features/auth/auth-controls";
 import { clerkConfig } from "@/features/auth/config";
 import { explanationDictionary } from "@/features/explanations/dictionary";
@@ -69,32 +72,9 @@ function describeThemeChange(key: ThemeKey, theme: SiteModel["theme"]): string {
 // あとで理由欄が書き換わっても過去の変更には影響しないようにする。
 type TouchedThemeChange = { key: ThemeKey; reason: string };
 
-// WAI-ARIAのタブは、Tabキーでタブ列に入ったあと方向キーで移動する。
-// 選択中だけをタブ順に含め(tabIndex=0)、方向キーでフォーカスと選択を循環させる。
-function handleTabKeyDown<T extends string>(
-  event: ReactKeyboardEvent<HTMLButtonElement>,
-  keys: readonly T[],
-  current: T,
-  orientation: "vertical" | "horizontal",
-  tabId: (key: T) => string,
-  select: (key: T) => void,
-) {
-  const [previous, next] = orientation === "vertical"
-    ? ["ArrowUp", "ArrowDown"]
-    : ["ArrowLeft", "ArrowRight"];
-  const step = event.key === next ? 1 : event.key === previous ? -1 : 0;
-  let index = keys.indexOf(current);
-  if (step !== 0) index = (index + step + keys.length) % keys.length;
-  else if (event.key === "Home") index = 0;
-  else if (event.key === "End") index = keys.length - 1;
-  else return;
-
-  event.preventDefault();
-  select(keys[index]);
-  // 選択と同時にフォーカスも移す（ARIAの自動アクティベーション）。
-  // 子要素の並び順ではなくidで引く。タブ以外が同居しても壊れないようにするため。
-  document.getElementById(tabId(keys[index]))?.focus();
-}
+// プレビューとコードの高さ配分。どちらも読めなくならない範囲に収める。
+const minCodeHeight = 120;
+const minPreviewHeight = 240;
 
 export default function App() {
   const [topic, setTopic] = useState("");
@@ -111,7 +91,36 @@ export default function App() {
   const [setupOpen, setSetupOpen] = useState(true);
   // 狭い画面用。xl以上では使わず、3カラムを同時に表示する。
   const [mobileView, setMobileView] = useState<MobileView>("preview");
+  // プレビューの下に生成コードを出す。理由を書くときに、対象のコードが目の前にある状態を作る。
+  const [codeOpen, setCodeOpen] = useState(true);
+  const [codeHeight, setCodeHeight] = useState(240);
+  const previewAreaRef = useRef<HTMLDivElement>(null);
+
+  // 高さの上限は画面の広さで変わるため、コードの高さはその都度この範囲へ収める。
+  const limitCodeHeight = useCallback((height: number) => {
+    const available = previewAreaRef.current?.clientHeight ?? 0;
+    if (available === 0) return height;
+    const maxHeight = Math.max(minCodeHeight, available - minPreviewHeight);
+    return Math.min(Math.max(height, minCodeHeight), maxHeight);
+  }, []);
+
+  // 画面が狭いとプレビューが潰れてしまうため、表示時とウィンドウ変更時に収め直す。
+  useEffect(() => {
+    const fit = () => setCodeHeight(limitCodeHeight);
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [codeOpen, limitCodeHeight]);
   const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
+
+  // 「まだ理由を書いていない変更」をコード上で示すための基準。
+  // デザインと内容は別々に記録するため、基準も分けて持つ。
+  const [themeBaseline, setThemeBaseline] = useState(site.theme);
+  const [sectionsBaseline, setSectionsBaseline] = useState(site.sections);
+  const baselineSite = useMemo(
+    () => ({ ...site, theme: themeBaseline, sections: sectionsBaseline }),
+    [site, themeBaseline, sectionsBaseline],
+  );
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
@@ -119,9 +128,21 @@ export default function App() {
 
   // 記録されないまま残っている「変更中の状態」を捨てる。
   // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
+  // 差し替え後のサイトが新しい基準になるため、コード上の変更表示もここで消える。
   const discardUnrecordedChanges = () => {
     setTouchedThemeChanges([]);
     setReason("");
+    const current = useBuilderStore.getState().site;
+    setThemeBaseline(current.theme);
+    setSectionsBaseline(current.sections);
+  };
+
+  // セクションの表示切替は、理由が入っていればその場で学習メモへ残る。
+  // 記録できたときだけ、コード上の「未記録の変更」の基準を進める。
+  const toggleSection = (id: string, visible: boolean) => {
+    const trimmedReason = reason.trim();
+    updateSection(id, { visible }, trimmedReason || undefined);
+    if (trimmedReason) setSectionsBaseline(useBuilderStore.getState().site.sections);
   };
 
   const generation = useMutation({
@@ -189,6 +210,7 @@ export default function App() {
       addNote(`デザイン変更（${summary}）`, group.reason);
     }
     setNotice("デザイン変更の内容と理由を学習メモへ記録しました。");
+    setThemeBaseline(site.theme);
     setTouchedThemeChanges([]);
     setReason("");
   };
@@ -198,6 +220,7 @@ export default function App() {
     if (!reason.trim() || !selectedSection) return;
     addNote(`内容変更（${selectedSection.title}）`, reason.trim());
     setNotice("内容変更の理由を学習メモへ記録しました。");
+    setSectionsBaseline(site.sections);
     setReason("");
   };
 
@@ -275,7 +298,7 @@ export default function App() {
             {site.sections.map((section) => (
               <label key={section.id} className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">
                 <span>{section.title}</span>
-                <input type="checkbox" checked={section.visible} onChange={(event) => updateSection(section.id, { visible: event.target.checked }, reason.trim() || undefined)} />
+                <input type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
               </label>
             ))}
           </div>
@@ -296,11 +319,32 @@ export default function App() {
           className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
         >
           <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
-          <div className="pb-3">
-            <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
-            <h2 className="font-black">{site.siteTitle}</h2>
+          <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
+            <div>
+              <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
+              <h2 className="font-black">{site.siteTitle}</h2>
+            </div>
+            <Button variant="secondary" className="min-h-9 px-3 text-xs" onClick={() => setCodeOpen((open) => !open)} aria-expanded={codeOpen} aria-controls="code-panel-content">
+              <Code2 className="mr-2 size-4" />{codeOpen ? "コードを隠す" : "コードを見る"}
+            </Button>
           </div>
-          <SitePreview site={site} onElementSelect={selectElement} />
+
+          {/* プレビューと生成コードを同時に見せる。理由を書く場面で、対象のコードを探しに行かせないため。 */}
+          <div ref={previewAreaRef} className="flex min-h-0 flex-1 flex-col">
+            <SitePreview site={site} onElementSelect={selectElement} />
+            {codeOpen && (
+              <>
+                <VerticalSplitter
+                  label="プレビューとコードの高さを調整"
+                  // 下へ動かすとコードが縮む。プレビュー側も読める高さを残す。
+                  onResize={(deltaY) => setCodeHeight((height) => limitCodeHeight(height - deltaY))}
+                />
+                <div className="flex shrink-0 flex-col" style={{ height: codeHeight }}>
+                  <CodePanel site={site} baselineSite={baselineSite} selectedElementId={selectedElementId} />
+                </div>
+              </>
+            )}
+          </div>
         </main>
 
         <aside
