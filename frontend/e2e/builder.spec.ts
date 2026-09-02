@@ -353,3 +353,268 @@ test("プレビュー内の要素へキーボードで到達できる", async ({
   await page.keyboard.press("Tab");
   await expect(frame.locator("[data-builder-id='hero']")).toBeFocused();
 });
+
+// 「理由を書くときに、目の前にコードがある」状態を作るための表示。
+// プレビューとコードを同時に見せ、選んだ要素がコードのどこかを示す。
+test("プレビューの下に生成コードが並び、選んだ要素の行が示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await expect(codeView).toBeVisible();
+  // プレビューを隠さずに、同時に見えていること。
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+
+  // 初期表示はindex.html。提出物ZIPと同じファイル名で示す。
+  await expect(codeView.getByRole("tab", { name: "index.html" })).toHaveAttribute("aria-selected", "true");
+  await expect(codeView).toContainText("<!doctype html>");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+
+  await expect(codeView).toContainText("選んだ要素: 私たちについて");
+  const selectedLines = codeView.locator("li[data-selected='true']");
+  // 選んだセクションを書いている行だけが示される。
+  await expect(selectedLines.filter({ hasText: "私たちについて" })).toHaveCount(1);
+  await expect(selectedLines.filter({ hasText: "3つの魅力" })).toHaveCount(0);
+});
+
+test("CSSタブでは、選んだ要素に効いているルールが示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+
+  const selectedLines = codeView.locator("li[data-selected='true']");
+  // ヒーローはh1と.section-heroの両方で装飾されている。
+  // .section-heroは通常時と@media内の2か所にあり、どちらもヒーローに効いている。
+  await expect(selectedLines.filter({ hasText: ".section-hero {" })).toHaveCount(2);
+  await expect(selectedLines.filter({ hasText: "h1 {" })).toHaveCount(1);
+  // 他のセクションだけに効くルールは対象外。
+  await expect(selectedLines.filter({ hasText: "h2 {" })).toHaveCount(0);
+});
+
+// 「なぜ変えるか」を書く場面で、自分の操作がコードのどこを動かしたかを見せる。
+test("デザインを変えると、コード上に未記録の変更として示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+  await expect(codeView.locator("li[data-changed='true']")).toHaveCount(0);
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("元気な印象にしたいから");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+
+  const changedLines = codeView.locator("li[data-changed='true']");
+  await expect(changedLines.filter({ hasText: "--primary:" })).toHaveCount(1);
+  await expect(changedLines.filter({ hasText: "#e11d48" }).first()).toBeVisible();
+  await expect(codeView).toContainText("未記録の変更");
+
+  // 理由を記録すると、そこが新しい基準になり「未記録」ではなくなる。
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(codeView.locator("li[data-changed='true']")).toHaveCount(0);
+  await expect(codeView).not.toContainText("未記録の変更");
+});
+
+test("コードを隠すとプレビューが縦に広がる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const preview = page.locator("iframe[title='生成サイトのプレビュー']");
+  const initialPreviewHeight = (await preview.boundingBox())!.height;
+
+  await page.getByRole("button", { name: "コードを隠す" }).click();
+  await expect(codeView).toBeHidden();
+  expect((await preview.boundingBox())!.height).toBeGreaterThan(initialPreviewHeight);
+
+  await page.getByRole("button", { name: "コードを見る" }).click();
+  await expect(codeView).toBeVisible();
+});
+
+test("プレビューとコードの高さを境目で調整できる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const heightOf = async () => (await codeView.boundingBox())!.height;
+  const initial = await heightOf();
+
+  // ドラッグできない環境でも変えられるよう、キーボードでも操作できる。
+  await page.getByRole("separator", { name: "プレビューとコードの高さを調整" }).focus();
+  await page.keyboard.press("ArrowUp");
+  expect(await heightOf()).toBeGreaterThan(initial);
+
+  await page.keyboard.press("ArrowDown");
+  expect(await heightOf()).toBeCloseTo(initial, 0);
+});
+
+test("モバイルのプレビュー画面でもコードを一緒に見られる", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+  await expect(page.getByRole("region", { name: "生成されたコード" })).toBeVisible();
+});
+
+// 「理由を書けた＝理解できている」とは限らないという指摘への対応。
+// 何を・なぜ・どう良くなるかの3点を、書いている最中に示す。
+test("理由を書くと、書けている観点がその場で示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const aspects = page.getByRole("list", { name: "理由の書けている観点" });
+  // 空欄のうちは、3つとも書き足しかたの案内が出ている。
+  await expect(aspects).toContainText("色・余白・見出しなど、変えた部分の名前を入れましょう。");
+  await expect(aspects).toContainText("「〜だから」「〜のため」と、根拠まで書きましょう。");
+
+  // 変えた部分だけを書くと、その観点だけが満たされる。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を変えた");
+  await expect(aspects).not.toContainText("色・余白・見出しなど、変えた部分の名前を入れましょう。");
+  await expect(aspects).toContainText("「〜だから」「〜のため」と、根拠まで書きましょう。");
+
+  // 根拠と効果まで書くと3つそろう。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を濃くした。背景との差が小さいと読みにくいから");
+  await expect(page.getByText("3つそろいました。記録すると、変わったコードも一緒に残ります。")).toBeVisible();
+});
+
+test("理由を記録すると、そのとき変わったコードが学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("余白を広げた。文章のまとまりが見やすくなるから");
+  // サンプルの初期値(6)と違う値にする。
+  await page.getByLabel(/^余白/).fill("9");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // メモには理由と、実際に変わったCSSの行が並ぶ。
+  const note = page.locator("div").filter({ hasText: /^デザイン変更（余白を 9 に）/ }).last();
+  await expect(note).toContainText("文章のまとまりが見やすくなるから");
+  await expect(note).toContainText("--space: 36px;");
+});
+
+test("観点が足りない理由でも記録でき、次に書く観点を案内する", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 変えた部分は書いているが、根拠と効果がない理由。
+  await page.getByLabel("なぜこの変更をしますか？").fill("メインカラーを赤にした");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // 記録は止めない。そのうえで、書けていない観点を示す。
+  await expect(page.getByText("デザイン変更の内容と理由を学習メモへ記録しました。")).toBeVisible();
+  await expect(page.getByText(/次は「なぜ変えるか」「どう良くなるか」も書けると/)).toBeVisible();
+});
+
+test("セクションを非表示にすると、消えたコードが学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("3つの魅力を隠した。先に全体像を伝えたいから。読み手が迷わなくなる");
+  await page.getByRole("checkbox", { name: "3つの魅力" }).uncheck();
+
+  // 削除しか起きていなくても、消えた行が「-」付きで残る。
+  const note = page.locator("div").filter({ hasText: /^表示切替（3つの魅力）/ }).last();
+  await expect(note).toContainText("先に全体像を伝えたいから");
+  await expect(note).toContainText("- <h2>3つの魅力</h2>");
+});
+
+test("未記録の変更が残っていても、別のセクションのメモには混ざらない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 1. ヒーローの見出しを、理由を書かずに書き換えておく（未記録のまま残す）。
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("見出し", { exact: true }).fill("未記録のままにする見出し");
+
+  // 2. 別のセクションを選び、そちらだけ理由を書いて記録する。
+  await frame.locator("[data-builder-id='about']").click();
+  await page.getByLabel("見出し", { exact: true }).fill("記録するほうの見出し");
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しを具体的にした。内容が伝わるようにしたいから。読み手が迷わなくなる");
+  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
+
+  // 記録したセクションの変更だけがメモに入る。
+  const note = page.locator("div").filter({ hasText: /^内容変更（記録するほうの見出し）/ }).last();
+  await expect(note).toContainText("記録するほうの見出し");
+  await expect(note).not.toContainText("未記録のままにする見出し");
+});
+
+test("変えた値を元に戻すと、デザイン変更として記録されない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("余白を試しに変えた");
+  const spacing = page.getByLabel(/^余白/);
+  const original = await spacing.inputValue();
+  await spacing.fill("9");
+  await spacing.fill(original);
+
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+});
+
+test("削除しか起きない変更も、コード上に消えた行として示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await expect(codeView).not.toContainText("未記録の変更");
+
+  // 理由を書かずに非表示にするので、記録されず「未記録の変更」として残る。
+  await page.getByRole("checkbox", { name: "3つの魅力" }).uncheck();
+
+  // 消えた行は今のコードに無いため、消える前の位置へ差し込んで見せる。
+  await expect(codeView).toContainText("未記録の変更");
+  await expect(codeView).toContainText("うち削除");
+  await expect(codeView.getByText("<h2>3つの魅力</h2>")).toBeVisible();
+});
+
+test("見出しの色を初期値へ戻すと、デザイン変更として記録されない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 見出しの色は未指定のときメインカラーを引き継ぐ。その実効値が初期値になる。
+  const original = await page.getByLabel("メインカラー").inputValue();
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を試しに変えた");
+  await page.getByLabel("見出しの色").fill("#e11d48");
+  await page.getByLabel("見出しの色").fill(original);
+
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+});
+
+// レビュー指摘の再現ケース。
+// 見出しの色を触って初期色へ戻したとき、同じ色を明示値として残すと
+// 「未指定（メインカラーを継承）」へ戻らず、以降メインカラーへ追従しなくなる。
+test("見出しの色を初期値へ戻すと、メインカラーへの追従も元どおりになる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const heading = page.getByLabel("見出しの色");
+  const primary = page.getByLabel("メインカラー");
+  const original = await primary.inputValue();
+
+  // 未指定の状態では、見出しの色にメインカラーの実効値が出ている。
+  await expect(heading).toHaveValue(original);
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を試しに変えた");
+  await heading.fill("#e11d48");
+  await heading.fill(original);
+
+  // メインカラーを変えると、未指定へ戻っているので見出しの色も追従する。
+  await primary.fill("#16a34a");
+  await expect(heading).toHaveValue("#16a34a");
+
+  // 追従した結果なので、記録されるのはメインカラーの変更だけ。
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("デザイン変更（メインカラーを #16a34a に）")).toBeVisible();
+  await expect(page.getByText("見出しの色を #e11d48 に")).toHaveCount(0);
+});

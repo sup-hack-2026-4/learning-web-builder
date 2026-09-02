@@ -1,4 +1,4 @@
-import type { SiteModel } from "../site-model/schema";
+import type { SiteModel, SiteSection } from "../site-model/schema";
 
 export type SiteArtifacts = {
   html: string;
@@ -61,11 +61,17 @@ export function escapeHtml(value: string): string {
   });
 }
 
+// h1を出す先頭セクションかどうか。表示中セクションでの並び順から判定する。
+// コード表示側でも「h1がどのセクションの見出しか」を同じ基準で示すため、ここから共有する。
+export function isHeroSection(section: SiteSection, index: number): boolean {
+  return section.kind === "hero" || index === 0;
+}
+
 export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {
   const sections = model.sections
     .filter((section) => section.visible)
     .map((section, index) => {
-      const isHero = section.kind === "hero" || index === 0;
+      const isHero = isHeroSection(section, index);
       const heading = isHero
         ? `<h1>${escapeHtml(section.title)}</h1>`
         : `<h2>${escapeHtml(section.title)}</h2>`;

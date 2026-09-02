@@ -56,6 +56,12 @@ export type LearningNote = {
   target: string;
   reason: string;
   createdAt: string;
+  /**
+   * 記録した時点で実際に変わったコードの行。
+   * 「理由を書けた＝理解できている」とは限らないため、書いた理由と実際の変更を対で残し、
+   * あとから見返して突き合わせられるようにする。以前の保存データには無いため任意。
+   */
+  codeChanges?: string[];
 };
 
 export type QualityCheck = {

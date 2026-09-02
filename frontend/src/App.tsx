@@ -1,11 +1,17 @@
-import { useMemo, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { CodePanel } from "@/components/code-panel";
 import { SitePreview } from "@/components/site-preview";
+import { VerticalSplitter } from "@/components/vertical-splitter";
+import { handleTabKeyDown } from "@/lib/tab-keyboard";
+import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
+import { collectChangedLineTexts } from "@/features/code-view/annotate-code";
+import { countPassedAspects, evaluateReason } from "@/features/reasoning/evaluate-reason";
 import { AuthControls } from "@/features/auth/auth-controls";
 import { clerkConfig } from "@/features/auth/config";
 import { explanationDictionary } from "@/features/explanations/dictionary";
@@ -13,7 +19,7 @@ import { exportProject } from "@/features/export/export-project";
 import { ProjectControls } from "@/features/projects/project-controls";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
 import { createSampleSite } from "@/features/site-model/sample";
-import type { SiteModel } from "@/features/site-model/schema";
+import type { SiteModel, SiteSection } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 
@@ -65,36 +71,21 @@ function describeThemeChange(key: ThemeKey, theme: SiteModel["theme"]): string {
   return `${label}を ${theme[key]} に`;
 }
 
+// 実際にCSSへ出る値。見出しの色は未指定ならメインカラーを引き継ぐため、
+// 単純に theme.heading と比べると「未指定」と「メインカラーと同じ色」を
+// 別物と見なしてしまい、元の色へ戻したのに変更が残ってしまう。
+function effectiveThemeValue(theme: SiteModel["theme"], key: ThemeKey): string | number {
+  if (key === "heading") return theme.heading ?? theme.primary;
+  return theme[key];
+}
+
 // 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
 // あとで理由欄が書き換わっても過去の変更には影響しないようにする。
 type TouchedThemeChange = { key: ThemeKey; reason: string };
 
-// WAI-ARIAのタブは、Tabキーでタブ列に入ったあと方向キーで移動する。
-// 選択中だけをタブ順に含め(tabIndex=0)、方向キーでフォーカスと選択を循環させる。
-function handleTabKeyDown<T extends string>(
-  event: ReactKeyboardEvent<HTMLButtonElement>,
-  keys: readonly T[],
-  current: T,
-  orientation: "vertical" | "horizontal",
-  tabId: (key: T) => string,
-  select: (key: T) => void,
-) {
-  const [previous, next] = orientation === "vertical"
-    ? ["ArrowUp", "ArrowDown"]
-    : ["ArrowLeft", "ArrowRight"];
-  const step = event.key === next ? 1 : event.key === previous ? -1 : 0;
-  let index = keys.indexOf(current);
-  if (step !== 0) index = (index + step + keys.length) % keys.length;
-  else if (event.key === "Home") index = 0;
-  else if (event.key === "End") index = keys.length - 1;
-  else return;
-
-  event.preventDefault();
-  select(keys[index]);
-  // 選択と同時にフォーカスも移す（ARIAの自動アクティベーション）。
-  // 子要素の並び順ではなくidで引く。タブ以外が同居しても壊れないようにするため。
-  document.getElementById(tabId(keys[index]))?.focus();
-}
+// プレビューとコードの高さ配分。どちらも読めなくならない範囲に収める。
+const minCodeHeight = 120;
+const minPreviewHeight = 240;
 
 export default function App() {
   const [topic, setTopic] = useState("");
@@ -111,17 +102,126 @@ export default function App() {
   const [setupOpen, setSetupOpen] = useState(true);
   // 狭い画面用。xl以上では使わず、3カラムを同時に表示する。
   const [mobileView, setMobileView] = useState<MobileView>("preview");
+  // プレビューの下に生成コードを出す。理由を書くときに、対象のコードが目の前にある状態を作る。
+  const [codeOpen, setCodeOpen] = useState(true);
+  const [codeHeight, setCodeHeight] = useState(240);
+  const previewAreaRef = useRef<HTMLDivElement>(null);
+
+  // 上限は画面の広さで変わる。支援技術へ調整範囲を伝えるため、値としても持っておく。
+  const [maxCodeHeight, setMaxCodeHeight] = useState(minCodeHeight);
+
+  const measureMaxCodeHeight = useCallback(() => {
+    const available = previewAreaRef.current?.clientHeight ?? 0;
+    if (available === 0) return null;
+    return Math.max(minCodeHeight, available - minPreviewHeight);
+  }, []);
+
+  // 高さの上限は画面の広さで変わるため、コードの高さはその都度この範囲へ収める。
+  const limitCodeHeight = useCallback(
+    (height: number) => {
+      const maxHeight = measureMaxCodeHeight();
+      if (maxHeight === null) return height;
+      return Math.min(Math.max(height, minCodeHeight), maxHeight);
+    },
+    [measureMaxCodeHeight],
+  );
+
+  // 画面が狭いとプレビューが潰れてしまうため、表示時とウィンドウ変更時に収め直す。
+  useEffect(() => {
+    const fit = () => {
+      setCodeHeight(limitCodeHeight);
+      const maxHeight = measureMaxCodeHeight();
+      if (maxHeight !== null) setMaxCodeHeight(maxHeight);
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [codeOpen, limitCodeHeight, measureMaxCodeHeight]);
   const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
 
+  // 「まだ理由を書いていない変更」をコード上で示すための基準。
+  // デザインと内容は別々に記録するため、基準も分けて持つ。
+  const [themeBaseline, setThemeBaseline] = useState(site.theme);
+  // 内容の基準はセクションごとに持つ。ひとまとめにすると、あるセクションを
+  // 未記録のまま別のセクションを記録したときに、変更コードが別の理由へ混ざってしまう。
+  const [sectionBaselines, setSectionBaselines] = useState<Record<string, SiteSection>>(() =>
+    Object.fromEntries(site.sections.map((section) => [section.id, section])),
+  );
+  // 生成やプロジェクト読み込みで増えたセクションは、その時点の内容を基準として扱う。
+  const baselineSections = useMemo(
+    () => site.sections.map((section) => sectionBaselines[section.id] ?? section),
+    [site.sections, sectionBaselines],
+  );
+  const baselineSite = useMemo(
+    () => ({ ...site, theme: themeBaseline, sections: baselineSections }),
+    [site, themeBaseline, baselineSections],
+  );
+
   const quality = useMemo(() => evaluateQuality(site), [site]);
+  // 書いている途中の理由を、何を・なぜ・どう良くなるかの3点で見る。記録は止めず、書き足す観点を示す。
+  const reasonChecks = useMemo(() => evaluateReason(reason), [reason]);
+  const passedAspects = countPassedAspects(reasonChecks);
+
+  // 記録するデザイン変更が、実際にCSSのどこを動かしたかを取り出す。
+  // 対象の項目だけを基準値から動かして比べるため、まとめて変更しても項目ごとに分けて残せる。
+  const cssChangesForThemeKeys = (keys: ThemeKey[]): string[] => {
+    const changedTheme = { ...themeBaseline };
+    for (const key of keys) Object.assign(changedTheme, { [key]: site.theme[key] });
+    return collectChangedLineTexts(
+      buildSiteArtifacts({ ...site, theme: changedTheme }).css,
+      buildSiteArtifacts({ ...site, theme: themeBaseline }).css,
+    );
+  };
+
+  // 内容の変更はHTMLに出る。表示切替も文章の書き換えも同じ見かたで取り出せる。
+  // 対象のセクションだけを基準から動かして比べるため、他のセクションを未記録のまま
+  // 触っていても、その分は今回のメモへ混ざらない。
+  const htmlChangesForSection = (sectionId: string, nextSection: SiteSection): string[] => {
+    const changedSections = baselineSections.map((section) =>
+      section.id === sectionId ? nextSection : section,
+    );
+    return collectChangedLineTexts(
+      buildSiteArtifacts({ ...site, sections: changedSections }).html,
+      buildSiteArtifacts({ ...site, sections: baselineSections }).html,
+    );
+  };
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
   const explanation = explanationDictionary[selectedElementId] ?? explanationDictionary.about;
 
   // 記録されないまま残っている「変更中の状態」を捨てる。
   // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
+  // 差し替え後のサイトが新しい基準になるため、コード上の変更表示もここで消える。
   const discardUnrecordedChanges = () => {
     setTouchedThemeChanges([]);
     setReason("");
+    const current = useBuilderStore.getState().site;
+    setThemeBaseline(current.theme);
+    setSectionBaselines(Object.fromEntries(current.sections.map((section) => [section.id, section])));
+  };
+
+  // セクションの表示切替は、理由が入っていればその場で学習メモへ残る。
+  // 記録できたときだけ、そのセクションの「未記録の変更」の基準を進める。
+  const toggleSection = (id: string, visible: boolean) => {
+    const trimmedReason = reason.trim();
+    const current = site.sections.find((section) => section.id === id);
+    const nextSection = current ? { ...current, visible } : undefined;
+    updateSection(
+      id,
+      { visible },
+      trimmedReason || undefined,
+      trimmedReason && nextSection ? htmlChangesForSection(id, nextSection) : undefined,
+    );
+    if (trimmedReason && nextSection) {
+      setSectionBaselines((baselines) => ({ ...baselines, [id]: nextSection }));
+    }
+  };
+
+  // 記録は止めないが、書けていない観点があれば次に何を書けばよいかを添える。
+  // 理由が書けたこと自体を理解の証拠にせず、説明を組み立てる手がかりを返すため。
+  const noticeForRecordedReason = (message: string): string => {
+    const missing = reasonChecks.filter((check) => !check.passed);
+    if (missing.length === 0) return `${message} 何を・なぜ・どう良くなるかがそろっています。`;
+    return `${message} 次は「${missing.map((check) => check.label).join("」「")}」も書けると、変更を自分の言葉で説明できます。`;
   };
 
   const generation = useMutation({
@@ -158,12 +258,20 @@ export default function App() {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
-    previewTheme(key, value);
-    // 同じ項目を触り直したときは、そのときの理由で上書きする。
-    setTouchedThemeChanges((changes) => [
-      ...changes.filter((change) => change.key !== key),
-      { key, reason: trimmedReason },
-    ]);
+    // 基準の値まで戻したなら、その項目は変更していないのと同じ。
+    // このとき基準に保存されていた値そのものへ戻す。見出しの色を「未指定」から
+    // 触って戻した場合、同じ色を明示値として残すとメインカラーへ追従しなくなり、
+    // 見た目は同じでも基準と違う状態になってしまうため。
+    const backToBaseline = effectiveThemeValue(themeBaseline, key) === value;
+    previewTheme(key, backToBaseline ? themeBaseline[key] : value);
+
+    setTouchedThemeChanges((changes) => {
+      const others = changes.filter((change) => change.key !== key);
+      // 差分が無いのに「デザイン変更」のメモを作れてしまわないよう、対象から外す。
+      if (backToBaseline) return others;
+      // 同じ項目を触り直したときは、そのときの理由で上書きする。
+      return [...others, { key, reason: trimmedReason }];
+    });
   };
 
   // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由をメモへ残す。
@@ -186,9 +294,10 @@ export default function App() {
     }, []);
     for (const group of groupedByReason) {
       const summary = group.keys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
-      addNote(`デザイン変更（${summary}）`, group.reason);
+      addNote(`デザイン変更（${summary}）`, group.reason, cssChangesForThemeKeys(group.keys));
     }
-    setNotice("デザイン変更の内容と理由を学習メモへ記録しました。");
+    setNotice(noticeForRecordedReason("デザイン変更の内容と理由を学習メモへ記録しました。"));
+    setThemeBaseline(site.theme);
     setTouchedThemeChanges([]);
     setReason("");
   };
@@ -196,8 +305,14 @@ export default function App() {
   // 理由欄をクリアしても、未記録のデザイン変更は変更時の理由を保持しているため影響を受けない。
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
-    addNote(`内容変更（${selectedSection.title}）`, reason.trim());
-    setNotice("内容変更の理由を学習メモへ記録しました。");
+    addNote(
+      `内容変更（${selectedSection.title}）`,
+      reason.trim(),
+      htmlChangesForSection(selectedSection.id, selectedSection),
+    );
+    setNotice(noticeForRecordedReason("内容変更の理由を学習メモへ記録しました。"));
+    // 基準を進めるのは記録したセクションだけ。他のセクションの未記録の変更は残す。
+    setSectionBaselines((baselines) => ({ ...baselines, [selectedSection.id]: selectedSection }));
     setReason("");
   };
 
@@ -275,7 +390,7 @@ export default function App() {
             {site.sections.map((section) => (
               <label key={section.id} className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">
                 <span>{section.title}</span>
-                <input type="checkbox" checked={section.visible} onChange={(event) => updateSection(section.id, { visible: event.target.checked }, reason.trim() || undefined)} />
+                <input type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
               </label>
             ))}
           </div>
@@ -283,7 +398,19 @@ export default function App() {
           <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
           <div className="max-h-52 space-y-2 overflow-auto">
             {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
-              <div key={note.id} className="rounded-xl bg-slate-50 p-3 text-xs"><strong>{note.target}</strong><p className="mt-1 text-slate-600">{note.reason}</p></div>
+              <div key={note.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+                <strong>{note.target}</strong>
+                <p className="mt-1 text-slate-600">{note.reason}</p>
+                {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
+                {note.codeChanges && note.codeChanges.length > 0 && (
+                  <ul className="mt-2 space-y-0.5 border-t border-slate-200 pt-2">
+                    {/* 同じ内容の行が複数変わることがあるため、行本文ではなく並び順で見分ける。 */}
+                    {note.codeChanges.map((line, index) => (
+                      <li key={`${note.id}-${index}`} className="truncate font-mono text-[10px] text-slate-500" title={line}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             ))}
           </div>
           </div>
@@ -296,11 +423,35 @@ export default function App() {
           className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
         >
           <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
-          <div className="pb-3">
-            <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
-            <h2 className="font-black">{site.siteTitle}</h2>
+          <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
+            <div>
+              <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
+              <h2 className="font-black">{site.siteTitle}</h2>
+            </div>
+            <Button variant="secondary" className="min-h-9 px-3 text-xs" onClick={() => setCodeOpen((open) => !open)} aria-expanded={codeOpen} aria-controls="code-panel-content">
+              <Code2 className="mr-2 size-4" />{codeOpen ? "コードを隠す" : "コードを見る"}
+            </Button>
           </div>
-          <SitePreview site={site} onElementSelect={selectElement} />
+
+          {/* プレビューと生成コードを同時に見せる。理由を書く場面で、対象のコードを探しに行かせないため。 */}
+          <div ref={previewAreaRef} className="flex min-h-0 flex-1 flex-col">
+            <SitePreview site={site} onElementSelect={selectElement} />
+            {codeOpen && (
+              <>
+                <VerticalSplitter
+                  label="プレビューとコードの高さを調整"
+                  value={codeHeight}
+                  min={minCodeHeight}
+                  max={maxCodeHeight}
+                  // 下へ動かすとコードが縮む。プレビュー側も読める高さを残す。
+                  onResize={(deltaY) => setCodeHeight((height) => limitCodeHeight(height - deltaY))}
+                />
+                <div className="flex shrink-0 flex-col" style={{ height: codeHeight }}>
+                  <CodePanel site={site} baselineSite={baselineSite} selectedElementId={selectedElementId} />
+                </div>
+              </>
+            )}
+          </div>
         </main>
 
         <aside
@@ -374,6 +525,24 @@ export default function App() {
           <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
           <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
           <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-amber-400 focus-visible:ring-amber-400"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
+
+          {/* 書けている観点をその場で返す。記録は止めず、足りない観点の書き足しかたを示す。 */}
+          <ul className="mt-2 space-y-1" aria-label="理由の書けている観点">
+            {reasonChecks.map((check) => (
+              <li key={check.id} className="flex gap-1.5 text-[11px] leading-4">
+                {check.passed
+                  ? <Check className="mt-px size-3.5 shrink-0 text-emerald-600" aria-hidden />
+                  : <Circle className="mt-px size-3.5 shrink-0 text-slate-300" aria-hidden />}
+                <span className={check.passed ? "text-emerald-700" : "text-slate-500"}>
+                  <strong className="font-bold">{check.label}</strong>
+                  {check.passed ? <span className="sr-only">：書けています</span> : `：${check.hint}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {passedAspects === reasonChecks.length && (
+            <p className="mt-1 text-[11px] font-bold text-emerald-700">3つそろいました。記録すると、変わったコードも一緒に残ります。</p>
+          )}
 
           <Card className="relative mt-4 space-y-4 p-4">
             <h3 className="text-sm font-black">デザイン</h3>

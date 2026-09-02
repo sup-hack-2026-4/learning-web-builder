@@ -12,9 +12,10 @@ type BuilderState = {
   loadSite: (site: SiteModel) => void;
   selectElement: (id: string) => void;
   // テーマの更新はプレビュー反映のみ。学習メモはApp側の明示的な記録操作でaddNoteする。
-  previewTheme: (key: keyof SiteModel["theme"], value: string | number) => void;
-  updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string) => void;
-  addNote: (target: string, reason: string) => void;
+  // 見出しの色は「未指定（メインカラーを継承）」も正しい状態なので、undefinedも受け取る。
+  previewTheme: (key: keyof SiteModel["theme"], value: string | number | undefined) => void;
+  updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string, codeChanges?: string[]) => void;
+  addNote: (target: string, reason: string, codeChanges?: string[]) => void;
   reset: () => void;
 };
 
@@ -43,10 +44,15 @@ export const useBuilderStore = create<BuilderState>()(
         }),
       selectElement: (selectedElementId) => set({ selectedElementId }),
       previewTheme: (key, value) =>
-        set((state) => ({
-          site: { ...state.site, theme: { ...state.site.theme, [key]: value } },
-        })),
-      updateSection: (id, values, reason) =>
+        set((state) => {
+          const theme = { ...state.site.theme };
+          // undefinedを値として持たせると「未指定」ではなく「未指定という値」になり、
+          // 保存時のスキーマ検証やCSS生成の分岐がぶれるため、キーごと消す。
+          if (value === undefined) delete theme[key];
+          else Object.assign(theme, { [key]: value });
+          return { site: { ...state.site, theme } };
+        }),
+      updateSection: (id, values, reason, codeChanges) =>
         set((state) => {
           const target = state.site.sections.find((section) => section.id === id);
           const targetLabel = target?.title ?? id;
@@ -58,13 +64,13 @@ export const useBuilderStore = create<BuilderState>()(
               ),
             },
             notes: reason
-              ? [...state.notes, { id: crypto.randomUUID(), target: `表示切替（${targetLabel}）`, reason, createdAt: new Date().toISOString() }]
+              ? [...state.notes, { id: crypto.randomUUID(), target: `表示切替（${targetLabel}）`, reason, createdAt: new Date().toISOString(), codeChanges }]
               : state.notes,
           };
         }),
-      addNote: (target, reason) =>
+      addNote: (target, reason, codeChanges) =>
         set((state) => ({
-          notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString() }],
+          notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString(), codeChanges }],
         })),
       reset: () => set({ site: createSampleSite(), selectedElementId: "hero", notes: [], aiUsage: [] }),
     }),

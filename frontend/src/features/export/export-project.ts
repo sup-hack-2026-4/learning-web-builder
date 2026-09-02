@@ -11,10 +11,7 @@ export async function exportProject(site: SiteModel, notes: LearningNote[], aiUs
   zip.file("index.html", artifacts.html);
   zip.file("style.css", artifacts.css);
   zip.file("script.js", artifacts.javascript);
-  zip.file(
-    "learning-notes.md",
-    `# 学習メモ\n\n${notes.length ? notes.map((note) => `- ${note.target}: ${note.reason}`).join("\n") : "- まだ学習メモはありません。"}\n`,
-  );
+  zip.file("learning-notes.md", buildLearningNotes(notes));
   zip.file(
     "quality-report.md",
     `# 品質レポート\n\n${quality.map((item) => `- ${item.passed ? "✅" : "❌"} ${item.label}: ${item.detail}`).join("\n")}\n`,
@@ -32,6 +29,35 @@ export async function exportProject(site: SiteModel, notes: LearningNote[], aiUs
   anchor.download = `${toSafeFileName(site.topic)}-site.zip`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+// コード中にバッククォートが含まれていても書式が壊れないよう、
+// 中身にある連続バッククォートより1つ長い区切りでコードブロックを囲む。
+function fenceFor(lines: string[]): string {
+  const longestRun = lines.reduce((longest, line) => {
+    const runs = line.match(/`+/g) ?? [];
+    return runs.reduce((max, run) => Math.max(max, run.length), longest);
+  }, 0);
+  return "`".repeat(Math.max(3, longestRun + 1));
+}
+
+// 書いた理由と、そのとき実際に変わったコードを並べて残す。
+// 提出後に読み返したとき、理由と変更が対応しているかを自分で確かめられるようにするため。
+export function buildLearningNotes(notes: LearningNote[]): string {
+  if (notes.length === 0) return "# 学習メモ\n\n- まだ学習メモはありません。\n";
+
+  const body = notes
+    .map((note) => {
+      const heading = `- ${note.target}: ${note.reason}`;
+      if (!note.codeChanges?.length) return heading;
+      // 増えた行と消えた行に「+」「-」が付いているため、diffとして色が付く形で囲む。
+      const fence = fenceFor(note.codeChanges);
+      const changes = note.codeChanges.map((line) => `    ${line}`).join("\n");
+      return `${heading}\n  - 変わったコード:\n\n    ${fence}diff\n${changes}\n    ${fence}`;
+    })
+    .join("\n");
+
+  return `# 学習メモ\n\n${body}\n`;
 }
 
 function toSafeFileName(value: string) {

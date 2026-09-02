@@ -55,7 +55,7 @@ export function SitePreview({ site, onElementSelect }: Props) {
       title="生成サイトのプレビュー"
       sandbox="allow-scripts"
       srcDoc={srcDoc}
-      className="min-h-[420px] w-full flex-1 rounded-2xl border border-slate-300 bg-white shadow-xl xl:min-h-0"
+      className="min-h-[280px] w-full flex-1 rounded-2xl border border-slate-300 bg-white shadow-xl xl:min-h-0"
     />
   );
 }
