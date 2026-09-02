@@ -18,6 +18,8 @@ import { explanationDictionary } from "@/features/explanations/dictionary";
 import { exportProject } from "@/features/export/export-project";
 import { ProjectControls } from "@/features/projects/project-controls";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
+import { impactLabels } from "@/features/quality/axe-audit";
+import { useAxeAudit } from "@/features/quality/use-axe-audit";
 import { createSampleSite } from "@/features/site-model/sample";
 import type { SiteModel, SiteSection } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
@@ -158,6 +160,13 @@ export default function App() {
   );
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
+  // axeの自動チェックはiframeでの実測が要るため非同期。終わるまでは静的な3項目だけで判断する。
+  const axeAudit = useAxeAudit(site);
+  const allChecks = useMemo(
+    () => (axeAudit.status === "ready" ? [...quality, axeAudit.check] : quality),
+    [quality, axeAudit],
+  );
+  const hasQualityIssue = allChecks.some((item) => !item.passed);
   // 書いている途中の理由を、何を・なぜ・どう良くなるかの3点で見る。記録は止めず、書き足す観点を示す。
   const reasonChecks = useMemo(() => evaluateReason(reason), [reason]);
   const passedAspects = countPassedAspects(reasonChecks);
@@ -345,7 +354,7 @@ export default function App() {
             onNotice={setNotice}
           />
           <Button variant="ghost" onClick={resetBuilder}><RotateCcw className="mr-2 size-4" />リセット</Button>
-          <Button onClick={() => void exportProject(site, notes, aiUsage)}><Download className="mr-2 size-4" />提出物ZIP</Button>
+          <Button onClick={() => void exportProject(site, notes, aiUsage, axeAudit.status === "ready" ? [axeAudit.check] : [])}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
       </header>
 
@@ -494,7 +503,7 @@ export default function App() {
                 >
                   {/* 縦書き。折り返すと1文字ずつ横に割れるため、折り返しを禁止する。 */}
                   <span className="whitespace-nowrap [writing-mode:vertical-rl]">{panelLabels[key]}</span>
-                  {key === "quality" && quality.some((item) => !item.passed) && (
+                  {key === "quality" && hasQualityIssue && (
                     <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-600" />
                   )}
                 </button>
@@ -588,6 +597,53 @@ export default function App() {
           {activePanel === "quality" && <Card className="mt-4 p-4">
             <h3 className="text-sm font-black">品質チェック</h3>
             <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
+
+            {/* axeの自動チェック。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
+            <section aria-labelledby="axe-heading" className="mt-4 border-t border-slate-200 pt-3">
+              <h4 id="axe-heading" className="text-xs font-black">アクセシビリティ（axe）</h4>
+
+              {axeAudit.status === "loading" && (
+                <p className="mt-2 text-xs text-slate-500" data-testid="axe-loading">自動チェックを実行しています…</p>
+              )}
+
+              {axeAudit.status === "error" && (
+                <p className="mt-2 flex gap-2 text-xs text-red-700" data-testid="axe-error">
+                  <X className="size-5 shrink-0" />
+                  <span className="leading-5">{axeAudit.message}</span>
+                </p>
+              )}
+
+              {axeAudit.status === "ready" && axeAudit.findings.length === 0 && (
+                <p className="mt-2 flex gap-2 text-xs text-slate-600" data-testid="axe-empty">
+                  <Check className="size-5 shrink-0 text-emerald-600" />
+                  <span className="leading-5">自動チェックで見つかる問題はありませんでした。</span>
+                </p>
+              )}
+
+              {axeAudit.status === "ready" && axeAudit.findings.length > 0 && (
+                <ul className="mt-2 space-y-3" data-testid="axe-findings">
+                  {axeAudit.findings.map((finding) => (
+                    <li key={finding.ruleId} className="flex gap-2 text-xs">
+                      <X className="size-5 shrink-0 text-red-600" />
+                      <div className="min-w-0">
+                        <strong className="leading-5">{finding.summary}</strong>
+                        <p className="mt-0.5 leading-5 text-slate-600">{finding.why}</p>
+                        <p className="mt-0.5 leading-5 text-slate-500">
+                          影響: {impactLabels[finding.impact]} ／ 対象: <code className="break-all">{finding.target}</code>
+                          {finding.count > 1 && ` ほか${finding.count - 1}件`}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* 自動チェックが万能だと思わせないための一文。
+                  axeは機械的に判定できる範囲しか見ないため、通っても内容の分かりやすさは別途確認が要る。 */}
+              <p className="mt-3 text-[11px] leading-4 text-slate-500">
+                提出物と同じHTML・CSSを読み込んで自動判定しています。ここで問題が無くても、文章の分かりやすさは自分の目で確認してください。
+              </p>
+            </section>
           </Card>}
           </div>
         </aside>
@@ -611,7 +667,7 @@ export default function App() {
             className={`relative flex-1 py-3 text-xs font-bold transition ${mobileView === key ? "text-blue-700" : "text-slate-600"}`}
           >
             {mobileViewLabels[key]}
-            {key === "panel" && quality.some((item) => !item.passed) && (
+            {key === "panel" && hasQualityIssue && (
               <span className="ml-1 inline-block size-1.5 rounded-full bg-red-600 align-middle" />
             )}
             {mobileView === key && <span className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-blue-700" />}

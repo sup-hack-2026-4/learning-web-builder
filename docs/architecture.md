@@ -19,6 +19,7 @@ SiteModel（Zustand + localStorage）
   ├─ buildSiteArtifacts → iframe srcdoc
   │                     └ annotateCode → コード表示（選択要素の行・未記録の変更行）
   ├─ qualityChecks      → 品質レポート
+  │                     └ axe-core → 検査用iframeで実測し、指摘を日本語へ変換
   ├─ learningNotes      → 学習メモ（理由＋そのとき変わったコード）
   └─ JSZip              → 提出物一式
 ```
@@ -28,6 +29,7 @@ SiteModel（Zustand + localStorage）
 - iframeには`sandbox="allow-scripts"`のみを付与し、親画面へのDOMアクセスを許可しない
 - ユーザー入力はHTML属性・本文へ入れる前にエスケープする
 - iframeとの通信は`postMessage`のメッセージ型と送信元ウィンドウを確認する
+- axeの検査用iframeもプレビューと同じ`sandbox="allow-scripts"`のまま動かし、結果は`postMessage`でのみ受け取る
 - Geminiの出力はGo側の構造検証後、フロント側でもZod検証する
 - Clerkのトークン検証はGo側で行い、クライアントのユーザーIDを信用しない
 - APIキー、Clerk秘密鍵、DB接続文字列はバックエンド環境変数だけに保存する

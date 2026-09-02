@@ -65,7 +65,7 @@ export type LearningNote = {
 };
 
 export type QualityCheck = {
-  id: "headings" | "alt" | "mobile";
+  id: "headings" | "alt" | "mobile" | "axe";
   label: string;
   passed: boolean;
   detail: string;
