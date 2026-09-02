@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
 import {
   annotateCss,
   annotateHtml,
   annotateJavaScript,
-  findChangedLines,
+  diffLines,
   type CodeLine,
+  type RemovedLine,
   type TokenKind,
 } from "@/features/code-view/annotate-code";
 import type { SiteModel } from "@/features/site-model/schema";
@@ -62,10 +63,38 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
     return annotateJavaScript(artifacts.javascript);
   }, [activeFile, artifacts, site]);
 
-  const changedLines = useMemo(
-    () => findChangedLines(artifacts[activeFile], baselineArtifacts[activeFile]),
+  const diff = useMemo(
+    () => diffLines(artifacts[activeFile], baselineArtifacts[activeFile]),
     [artifacts, baselineArtifacts, activeFile],
   );
+  const changedLines = diff.added;
+
+  // 消えた行は今のコードに無いため、消える前にあった位置へ差し込んで見せる。
+  // これが無いと、セクションを非表示にしたときのように削除しか起きない変更が
+  // コード上に一切現れず、「自分が何を変えたか」を確かめられない。
+  const removedByLine = useMemo(() => {
+    const grouped = new Map<number, RemovedLine[]>();
+    for (const line of diff.removed) {
+      const list = grouped.get(line.afterLine);
+      if (list) list.push(line);
+      else grouped.set(line.afterLine, [line]);
+    }
+    return grouped;
+  }, [diff]);
+
+  const changedCount = diff.added.size + diff.removed.length;
+
+  // 消えた行のまとまりを描く。行番号は無いので、代わりに「-」を置く。
+  const renderRemoved = (afterLine: number) =>
+    (removedByLine.get(afterLine) ?? []).map((removed, index) => (
+      <li key={`removed-${afterLine}-${index}`} className="flex border-l-[3px] border-rose-400 bg-rose-50">
+        <span aria-hidden className="w-10 shrink-0 select-none pr-2 text-right text-rose-400">-</span>
+        <code className="whitespace-pre pr-4 text-rose-700 line-through decoration-rose-300">
+          <span className="sr-only">削除された行: </span>
+          {removed.text.trim() || " "}
+        </code>
+      </li>
+    ));
 
   const selectedLabel = site.sections.find((section) => section.id === selectedElementId)?.title
     ?? fixedElementLabels[selectedElementId]
@@ -119,10 +148,16 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
               {selectedLineCount === 0 && <span className="text-slate-500">（このファイルには出てきません）</span>}
             </span>
           )}
-          {changedLines.size > 0 && (
+          {changedCount > 0 && (
             <span className="flex items-center gap-1">
               <span className="inline-block h-3 w-1 rounded-sm bg-amber-500" />
-              未記録の変更 <strong className="font-bold text-slate-800">{changedLines.size}行</strong>
+              未記録の変更 <strong className="font-bold text-slate-800">{changedCount}行</strong>
+              {diff.removed.length > 0 && (
+                <>
+                  <span className="ml-1 inline-block h-3 w-1 rounded-sm bg-rose-400" />
+                  <span>うち削除 {diff.removed.length}行</span>
+                </>
+              )}
             </span>
           )}
         </div>
@@ -138,6 +173,8 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
         className="relative min-h-0 flex-1 overflow-auto bg-slate-50 font-mono text-xs leading-5"
       >
         <ol className="w-max min-w-full py-1">
+          {/* 先頭より前で消えた行。 */}
+          {renderRemoved(0)}
           {lines.map((line) => {
             const selected = line.relatedIds.includes(selectedElementId);
             const changed = changedLines.has(line.number);
@@ -148,21 +185,24 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
                 ? "border-blue-500 bg-blue-50"
                 : "border-transparent";
             return (
-              <li
-                key={line.number}
-                data-selected={selected}
-                data-changed={changed}
-                className={`flex border-l-[3px] ${highlight}`}
-              >
-                <span aria-hidden className="w-10 shrink-0 select-none pr-2 text-right text-slate-400">{line.number}</span>
-                <code className="whitespace-pre pr-4">
-                  {line.tokens.length === 0
-                    ? " "
-                    : line.tokens.map((token, index) => (
-                        <span key={index} className={tokenClasses[token.kind]}>{token.text}</span>
-                      ))}
-                </code>
-              </li>
+              <Fragment key={line.number}>
+                <li
+                  data-selected={selected}
+                  data-changed={changed}
+                  className={`flex border-l-[3px] ${highlight}`}
+                >
+                  <span aria-hidden className="w-10 shrink-0 select-none pr-2 text-right text-slate-400">{line.number}</span>
+                  <code className="whitespace-pre pr-4">
+                    {line.tokens.length === 0
+                      ? " "
+                      : line.tokens.map((token, index) => (
+                          <span key={index} className={tokenClasses[token.kind]}>{token.text}</span>
+                        ))}
+                  </code>
+                </li>
+                {/* この行の直後で消えた行を続けて出す。 */}
+                {renderRemoved(line.number)}
+              </Fragment>
             );
           })}
         </ol>

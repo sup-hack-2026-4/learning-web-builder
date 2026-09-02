@@ -71,6 +71,14 @@ function describeThemeChange(key: ThemeKey, theme: SiteModel["theme"]): string {
   return `${label}を ${theme[key]} に`;
 }
 
+// 実際にCSSへ出る値。見出しの色は未指定ならメインカラーを引き継ぐため、
+// 単純に theme.heading と比べると「未指定」と「メインカラーと同じ色」を
+// 別物と見なしてしまい、元の色へ戻したのに変更が残ってしまう。
+function effectiveThemeValue(theme: SiteModel["theme"], key: ThemeKey): string | number {
+  if (key === "heading") return theme.heading ?? theme.primary;
+  return theme[key];
+}
+
 // 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
 // あとで理由欄が書き換わっても過去の変更には影響しないようにする。
 type TouchedThemeChange = { key: ThemeKey; reason: string };
@@ -255,7 +263,7 @@ export default function App() {
       const others = changes.filter((change) => change.key !== key);
       // 基準の値まで戻したなら、その項目は変更していないのと同じ。
       // 残したままだと差分が無いのに「デザイン変更」のメモを作れてしまう。
-      if (themeBaseline[key] === value) return others;
+      if (effectiveThemeValue(themeBaseline, key) === value) return others;
       // 同じ項目を触り直したときは、そのときの理由で上書きする。
       return [...others, { key, reason: trimmedReason }];
     });

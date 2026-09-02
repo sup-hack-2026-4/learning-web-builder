@@ -559,3 +559,34 @@ test("変えた値を元に戻すと、デザイン変更として記録され�
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
   await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
 });
+
+test("削除しか起きない変更も、コード上に消えた行として示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await expect(codeView).not.toContainText("未記録の変更");
+
+  // 理由を書かずに非表示にするので、記録されず「未記録の変更」として残る。
+  await page.getByRole("checkbox", { name: "3つの魅力" }).uncheck();
+
+  // 消えた行は今のコードに無いため、消える前の位置へ差し込んで見せる。
+  await expect(codeView).toContainText("未記録の変更");
+  await expect(codeView).toContainText("うち削除");
+  await expect(codeView.getByText("<h2>3つの魅力</h2>")).toBeVisible();
+});
+
+test("見出しの色を初期値へ戻すと、デザイン変更として記録されない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 見出しの色は未指定のときメインカラーを引き継ぐ。その実効値が初期値になる。
+  const original = await page.getByLabel("メインカラー").inputValue();
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を試しに変えた");
+  await page.getByLabel("見出しの色").fill("#e11d48");
+  await page.getByLabel("見出しの色").fill(original);
+
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+});
