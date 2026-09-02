@@ -590,3 +590,31 @@ test("見出しの色を初期値へ戻すと、デザイン変更として記�
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
   await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
 });
+
+// レビュー指摘の再現ケース。
+// 見出しの色を触って初期色へ戻したとき、同じ色を明示値として残すと
+// 「未指定（メインカラーを継承）」へ戻らず、以降メインカラーへ追従しなくなる。
+test("見出しの色を初期値へ戻すと、メインカラーへの追従も元どおりになる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const heading = page.getByLabel("見出しの色");
+  const primary = page.getByLabel("メインカラー");
+  const original = await primary.inputValue();
+
+  // 未指定の状態では、見出しの色にメインカラーの実効値が出ている。
+  await expect(heading).toHaveValue(original);
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を試しに変えた");
+  await heading.fill("#e11d48");
+  await heading.fill(original);
+
+  // メインカラーを変えると、未指定へ戻っているので見出しの色も追従する。
+  await primary.fill("#16a34a");
+  await expect(heading).toHaveValue("#16a34a");
+
+  // 追従した結果なので、記録されるのはメインカラーの変更だけ。
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("デザイン変更（メインカラーを #16a34a に）")).toBeVisible();
+  await expect(page.getByText("見出しの色を #e11d48 に")).toHaveCount(0);
+});

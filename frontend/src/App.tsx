@@ -258,12 +258,17 @@ export default function App() {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
-    previewTheme(key, value);
+    // 基準の値まで戻したなら、その項目は変更していないのと同じ。
+    // このとき基準に保存されていた値そのものへ戻す。見出しの色を「未指定」から
+    // 触って戻した場合、同じ色を明示値として残すとメインカラーへ追従しなくなり、
+    // 見た目は同じでも基準と違う状態になってしまうため。
+    const backToBaseline = effectiveThemeValue(themeBaseline, key) === value;
+    previewTheme(key, backToBaseline ? themeBaseline[key] : value);
+
     setTouchedThemeChanges((changes) => {
       const others = changes.filter((change) => change.key !== key);
-      // 基準の値まで戻したなら、その項目は変更していないのと同じ。
-      // 残したままだと差分が無いのに「デザイン変更」のメモを作れてしまう。
-      if (effectiveThemeValue(themeBaseline, key) === value) return others;
+      // 差分が無いのに「デザイン変更」のメモを作れてしまわないよう、対象から外す。
+      if (backToBaseline) return others;
       // 同じ項目を触り直したときは、そのときの理由で上書きする。
       return [...others, { key, reason: trimmedReason }];
     });
