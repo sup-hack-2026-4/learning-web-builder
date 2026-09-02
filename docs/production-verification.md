@@ -3,20 +3,33 @@
 発表前に、Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認するための手順です。
 秘密鍵、トークン、DB接続文字列はスクリーンショットやIssueへ貼り付けません。
 
-## 2026年7月31日の確認結果
+## 2026年9月2日の確認結果
 
-- Cloudflare Pagesの`develop`環境は
-  `https://develop.learning-web-builder.pages.dev`で200応答
-- Cloudflare PagesのビルドにはClerk公開鍵が設定済み
-- Cloudflare PagesのビルドにRender API URLがなく、`/api/v1`がHTMLへフォールバックしている
-- Renderは上記Cloudflare Originを403で拒否している
+7月31日に未反映だった2設定（`VITE_API_BASE_URL`、`FRONTEND_ORIGIN`）は反映済みで、
+ログインを伴わない範囲はすべて合格しています。
 
-本番縦断確認の前に、次の2設定を反映して再デプロイします。
-
-| 設定先 | キー | 値 |
+| 対象 | 確認内容 | 結果 |
 |---|---|---|
-| Cloudflare Pages | `VITE_API_BASE_URL` | `https://learning-web-builder-api.onrender.com/api/v1` |
-| Render | `FRONTEND_ORIGIN` | `https://develop.learning-web-builder.pages.dev` |
+| Cloudflare Pages | `https://learning-web-builder.pages.dev` と `https://develop.learning-web-builder.pages.dev` | どちらも200。同じビルドを配信 |
+| Cloudflare Pages | 配信中のJSに焼き込まれたAPIのベースURL | `https://learning-web-builder-api.onrender.com/api/v1` |
+| Cloudflare Pages | Clerk公開鍵 | 設定済み（ただし開発用キー。後述） |
+| Render | `GET /api/v1/health` | 200・`status: ok` |
+| Render | 認証なしの `GET /api/v1/projects` | 401（`DATABASE_URL`が設定済みであることを示す） |
+| Render | 上記2つのCloudflare Originからのアクセス | どちらも許可 |
+| Render | 無関係なOriginからのアクセス | 403で拒否 |
+| Render | `POST /api/v1/generate` | 200・`provider: gemini`（`GEMINI_API_KEY`が有効） |
+| ブラウザ | 公開URLでのコンソール | CORSエラーなし |
+| ブラウザ | 題材からの生成 | 「AIでたたき台を生成しました。」を表示 |
+| ブラウザ | 品質チェック | 見出し構造・画像のalt・モバイル表示がすべて合格 |
+
+発表前に対処を検討する点:
+
+- **Clerkが開発用キーで動いている。** コンソールに
+  「Clerk has been loaded with development keys」の警告が出ます。
+  開発インスタンスは利用量の制限が厳しいため、
+  当日の同時ログインが多い場合は本番用インスタンスへ切り替えます。
+- **Renderのコールドスタートが遅い。** 一定時間アクセスが無いと
+  最初の応答に40秒以上かかりました。発表直前に一度アクセスして起こしておきます。
 
 公開URLを別のURLへ切り替えた場合は、`FRONTEND_ORIGIN`も実際の公開URLへ合わせます。
 
@@ -29,6 +42,9 @@
 - Neonへ`db/migrations/001_initial.sql`を適用済み
 
 ## 10分で行う縦断確認
+
+9月2日時点で、1と3は合格を確認済みです。
+2・4〜8はClerkのログインが要るため、アカウントを持つ人が実施してください。
 
 | # | 操作 | 合格条件 | 証跡 |
 |---:|---|---|---|
