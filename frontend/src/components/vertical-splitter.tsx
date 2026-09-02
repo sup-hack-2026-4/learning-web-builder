@@ -4,10 +4,14 @@ type Props = {
   /** 下方向へ動かした量(px)を渡す。高さの上下限は呼び出し側で決める。 */
   onResize: (deltaY: number) => void;
   label: string;
+  /** いま何pxで、どこからどこまで動かせるか。支援技術へ現在値と範囲を伝えるために使う。 */
+  value: number;
+  min: number;
+  max: number;
 };
 
 // プレビューとコードの境目。どちらを大きく見たいかは場面で変わるため、その場で変えられるようにする。
-export function VerticalSplitter({ onResize, label }: Props) {
+export function VerticalSplitter({ onResize, label, value, min, max }: Props) {
   const lastY = useRef(0);
 
   return (
@@ -15,6 +19,10 @@ export function VerticalSplitter({ onResize, label }: Props) {
       role="separator"
       aria-orientation="horizontal"
       aria-label={label}
+      aria-valuenow={Math.round(value)}
+      aria-valuemin={Math.round(min)}
+      aria-valuemax={Math.round(max)}
+      aria-valuetext={`コードの高さ ${Math.round(value)}ピクセル`}
       tabIndex={0}
       onPointerDown={(event) => {
         lastY.current = event.clientY;

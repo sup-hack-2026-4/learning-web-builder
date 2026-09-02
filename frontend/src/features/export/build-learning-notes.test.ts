@@ -14,11 +14,25 @@ function note(values: Partial<LearningNote>): LearningNote {
 
 describe("buildLearningNotes", () => {
   it("理由と一緒に、実際に変わったコードを残す", () => {
-    const markdown = buildLearningNotes([note({ codeChanges: ["--primary: #e11d48;", "--heading: #e11d48;"] })]);
+    const markdown = buildLearningNotes([
+      note({ codeChanges: ["+ --primary: #e11d48;", "- --primary: #2563eb;"] }),
+    ]);
     expect(markdown).toContain("- デザイン変更（メインカラーを #e11d48 に）: 元気な雰囲気を伝えたいから");
     expect(markdown).toContain("変わったコード:");
-    expect(markdown).toContain("`--primary: #e11d48;`");
-    expect(markdown).toContain("`--heading: #e11d48;`");
+    // 増減が読み取れるよう、diffのコードブロックとして囲む。
+    expect(markdown).toContain("```diff");
+    expect(markdown).toContain("+ --primary: #e11d48;");
+    expect(markdown).toContain("- --primary: #2563eb;");
+  });
+
+  it("コードにバッククォートが含まれても、区切りが壊れない", () => {
+    const markdown = buildLearningNotes([
+      note({ codeChanges: ["+ <p>``ここ``に印``をつける```</p>"] }),
+    ]);
+
+    // 中身の最長連続(3つ)より長い区切りを使う。
+    expect(markdown).toContain("````diff");
+    expect(markdown).toContain("+ <p>``ここ``に印``をつける```</p>");
   });
 
   it("コードの記録がないメモは、理由だけの1行にする", () => {

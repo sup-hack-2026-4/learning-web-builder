@@ -19,7 +19,7 @@ import { exportProject } from "@/features/export/export-project";
 import { ProjectControls } from "@/features/projects/project-controls";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
 import { createSampleSite } from "@/features/site-model/sample";
-import type { SiteModel } from "@/features/site-model/schema";
+import type { SiteModel, SiteSection } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 
@@ -99,30 +99,54 @@ export default function App() {
   const [codeHeight, setCodeHeight] = useState(240);
   const previewAreaRef = useRef<HTMLDivElement>(null);
 
-  // 高さの上限は画面の広さで変わるため、コードの高さはその都度この範囲へ収める。
-  const limitCodeHeight = useCallback((height: number) => {
+  // 上限は画面の広さで変わる。支援技術へ調整範囲を伝えるため、値としても持っておく。
+  const [maxCodeHeight, setMaxCodeHeight] = useState(minCodeHeight);
+
+  const measureMaxCodeHeight = useCallback(() => {
     const available = previewAreaRef.current?.clientHeight ?? 0;
-    if (available === 0) return height;
-    const maxHeight = Math.max(minCodeHeight, available - minPreviewHeight);
-    return Math.min(Math.max(height, minCodeHeight), maxHeight);
+    if (available === 0) return null;
+    return Math.max(minCodeHeight, available - minPreviewHeight);
   }, []);
+
+  // 高さの上限は画面の広さで変わるため、コードの高さはその都度この範囲へ収める。
+  const limitCodeHeight = useCallback(
+    (height: number) => {
+      const maxHeight = measureMaxCodeHeight();
+      if (maxHeight === null) return height;
+      return Math.min(Math.max(height, minCodeHeight), maxHeight);
+    },
+    [measureMaxCodeHeight],
+  );
 
   // 画面が狭いとプレビューが潰れてしまうため、表示時とウィンドウ変更時に収め直す。
   useEffect(() => {
-    const fit = () => setCodeHeight(limitCodeHeight);
+    const fit = () => {
+      setCodeHeight(limitCodeHeight);
+      const maxHeight = measureMaxCodeHeight();
+      if (maxHeight !== null) setMaxCodeHeight(maxHeight);
+    };
     fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
-  }, [codeOpen, limitCodeHeight]);
+  }, [codeOpen, limitCodeHeight, measureMaxCodeHeight]);
   const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
 
   // 「まだ理由を書いていない変更」をコード上で示すための基準。
   // デザインと内容は別々に記録するため、基準も分けて持つ。
   const [themeBaseline, setThemeBaseline] = useState(site.theme);
-  const [sectionsBaseline, setSectionsBaseline] = useState(site.sections);
+  // 内容の基準はセクションごとに持つ。ひとまとめにすると、あるセクションを
+  // 未記録のまま別のセクションを記録したときに、変更コードが別の理由へ混ざってしまう。
+  const [sectionBaselines, setSectionBaselines] = useState<Record<string, SiteSection>>(() =>
+    Object.fromEntries(site.sections.map((section) => [section.id, section])),
+  );
+  // 生成やプロジェクト読み込みで増えたセクションは、その時点の内容を基準として扱う。
+  const baselineSections = useMemo(
+    () => site.sections.map((section) => sectionBaselines[section.id] ?? section),
+    [site.sections, sectionBaselines],
+  );
   const baselineSite = useMemo(
-    () => ({ ...site, theme: themeBaseline, sections: sectionsBaseline }),
-    [site, themeBaseline, sectionsBaseline],
+    () => ({ ...site, theme: themeBaseline, sections: baselineSections }),
+    [site, themeBaseline, baselineSections],
   );
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
@@ -142,11 +166,17 @@ export default function App() {
   };
 
   // 内容の変更はHTMLに出る。表示切替も文章の書き換えも同じ見かたで取り出せる。
-  const htmlChangesFromBaseline = (sections: SiteModel["sections"]): string[] =>
-    collectChangedLineTexts(
-      buildSiteArtifacts({ ...site, sections }).html,
-      buildSiteArtifacts({ ...site, sections: sectionsBaseline }).html,
+  // 対象のセクションだけを基準から動かして比べるため、他のセクションを未記録のまま
+  // 触っていても、その分は今回のメモへ混ざらない。
+  const htmlChangesForSection = (sectionId: string, nextSection: SiteSection): string[] => {
+    const changedSections = baselineSections.map((section) =>
+      section.id === sectionId ? nextSection : section,
     );
+    return collectChangedLineTexts(
+      buildSiteArtifacts({ ...site, sections: changedSections }).html,
+      buildSiteArtifacts({ ...site, sections: baselineSections }).html,
+    );
+  };
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
   const explanation = explanationDictionary[selectedElementId] ?? explanationDictionary.about;
 
@@ -158,21 +188,24 @@ export default function App() {
     setReason("");
     const current = useBuilderStore.getState().site;
     setThemeBaseline(current.theme);
-    setSectionsBaseline(current.sections);
+    setSectionBaselines(Object.fromEntries(current.sections.map((section) => [section.id, section])));
   };
 
   // セクションの表示切替は、理由が入っていればその場で学習メモへ残る。
-  // 記録できたときだけ、コード上の「未記録の変更」の基準を進める。
+  // 記録できたときだけ、そのセクションの「未記録の変更」の基準を進める。
   const toggleSection = (id: string, visible: boolean) => {
     const trimmedReason = reason.trim();
-    const nextSections = site.sections.map((section) => (section.id === id ? { ...section, visible } : section));
+    const current = site.sections.find((section) => section.id === id);
+    const nextSection = current ? { ...current, visible } : undefined;
     updateSection(
       id,
       { visible },
       trimmedReason || undefined,
-      trimmedReason ? htmlChangesFromBaseline(nextSections) : undefined,
+      trimmedReason && nextSection ? htmlChangesForSection(id, nextSection) : undefined,
     );
-    if (trimmedReason) setSectionsBaseline(useBuilderStore.getState().site.sections);
+    if (trimmedReason && nextSection) {
+      setSectionBaselines((baselines) => ({ ...baselines, [id]: nextSection }));
+    }
   };
 
   // 記録は止めないが、書けていない観点があれば次に何を書けばよいかを添える。
@@ -218,11 +251,14 @@ export default function App() {
       return;
     }
     previewTheme(key, value);
-    // 同じ項目を触り直したときは、そのときの理由で上書きする。
-    setTouchedThemeChanges((changes) => [
-      ...changes.filter((change) => change.key !== key),
-      { key, reason: trimmedReason },
-    ]);
+    setTouchedThemeChanges((changes) => {
+      const others = changes.filter((change) => change.key !== key);
+      // 基準の値まで戻したなら、その項目は変更していないのと同じ。
+      // 残したままだと差分が無いのに「デザイン変更」のメモを作れてしまう。
+      if (themeBaseline[key] === value) return others;
+      // 同じ項目を触り直したときは、そのときの理由で上書きする。
+      return [...others, { key, reason: trimmedReason }];
+    });
   };
 
   // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由をメモへ残す。
@@ -256,9 +292,14 @@ export default function App() {
   // 理由欄をクリアしても、未記録のデザイン変更は変更時の理由を保持しているため影響を受けない。
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
-    addNote(`内容変更（${selectedSection.title}）`, reason.trim(), htmlChangesFromBaseline(site.sections));
+    addNote(
+      `内容変更（${selectedSection.title}）`,
+      reason.trim(),
+      htmlChangesForSection(selectedSection.id, selectedSection),
+    );
     setNotice(noticeForRecordedReason("内容変更の理由を学習メモへ記録しました。"));
-    setSectionsBaseline(site.sections);
+    // 基準を進めるのは記録したセクションだけ。他のセクションの未記録の変更は残す。
+    setSectionBaselines((baselines) => ({ ...baselines, [selectedSection.id]: selectedSection }));
     setReason("");
   };
 
@@ -350,8 +391,9 @@ export default function App() {
                 {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
                 {note.codeChanges && note.codeChanges.length > 0 && (
                   <ul className="mt-2 space-y-0.5 border-t border-slate-200 pt-2">
-                    {note.codeChanges.map((line) => (
-                      <li key={line} className="truncate font-mono text-[10px] text-slate-500" title={line}>{line}</li>
+                    {/* 同じ内容の行が複数変わることがあるため、行本文ではなく並び順で見分ける。 */}
+                    {note.codeChanges.map((line, index) => (
+                      <li key={`${note.id}-${index}`} className="truncate font-mono text-[10px] text-slate-500" title={line}>{line}</li>
                     ))}
                   </ul>
                 )}
@@ -385,6 +427,9 @@ export default function App() {
               <>
                 <VerticalSplitter
                   label="プレビューとコードの高さを調整"
+                  value={codeHeight}
+                  min={minCodeHeight}
+                  max={maxCodeHeight}
                   // 下へ動かすとコードが縮む。プレビュー側も読める高さを残す。
                   onResize={(deltaY) => setCodeHeight((height) => limitCodeHeight(height - deltaY))}
                 />

@@ -511,3 +511,51 @@ test("観点が足りない理由でも記録でき、次に書く観点を案�
   await expect(page.getByText("デザイン変更の内容と理由を学習メモへ記録しました。")).toBeVisible();
   await expect(page.getByText(/次は「なぜ変えるか」「どう良くなるか」も書けると/)).toBeVisible();
 });
+
+test("セクションを非表示にすると、消えたコードが学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("3つの魅力を隠した。先に全体像を伝えたいから。読み手が迷わなくなる");
+  await page.getByRole("checkbox", { name: "3つの魅力" }).uncheck();
+
+  // 削除しか起きていなくても、消えた行が「-」付きで残る。
+  const note = page.locator("div").filter({ hasText: /^表示切替（3つの魅力）/ }).last();
+  await expect(note).toContainText("先に全体像を伝えたいから");
+  await expect(note).toContainText("- <h2>3つの魅力</h2>");
+});
+
+test("未記録の変更が残っていても、別のセクションのメモには混ざらない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 1. ヒーローの見出しを、理由を書かずに書き換えておく（未記録のまま残す）。
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("見出し", { exact: true }).fill("未記録のままにする見出し");
+
+  // 2. 別のセクションを選び、そちらだけ理由を書いて記録する。
+  await frame.locator("[data-builder-id='about']").click();
+  await page.getByLabel("見出し", { exact: true }).fill("記録するほうの見出し");
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しを具体的にした。内容が伝わるようにしたいから。読み手が迷わなくなる");
+  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
+
+  // 記録したセクションの変更だけがメモに入る。
+  const note = page.locator("div").filter({ hasText: /^内容変更（記録するほうの見出し）/ }).last();
+  await expect(note).toContainText("記録するほうの見出し");
+  await expect(note).not.toContainText("未記録のままにする見出し");
+});
+
+test("変えた値を元に戻すと、デザイン変更として記録されない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("余白を試しに変えた");
+  const spacing = page.getByLabel(/^余白/);
+  const original = await spacing.inputValue();
+  await spacing.fill("9");
+  await spacing.fill(original);
+
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+});

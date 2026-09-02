@@ -127,6 +127,15 @@ export function tokenizeHtml(code: string): CodeToken[][] {
   return builder.finish();
 }
 
+// 中身がまた「セレクタ { 宣言 }」になる@ルール。
+// @font-faceや@propertyのように中身が宣言だけのものと区別する。
+const nestedAtRules = ["@media", "@supports", "@container", "@layer", "@scope", "@document"];
+
+function isNestedAtRule(prelude: string): boolean {
+  const trimmed = prelude.trim().toLowerCase();
+  return nestedAtRules.some((rule) => trimmed.startsWith(rule));
+}
+
 export function tokenizeCss(code: string): CodeToken[][] {
   const builder = createLineBuilder();
   // セレクタ部 / 宣言部 / コメント の3状態。宣言部ではコロンの前後でプロパティと値を分ける。
@@ -135,6 +144,9 @@ export function tokenizeCss(code: string): CodeToken[][] {
   // @mediaのように入れ子になるブロックがあるため、閉じ括弧でどちらへ戻るかを積んで覚える。
   const blockStack: ("selector" | "declaration")[] = [];
   let stateBeforeComment: "selector" | "declaration" = "selector";
+  // 直前の「{」までに読んだセレクタ（または@ルールの前置き）。
+  // @mediaのように中身がまたセレクタから始まるブロックを見分けるために覚えておく。
+  let prelude = "";
 
   for (let index = 0; index < code.length; index += 1) {
     const character = code[index];
@@ -155,7 +167,8 @@ export function tokenizeCss(code: string): CodeToken[][] {
     if (character === "{") {
       // @mediaの中身はまたセレクタから始まる。閉じたときに戻る先をここで覚えておく。
       blockStack.push(state);
-      state = "declaration";
+      state = isNestedAtRule(prelude) ? "selector" : "declaration";
+      prelude = "";
       inValue = false;
       builder.push(character, "plain");
       continue;
@@ -163,12 +176,14 @@ export function tokenizeCss(code: string): CodeToken[][] {
 
     if (character === "}") {
       state = blockStack.pop() ?? "selector";
+      prelude = "";
       inValue = false;
       builder.push(character, "plain");
       continue;
     }
 
     if (state === "selector") {
+      prelude += character;
       builder.push(character, "selector");
       continue;
     }
@@ -446,24 +461,89 @@ export function annotateJavaScript(javascript: string): CodeLine[] {
   }));
 }
 
+/** 消えた行と、消える前にあった位置（current側の直前の行番号。0は先頭）。 */
+export type RemovedLine = { text: string; afterLine: number };
+
+export type CodeDiff = {
+  /** current側で増えた・書き換わった行の行番号。 */
+  added: Set<number>;
+  /** baseline側にあり、currentから消えた行。 */
+  removed: RemovedLine[];
+};
+
+// 行の対応付けはLCS（最長共通部分列）で取る。
+// 「baselineに無い行だけを変更とする」集合比較では、行の削除・並べ替え・
+// 同じ文字列の行の増減を検出できない。セクションを非表示にするとHTMLの
+// まとまりが丸ごと消えるため、削除を拾えないと「何を変えたか」が
+// コード表示にも学習メモにも残らなくなる。
+export function diffLines(currentCode: string, baselineCode: string): CodeDiff {
+  const current = currentCode.split("\n");
+  const baseline = baselineCode.split("\n");
+
+  // lcs[i][j] = current[i以降] と baseline[j以降] の最長共通部分列の長さ。
+  const lcs: number[][] = Array.from({ length: current.length + 1 }, () =>
+    new Array<number>(baseline.length + 1).fill(0),
+  );
+  for (let i = current.length - 1; i >= 0; i -= 1) {
+    for (let j = baseline.length - 1; j >= 0; j -= 1) {
+      lcs[i][j] =
+        current[i] === baseline[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+
+  const added = new Set<number>();
+  const removed: RemovedLine[] = [];
+  // 空行の増減は、行がずれただけに見えて学習の手がかりにならないため数えない。
+  const isMeaningful = (line: string) => line.trim().length > 0;
+
+  let i = 0;
+  let j = 0;
+  while (i < current.length && j < baseline.length) {
+    if (current[i] === baseline[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      if (isMeaningful(current[i])) added.add(i + 1);
+      i += 1;
+    } else {
+      if (isMeaningful(baseline[j])) removed.push({ text: baseline[j], afterLine: i });
+      j += 1;
+    }
+  }
+  while (i < current.length) {
+    if (isMeaningful(current[i])) added.add(i + 1);
+    i += 1;
+  }
+  while (j < baseline.length) {
+    if (isMeaningful(baseline[j])) removed.push({ text: baseline[j], afterLine: i });
+    j += 1;
+  }
+
+  return { added, removed };
+}
+
 // 前回の記録時点からコードのどこが変わったかを行番号で返す。
 // 「なぜ変えたか」を書く場面で、自分の操作がコードのどこを動かしたかを見せるために使う。
 export function findChangedLines(currentCode: string, baselineCode: string): Set<number> {
-  const baselineLines = new Set(baselineCode.split("\n"));
-  const changed = new Set<number>();
-  currentCode.split("\n").forEach((line, index) => {
-    // 空行や閉じ括弧だけの行は、内容が変わっていなくても行がずれると差分に見えるため対象外にする。
-    if (line.trim().length > 1 && !baselineLines.has(line)) changed.add(index + 1);
-  });
-  return changed;
+  return diffLines(currentCode, baselineCode).added;
 }
 
 // 変わった行そのものを取り出す。学習メモへ「理由」と一緒に残し、
 // あとから理由と実際のコード変更を突き合わせられるようにするために使う。
+// 増えた行と消えた行を読み分けられるよう、diffと同じ「+」「-」を先頭に付ける。
 export function collectChangedLineTexts(currentCode: string, baselineCode: string): string[] {
-  const changed = findChangedLines(currentCode, baselineCode);
-  return currentCode
-    .split("\n")
-    .filter((_, index) => changed.has(index + 1))
-    .map((line) => line.trim());
+  const { added, removed } = diffLines(currentCode, baselineCode);
+  const currentLines = currentCode.split("\n");
+  // 消えた行は、消える前にあった位置の直後へ差し込みたいので0.5をずらして並べる。
+  const changes = [
+    ...[...added].map((lineNumber) => ({
+      order: lineNumber,
+      text: `+ ${currentLines[lineNumber - 1].trim()}`,
+    })),
+    ...removed.map((line) => ({ order: line.afterLine + 0.5, text: `- ${line.text.trim()}` })),
+  ];
+
+  return changes.sort((a, b) => a.order - b.order).map((change) => change.text);
 }

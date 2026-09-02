@@ -5,6 +5,7 @@ import {
   annotateCss,
   annotateHtml,
   annotateJavaScript,
+  collectChangedLineTexts,
   findChangedLines,
   idsForSelector,
   tokenizeCss,
@@ -149,7 +150,65 @@ describe("findChangedLines", () => {
   });
 });
 
+describe("collectChangedLineTexts", () => {
+  const hiddenSite = {
+    ...site,
+    sections: site.sections.map((section) =>
+      section.id === "features" ? { ...section, visible: false } : section,
+    ),
+  };
+  const hiddenHtml = buildSiteArtifacts(hiddenSite).html;
+
+  it("セクションを非表示にすると、消えたHTMLの行が記録される", () => {
+    const changes = collectChangedLineTexts(hiddenHtml, artifacts.html);
+
+    // 削除しか起きていないので、すべて「-」で始まる。
+    expect(changes.length).toBeGreaterThan(0);
+    expect(changes.every((line) => line.startsWith("- "))).toBe(true);
+    expect(changes.some((line) => line.includes("3つの魅力"))).toBe(true);
+  });
+
+  it("セクションを表示に戻すと、増えたHTMLの行が記録される", () => {
+    const changes = collectChangedLineTexts(artifacts.html, hiddenHtml);
+
+    expect(changes.length).toBeGreaterThan(0);
+    expect(changes.every((line) => line.startsWith("+ "))).toBe(true);
+  });
+
+  it("書き換えは、消えた行と増えた行の両方として残る", () => {
+    const changes = collectChangedLineTexts("a {\n  color: red;\n}", "a {\n  color: blue;\n}");
+
+    expect(changes).toEqual(["+ color: red;", "- color: blue;"]);
+  });
+
+  it("同じ文字列の行が減ったときも、減った分を数える", () => {
+    expect(collectChangedLineTexts("x\nx", "x\nx\nx")).toEqual(["- x"]);
+  });
+
+  it("行の並びが変わっただけでも取りこぼさない", () => {
+    const changes = collectChangedLineTexts("b\na", "a\nb");
+
+    expect(changes).toContain("+ b");
+    expect(changes).toContain("- b");
+  });
+
+  it("変更が無ければ空になる", () => {
+    expect(collectChangedLineTexts(artifacts.html, artifacts.html)).toEqual([]);
+  });
+});
+
 describe("トークン分割", () => {
+  it("@mediaの中のセレクタは、プロパティではなくセレクタとして色分けする", () => {
+    const lines = tokenizeCss("@media (max-width: 640px) {\n  .section { padding: 8px; }\n}");
+    const inner = lines[1];
+    const selectorText = inner.filter((token) => token.kind === "selector").map((token) => token.text).join("");
+    const propertyText = inner.filter((token) => token.kind === "property").map((token) => token.text).join("");
+
+    expect(selectorText).toContain(".section");
+    expect(propertyText).toContain("padding");
+    expect(propertyText).not.toContain(".section");
+  });
+
   it("HTMLのタグ名・属性名・属性値を分けて色分けできる", () => {
     const [line] = tokenizeHtml('<a href="#main" class="logo">名前</a>');
     // 同じ種類が続く文字は1つのトークンにまとまるため、連結して確かめる。
