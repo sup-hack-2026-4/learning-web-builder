@@ -31,7 +31,7 @@ type SessionAuthenticator interface {
 }
 
 type SiteGenerator interface {
-	Generate(context.Context, string) (site.Model, error)
+	Generate(context.Context, string, concept.Draft) (site.Model, error)
 }
 
 // ConceptAdvisor は、生成前のコンセプトを固める相談を1ターン進める。
@@ -41,6 +41,9 @@ type ConceptAdvisor interface {
 
 type generateRequest struct {
 	Topic string `json:"topic"`
+	// 相談で固めたコンセプト。省略できる。
+	// DisallowUnknownFields があるため、フィールドを足すだけで後方互換を保てる。
+	Concept concept.Draft `json:"concept"`
 }
 
 func NewRouter(config Config) http.Handler {
@@ -110,9 +113,13 @@ func generate(generator SiteGenerator) http.HandlerFunc {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "topic must be between 1 and 100 characters"})
 			return
 		}
+		if err := concept.ValidateDraft(input.Concept); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 
 		if generator != nil {
-			generatedSite, err := generator.Generate(request.Context(), input.Topic)
+			generatedSite, err := generator.Generate(request.Context(), input.Topic, input.Concept)
 			if err == nil {
 				err = site.Validate(generatedSite)
 			}

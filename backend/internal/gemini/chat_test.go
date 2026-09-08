@@ -129,7 +129,7 @@ func TestGenerateStillOmitsRole(t *testing.T) {
 	defer server.Close()
 
 	client := newChatClient(t, server.URL)
-	if _, err := client.Generate(context.Background(), "学校の写真部"); err != nil {
+	if _, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 

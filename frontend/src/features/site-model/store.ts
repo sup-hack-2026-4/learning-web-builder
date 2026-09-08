@@ -2,13 +2,15 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSampleSite } from "./sample";
 import type { AiUsage, LearningNote, SiteModel } from "./schema";
+import { emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
 
 type BuilderState = {
   site: SiteModel;
   selectedElementId: string;
   notes: LearningNote[];
   aiUsage: AiUsage[];
-  setSite: (site: SiteModel, provider: AiUsage["provider"]) => void;
+  // purpose は AI をどう使ったかの記録。コンセプト相談を経た生成だけ文言が変わる。
+  setSite: (site: SiteModel, provider: AiUsage["provider"], purpose?: string) => void;
   loadSite: (site: SiteModel) => void;
   selectElement: (id: string) => void;
   // テーマの更新はプレビュー反映のみ。学習メモはApp側の明示的な記録操作でaddNoteする。
@@ -17,6 +19,13 @@ type BuilderState = {
   updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string, codeChanges?: string[]) => void;
   addNote: (target: string, reason: string, codeChanges?: string[]) => void;
   reset: () => void;
+  // 生成前のコンセプト相談。SiteModelとは独立に持つ。
+  // 生成してもここは消さない。何を決めて生成したのかを後から見返せるようにするため。
+  chatMessages: ChatMessage[];
+  conceptDraft: ConceptDraft;
+  appendChatMessage: (message: ChatMessage) => void;
+  setConceptDraft: (draft: ConceptDraft) => void;
+  resetConcept: () => void;
 };
 
 const initialSite = createSampleSite();
@@ -28,12 +37,16 @@ export const useBuilderStore = create<BuilderState>()(
       selectedElementId: "hero",
       notes: [],
       aiUsage: [{ provider: "static-sample", purpose: "初期サンプル", generatedAt: new Date().toISOString() }],
-      setSite: (site, provider) =>
+      setSite: (site, provider, purpose) =>
         set({
           site,
           selectedElementId: "hero",
           notes: [],
-          aiUsage: [{ provider, purpose: "サイト構成と仮文章の生成", generatedAt: new Date().toISOString() }],
+          aiUsage: [{
+            provider,
+            purpose: purpose ?? "サイト構成と仮文章の生成",
+            generatedAt: new Date().toISOString(),
+          }],
         }),
       loadSite: (site) =>
         set({
@@ -73,10 +86,23 @@ export const useBuilderStore = create<BuilderState>()(
           notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString(), codeChanges }],
         })),
       reset: () => set({ site: createSampleSite(), selectedElementId: "hero", notes: [], aiUsage: [] }),
+      chatMessages: [],
+      conceptDraft: emptyDraft,
+      appendChatMessage: (message) =>
+        set((state) => ({ chatMessages: trimHistory([...state.chatMessages, message]) })),
+      setConceptDraft: (conceptDraft) => set({ conceptDraft }),
+      resetConcept: () => set({ chatMessages: [], conceptDraft: emptyDraft }),
     }),
     {
       name: "learning-web-builder-draft-v1",
-      partialize: (state) => ({ site: state.site, selectedElementId: state.selectedElementId, notes: state.notes, aiUsage: state.aiUsage }),
+      partialize: (state) => ({
+        site: state.site,
+        selectedElementId: state.selectedElementId,
+        notes: state.notes,
+        aiUsage: state.aiUsage,
+        chatMessages: state.chatMessages,
+        conceptDraft: state.conceptDraft,
+      }),
     },
   ),
 );

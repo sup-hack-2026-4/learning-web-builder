@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/concept"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
@@ -138,10 +139,14 @@ func NewClient(config Config) (*Client, error) {
 	}, nil
 }
 
-func (client *Client) Generate(ctx context.Context, topic string) (site.Model, error) {
+// Generate は題材からサイトの構成案を作る。
+//
+// draft は生成前の相談で固まったコンセプト。空でも動く（従来どおり題材だけで生成する）ため、
+// 相談を使わない導線はそのまま残せる。
+func (client *Client) Generate(ctx context.Context, topic string, draft concept.Draft) (site.Model, error) {
 	requestBody := generateContentRequest{
 		SystemInstruction: content{Parts: []part{{Text: systemPrompt}}},
-		Contents:          []content{{Parts: []part{{Text: fmt.Sprintf("題材: %q", topic)}}}},
+		Contents:          []content{{Parts: []part{{Text: generationInput(topic, draft)}}}},
 		GenerationConfig: generationConfig{
 			ResponseMIMEType:   "application/json",
 			ResponseJSONSchema: siteModelJSONSchema(),
@@ -366,6 +371,27 @@ func decodeStrictJSON(reader io.Reader, destination any) error {
 		return err
 	}
 	return nil
+}
+
+// generationInput は、題材と（あれば）コンセプトを1つの入力文にまとめる。
+// 相談で決まった項目だけを渡し、決めていない項目は書かない。
+func generationInput(topic string, draft concept.Draft) string {
+	normalized := concept.Normalize(draft)
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("題材: %q", topic))
+	if normalized.Audience != "" {
+		builder.WriteString(fmt.Sprintf("\n読んでほしい人: %q", normalized.Audience))
+	}
+	if normalized.Goal != "" {
+		builder.WriteString(fmt.Sprintf("\n読んだあとどうしてほしいか: %q", normalized.Goal))
+	}
+	if normalized.Tone != "" {
+		builder.WriteString(fmt.Sprintf("\n雰囲気: %q", normalized.Tone))
+	}
+	if len(normalized.MustInclude) > 0 {
+		builder.WriteString(fmt.Sprintf("\n必ず載せる情報: %q", strings.Join(normalized.MustInclude, "、")))
+	}
+	return builder.String()
 }
 
 const systemPrompt = `あなたは学習用の静的紹介サイトの構成案を作成します。

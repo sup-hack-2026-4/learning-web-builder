@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/concept"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
 type stubAdvisor struct {
@@ -191,5 +192,66 @@ func TestConceptChatAcceptsHistoryLargerThanTheGenerateLimit(t *testing.T) {
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+}
+
+func TestGeneratePassesConceptToTheGenerator(t *testing.T) {
+	// 相談で決めた内容が生成の入力まで届かないと、対話した意味がなくなる。
+	generator := &stubGenerator{model: site.Sample("植物園")}
+	body := `{"topic":"植物園","concept":{"topic":"植物園","audience":"近所の家族連れ","goal":"週末に来てほしい","tone":"やわらかい","mustInclude":["開園時間"]}}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	NewRouter(Config{Generator: generator}).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if generator.draft == nil {
+		t.Fatal("expected the concept to reach the generator")
+	}
+	if generator.draft.Audience != "近所の家族連れ" {
+		t.Errorf("unexpected audience: %q", generator.draft.Audience)
+	}
+	if generator.draft.Goal != "週末に来てほしい" {
+		t.Errorf("unexpected goal: %q", generator.draft.Goal)
+	}
+	if len(generator.draft.MustInclude) != 1 || generator.draft.MustInclude[0] != "開園時間" {
+		t.Errorf("unexpected mustInclude: %v", generator.draft.MustInclude)
+	}
+}
+
+func TestGenerateStillWorksWithoutConcept(t *testing.T) {
+	// 相談を使わず題材だけで生成する導線は、これまでどおり動く必要がある。
+	generator := &stubGenerator{model: site.Sample("写真部")}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"topic":"写真部"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	NewRouter(Config{Generator: generator}).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if generator.draft == nil {
+		t.Fatal("expected the generator to be called")
+	}
+	if generator.draft.Audience != "" || generator.draft.Goal != "" {
+		t.Errorf("expected an empty concept, got %+v", generator.draft)
+	}
+}
+
+func TestGenerateRejectsOverLongConceptField(t *testing.T) {
+	overLongGoal := strings.Repeat("あ", 121)
+	body := `{"topic":"植物園","concept":{"goal":"` + overLongGoal + `"}}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	NewRouter(Config{Generator: &stubGenerator{}}).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", recorder.Code)
 	}
 }
