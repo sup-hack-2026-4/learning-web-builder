@@ -1,11 +1,18 @@
 import JSZip from "jszip";
 import { buildSiteArtifacts } from "../artifacts/build-site-artifacts";
 import { evaluateQuality } from "../quality/evaluate-quality";
-import type { AiUsage, LearningNote, SiteModel } from "../site-model/schema";
+import type { AiUsage, LearningNote, QualityCheck, SiteModel } from "../site-model/schema";
 
-export async function exportProject(site: SiteModel, notes: LearningNote[], aiUsage: AiUsage[]) {
+// axeの結果は画面側で非同期に集めるため、算出済みのものを受け取って混ぜる。
+// 検査がまだ終わっていない場合でも、静的な3項目だけでZIPは出せるようにする。
+export async function exportProject(
+  site: SiteModel,
+  notes: LearningNote[],
+  aiUsage: AiUsage[],
+  extraChecks: QualityCheck[] = [],
+) {
   const artifacts = buildSiteArtifacts(site);
-  const quality = evaluateQuality(site);
+  const quality = [...evaluateQuality(site), ...extraChecks];
   const zip = new JSZip();
 
   zip.file("index.html", artifacts.html);

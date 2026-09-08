@@ -618,3 +618,34 @@ test("見出しの色を初期値へ戻すと、メインカラーへの追従�
   await expect(page.getByText("デザイン変更（メインカラーを #16a34a に）")).toBeVisible();
   await expect(page.getByText("見出しの色を #e11d48 に")).toHaveCount(0);
 });
+
+test("品質タブでaxeの自動チェック結果を読める", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "品質" }).click();
+
+  // 検査はiframeでの実測なので、まず実行中の状態が出る。
+  await expect(page.getByTestId("axe-loading")).toBeVisible();
+
+  // 既定のサンプルは画像の説明が空のため、指摘が並ぶ。
+  const findings = page.getByTestId("axe-findings");
+  await expect(findings).toBeVisible({ timeout: 20000 });
+  await expect(findings.getByText("画像として扱っている要素に説明がありません。")).toBeVisible();
+  await expect(findings.getByText(/影響: /).first()).toBeVisible();
+});
+
+test("altを埋めるとaxeの指摘が減る", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "品質" }).click();
+  const findings = page.getByTestId("axe-findings");
+  await expect(findings).toBeVisible({ timeout: 20000 });
+  await expect(findings.getByText("画像として扱っている要素に説明がありません。")).toBeVisible();
+
+  // 既定のサンプルで説明が空なのはヒーローだけなので、そこを埋めれば指摘は消える。
+  await page.getByRole("tab", { name: "調整", exact: true }).click();
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("画像の説明（alt）").fill("植物園の入口に並ぶ鉢植えの写真");
+
+  await page.getByRole("tab", { name: "品質" }).click();
+  await expect(page.getByText("画像として扱っている要素に説明がありません。")).toHaveCount(0, { timeout: 20000 });
+});
