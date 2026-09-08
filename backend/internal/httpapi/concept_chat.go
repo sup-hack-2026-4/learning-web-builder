@@ -56,7 +56,7 @@ func conceptChat(advisor ConceptAdvisor) http.HandlerFunc {
 			log.Printf("concept chat failed; using static fallback request_id=%s error=%v", middleware.GetReqID(request.Context()), err)
 		}
 
-		writeConceptReply(writer, concept.Fallback(input.Draft), "static-sample")
+		writeConceptReply(writer, concept.Fallback(input.Messages, input.Draft), "static-sample")
 	}
 }
 

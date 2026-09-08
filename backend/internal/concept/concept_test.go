@@ -132,7 +132,7 @@ func TestValidateReplyRejectsTooManyChoices(t *testing.T) {
 }
 
 func TestFallbackAsksForTheFirstMissingField(t *testing.T) {
-	reply := Fallback(Draft{Topic: "植物園"})
+	reply := Fallback(nil, Draft{Topic: "植物園"})
 
 	if reply.Ready {
 		t.Error("fallback must not report ready while fields are missing")
@@ -146,7 +146,7 @@ func TestFallbackAsksForTheFirstMissingField(t *testing.T) {
 }
 
 func TestFallbackReportsReadyWhenNothingIsMissing(t *testing.T) {
-	reply := Fallback(Draft{Topic: "植物園", Audience: "家族連れ", Goal: "来園してほしい"})
+	reply := Fallback(nil, Draft{Topic: "植物園", Audience: "家族連れ", Goal: "来園してほしい"})
 
 	if !reply.Ready {
 		t.Error("expected a complete draft to be ready even without Gemini")
@@ -164,8 +164,66 @@ func TestFallbackPassesValidation(t *testing.T) {
 		{Topic: "植物園", Audience: "家族連れ"},
 		{Topic: "植物園", Audience: "家族連れ", Goal: "来園してほしい"},
 	} {
-		if err := ValidateReply(Fallback(draft)); err != nil {
+		if err := ValidateReply(Fallback(nil, draft)); err != nil {
 			t.Errorf("fallback reply for %+v failed validation: %v", draft, err)
 		}
+	}
+}
+
+func TestFallbackTakesTheAnswerIntoTheFirstEmptyField(t *testing.T) {
+	// 受け取った下書きをそのまま返すと、答えても同じ質問が返り続けて対話が進まない。
+	messages := []Message{
+		{Role: RoleModel, Text: "どんなものを紹介しますか"},
+		{Role: RoleUser, Text: "地域の小さな植物園"},
+	}
+
+	reply := Fallback(messages, Draft{})
+
+	if reply.Draft.Topic != "地域の小さな植物園" {
+		t.Errorf("expected the answer to fill topic, got %q", reply.Draft.Topic)
+	}
+	if !strings.Contains(reply.Reply, "読んでほしい") {
+		t.Errorf("expected the next question to move on, got %q", reply.Reply)
+	}
+}
+
+func TestFallbackFillsFieldsInOrderAcrossTurns(t *testing.T) {
+	draft := Draft{}
+	answers := []string{"植物園", "近所の家族連れ", "週末に来てほしい"}
+
+	for _, answer := range answers {
+		reply := Fallback([]Message{{Role: RoleUser, Text: answer}}, draft)
+		draft = reply.Draft
+	}
+
+	if draft.Topic != "植物園" || draft.Audience != "近所の家族連れ" || draft.Goal != "週末に来てほしい" {
+		t.Fatalf("unexpected draft after three turns: %+v", draft)
+	}
+	if !IsReady(draft) {
+		t.Error("expected the draft to be ready after three answers")
+	}
+}
+
+func TestFallbackTruncatesAnOverLongAnswer(t *testing.T) {
+	// 自由記述をそのまま入れると、次のリクエストが検証で弾かれてしまう。
+	answer := strings.Repeat("あ", MaxTopicLength+50)
+
+	reply := Fallback([]Message{{Role: RoleUser, Text: answer}}, Draft{})
+
+	if err := ValidateDraft(reply.Draft); err != nil {
+		t.Errorf("expected the truncated draft to pass validation: %v", err)
+	}
+}
+
+func TestFallbackIgnoresATrailingModelMessage(t *testing.T) {
+	messages := []Message{
+		{Role: RoleUser, Text: "植物園"},
+		{Role: RoleModel, Text: "どんな人に読んでほしいですか"},
+	}
+
+	reply := Fallback(messages, Draft{})
+
+	if reply.Draft.Topic != "植物園" {
+		t.Errorf("expected the learner's answer to be used, got %q", reply.Draft.Topic)
 	}
 }

@@ -173,15 +173,14 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
               onChange={(event) => setInput(event.target.value)}
               placeholder="例：近所の家族連れに来てほしい"
             />
-            <div className="flex gap-2">
-              <Button className="flex-1" disabled={!input.trim() || chat.isPending}>
-                <Send className="mr-2 size-4" />
-                送信
-              </Button>
-              <Button type="button" variant="ghost" onClick={startOver}>
-                やり直す
-              </Button>
-            </div>
+            {/* 左パネルは狭く、横並びにすると「送信」が2行に割れる。縦に積んで文字を折らせない。 */}
+            <Button className="w-full whitespace-nowrap" disabled={!input.trim() || chat.isPending}>
+              <Send className="mr-2 size-4" />
+              送信
+            </Button>
+            <Button type="button" variant="ghost" className="w-full whitespace-nowrap" onClick={startOver}>
+              やり直す
+            </Button>
           </form>
 
           {decided.length > 0 && (
