@@ -9,10 +9,22 @@ import { z } from "zod";
  */
 
 // バックエンドの concept パッケージと同じ上限。片側だけ緩いと、
-// 送れたのにサーバーで弾かれる状態になる。
+// 送れたのにサーバーで弾かれたり、異常な応答をそのまま画面へ出したりする。
 export const maxMessageLength = 500;
 export const maxMessages = 24;
 export const maxTopicLength = 100;
+export const maxAudienceLength = 80;
+export const maxGoalLength = 120;
+export const maxToneLength = 40;
+export const maxMustInclude = 5;
+export const maxMustIncludeLength = 60;
+export const maxReplyLength = 400;
+export const maxChoices = 4;
+export const maxChoiceLength = 40;
+
+/** 必須項目。この3つがそろうまで生成へ進ませない。 */
+export const requiredFields = ["topic", "audience", "goal"] as const;
+export type RequiredField = (typeof requiredFields)[number];
 
 export const chatRoleSchema = z.enum(["user", "model"]);
 
@@ -23,20 +35,28 @@ export const chatMessageSchema = z.object({
 
 export const conceptDraftSchema = z.object({
   topic: z.string().max(maxTopicLength).default(""),
-  audience: z.string().max(80).default(""),
-  goal: z.string().max(120).default(""),
-  tone: z.string().max(40).default(""),
-  mustInclude: z.array(z.string().max(60)).max(5).default([]),
+  audience: z.string().max(maxAudienceLength).default(""),
+  goal: z.string().max(maxGoalLength).default(""),
+  tone: z.string().max(maxToneLength).default(""),
+  mustInclude: z.array(z.string().max(maxMustIncludeLength)).max(maxMustInclude).default([]),
 });
 
-export const conceptReplySchema = z.object({
-  reply: z.string().min(1),
-  choices: z.array(z.string()),
-  draft: conceptDraftSchema,
-  missing: z.array(z.string()),
-  ready: z.boolean(),
-  provider: z.enum(["gemini", "static-sample"]),
-});
+export const conceptReplySchema = z
+  .object({
+    reply: z.string().min(1).max(maxReplyLength),
+    choices: z.array(z.string().min(1).max(maxChoiceLength)).max(maxChoices),
+    draft: conceptDraftSchema,
+    missing: z.array(z.enum(requiredFields)),
+    ready: z.boolean(),
+    provider: z.enum(["gemini", "static-sample"]),
+  })
+  // ready と draft が食い違う応答をそのまま信じると、
+  // 空欄のまま生成へ進めたり、そろっているのに進めなくなったりする。
+  .superRefine((reply, ctx) => {
+    if (reply.ready !== isDraftReady(reply.draft)) {
+      ctx.addIssue({ code: "custom", message: "readyとdraftの内容が一致しません。", path: ["ready"] });
+    }
+  });
 
 export type ChatRole = z.infer<typeof chatRoleSchema>;
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
@@ -50,6 +70,21 @@ export const emptyDraft: ConceptDraft = {
   tone: "",
   mustInclude: [],
 };
+
+/**
+ * 下書きに足りない必須項目を返す。
+ *
+ * サーバーの missing をそのまま使うと、保存から復元したときに手元へ何も残らない。
+ * 判定は下書きだけで決まるので、画面側でも同じ規則で導出する。
+ */
+export function missingFields(draft: ConceptDraft): RequiredField[] {
+  return requiredFields.filter((field) => draft[field].trim() === "");
+}
+
+/** 必須項目がそろい、生成へ進めるか。 */
+export function isDraftReady(draft: ConceptDraft): boolean {
+  return missingFields(draft).length === 0;
+}
 
 /** 必須項目の表示名。missing に入る値と対応させる。 */
 export const requiredFieldLabels: Record<string, string> = {
@@ -86,3 +121,23 @@ export function conceptSummary(draft: ConceptDraft): string {
   if (parts.length === 0) return "AIと相談してコンセプトを決めました。";
   return parts.join(" / ");
 }
+
+/**
+ * 保存から読み戻した相談の状態を、安全な形へそろえる。
+ *
+ * localStorageの中身は古い版のまま残ることも、壊れていることもある。
+ * 検証せずに使うと、mustInclude が配列でないだけで描画中に例外になり、
+ * 画面全体が落ちる。読めない部分は捨てて、空の相談として扱う。
+ */
+export const conceptStateSchema = z
+  .object({
+    chatMessages: z.array(chatMessageSchema).catch([]),
+    conceptDraft: conceptDraftSchema.catch(emptyDraft),
+    conceptChoices: z.array(z.string().min(1).max(maxChoiceLength)).max(maxChoices).catch([]),
+  })
+  .partial()
+  .transform((state) => ({
+    chatMessages: trimHistory(state.chatMessages ?? []),
+    conceptDraft: state.conceptDraft ?? emptyDraft,
+    conceptChoices: state.conceptChoices ?? [],
+  }));

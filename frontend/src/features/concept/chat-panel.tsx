@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { MessageCircle, Send, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { conceptChat } from "@/lib/api";
 import { useBuilderStore } from "@/features/site-model/store";
 import {
+  isDraftReady,
   maxMessageLength,
+  missingFields,
   requiredFieldLabels,
   type ChatMessage,
   type ConceptDraft,
@@ -30,15 +32,19 @@ type ConceptChatPanelProps = {
 export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelProps) {
   const chatMessages = useBuilderStore((state) => state.chatMessages);
   const conceptDraft = useBuilderStore((state) => state.conceptDraft);
+  const conceptChoices = useBuilderStore((state) => state.conceptChoices);
+  const conceptGeneration = useBuilderStore((state) => state.conceptGeneration);
   const appendChatMessage = useBuilderStore((state) => state.appendChatMessage);
-  const setConceptDraft = useBuilderStore((state) => state.setConceptDraft);
+  const dropLastChatMessage = useBuilderStore((state) => state.dropLastChatMessage);
+  const setConceptReply = useBuilderStore((state) => state.setConceptReply);
   const resetConcept = useBuilderStore((state) => state.resetConcept);
 
   const [input, setInput] = useState("");
-  // 直近の応答に付いてきた選択肢。選ぶだけで次へ進めるようにする。
-  const [choices, setChoices] = useState<string[]>([]);
-  const [ready, setReady] = useState(false);
-  const [missing, setMissing] = useState<string[]>([]);
+
+  // ready と missing は下書きから決まる。画面のstateに持つと、
+  // 保存から復元したときだけ「そろっているのに生成できない」状態になる。
+  const ready = useMemo(() => isDraftReady(conceptDraft), [conceptDraft]);
+  const missing = useMemo(() => missingFields(conceptDraft), [conceptDraft]);
 
   const started = chatMessages.length > 0;
 
@@ -47,15 +53,22 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
       const next: ChatMessage = { role: "user", text };
       // 送信した発言はすぐ画面へ出す。応答を待つ間、何を送ったか見えないと不安になる。
       appendChatMessage(next);
-      return conceptChat([...chatMessages, next], conceptDraft);
+      // どの相談に対する応答かを覚えておく。返るころにやり直されていたら捨てる。
+      const generation = conceptGeneration;
+      const reply = await conceptChat([...chatMessages, next], conceptDraft);
+      return { reply, generation };
     },
-    onSuccess: (reply) => {
+    onSuccess: ({ reply, generation }) => {
+      // やり直したあとに古い応答が届くと、空にした会話が復活してしまう。
+      if (generation !== useBuilderStore.getState().conceptGeneration) return;
       appendChatMessage({ role: "model", text: reply.reply });
-      setConceptDraft(reply.draft);
-      setChoices(reply.choices);
-      setMissing(reply.missing);
-      setReady(reply.ready);
+      setConceptReply(reply.draft, reply.choices);
       setInput("");
+    },
+    onError: () => {
+      // 楽観的に足した発言を残すと、再送のたびに同じ文が積み上がる。
+      // 入力欄には文面が残っているので、そのまま送り直せる。
+      dropLastChatMessage();
     },
   });
 
@@ -77,10 +90,8 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
   };
 
   const startOver = () => {
+    // 進行中の通信は止められないが、世代が変わるので応答は捨てられる。
     resetConcept();
-    setChoices([]);
-    setMissing([]);
-    setReady(false);
     setInput("");
     chat.reset();
   };
@@ -143,15 +154,15 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
             <p className="mt-2 flex gap-2 text-xs text-red-700" data-testid="concept-chat-error">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <span className="leading-5">
-                相談を利用できませんでした。下の題材入力から、直接たたき台を作ることもできます。
+                相談を利用できませんでした。もう一度送信するか、下の題材入力から直接たたき台を作れます。
               </span>
             </p>
           )}
 
           {/* 選択肢。選ぶだけで前に進める。自由に書いてもよい。 */}
-          {!chat.isPending && choices.length > 0 && (
+          {!chat.isPending && conceptChoices.length > 0 && (
             <ul className="mt-2 flex flex-wrap gap-2">
-              {choices.map((choice) => (
+              {conceptChoices.map((choice) => (
                 <li key={choice}>
                   <Button variant="secondary" className="text-xs" onClick={() => send(choice)}>
                     {choice}
@@ -201,9 +212,11 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
           )}
 
           {ready && (
+            /* 返事の送信中は押させない。応答を待っている間に押すと、
+               まだ反映されていない内容でたたき台ができてしまう。 */
             <Button
               className="mt-3 w-full"
-              disabled={generating}
+              disabled={generating || chat.isPending}
               onClick={() => onGenerate(conceptDraft)}
               data-testid="generate-from-concept"
             >

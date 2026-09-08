@@ -54,13 +54,21 @@ func NewRouter(config Config) http.Handler {
 	router.Use(middleware.Timeout(30 * time.Second))
 	router.Use(cors(config.AllowedOrigins))
 
+	// AIを呼ぶ経路だけ利用量を絞る。健康チェックや保存まで巻き込むと、
+	// 画面が動かなくなる範囲が広がりすぎる。
+	aiLimiter := newRateLimiter(aiRequestsPerWindow, aiRateLimitWindow)
+	aiSlots := make(chan struct{}, aiConcurrencyLimit)
+	limitAI := limitAIUsage(aiLimiter, aiSlots)
+
 	router.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", func(writer http.ResponseWriter, _ *http.Request) {
 			writeJSON(writer, http.StatusOK, map[string]string{"service": "learning-web-builder-api", "status": "ok", "version": "0.1.0"})
 		})
 		api.With(optionalAuthentication(config.Authenticator)).Get("/session", session)
-		api.Post("/generate", generate(config.Generator))
-		api.Post("/concept/chat", conceptChat(config.Advisor))
+		// 認証は必須にしない。ゲストでも試せることが学習用途では大事なため、
+		// 身元が分かるときはユーザー単位、分からないときはIP単位で数える。
+		api.With(optionalAuthentication(config.Authenticator), limitAI).Post("/generate", generate(config.Generator))
+		api.With(optionalAuthentication(config.Authenticator), limitAI).Post("/concept/chat", conceptChat(config.Advisor))
 		api.With(optionalAuthentication(config.Authenticator)).Post("/projects", createProject(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects", listProjects(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}", getProject(config.Projects))
@@ -117,6 +125,9 @@ func generate(generator SiteGenerator) http.HandlerFunc {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		// 題材の入力元を1つに決める。concept.topic が食い違っていても
+		// 生成には topic しか使わないため、どちらが正なのか分からなくなる。
+		input.Concept.Topic = input.Topic
 
 		if generator != nil {
 			generatedSite, err := generator.Generate(request.Context(), input.Topic, input.Concept)

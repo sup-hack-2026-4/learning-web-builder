@@ -51,6 +51,9 @@ func ValidateMessages(messages []Message) error {
 	if len(messages) > 0 && messages[len(messages)-1].Role != RoleUser {
 		validationErrors = append(validationErrors, errors.New("messages must end with a user message"))
 	}
+	if err := ValidateAlternating(messages); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
 
 	return errors.Join(validationErrors...)
 }
@@ -143,4 +146,49 @@ func MissingFields(draft Draft) []string {
 // IsReady は必須項目がそろっているかを返す。
 func IsReady(draft Draft) bool {
 	return len(MissingFields(draft)) == 0
+}
+
+// MergeConfirmed は、確定済みの下書きへモデルの提案を重ねる。
+//
+// モデルの応答をそのまま採用すると、すでに学習者が答えた項目を
+// 消したり書き換えたりできてしまう。「空欄だけ聞く」はプロンプト上の依頼にすぎず、
+// 従う保証がないため、確定済みの値はサーバー側で守る。
+//
+// 空いている項目にだけ提案を入れ、任意項目も同じ扱いにする。
+// 学習者が決め直したいときは、やり直しで下書きごと作り直す。
+func MergeConfirmed(confirmed Draft, proposed Draft) Draft {
+	merged := Normalize(confirmed)
+	suggestion := Normalize(proposed)
+
+	if merged.Topic == "" {
+		merged.Topic = suggestion.Topic
+	}
+	if merged.Audience == "" {
+		merged.Audience = suggestion.Audience
+	}
+	if merged.Goal == "" {
+		merged.Goal = suggestion.Goal
+	}
+	if merged.Tone == "" {
+		merged.Tone = suggestion.Tone
+	}
+	if len(merged.MustInclude) == 0 {
+		merged.MustInclude = suggestion.MustInclude
+	}
+
+	return merged
+}
+
+// ValidateAlternating は、会話が学習者とモデルで交互に並んでいるかを確かめる。
+//
+// 履歴はクライアントから毎回送られてくるため、モデルの発言が本物である保証はない。
+// 交互性まで検証しても偽装は防ぎきれないが、会話の体裁を借りた指示の流し込みは
+// 通しにくくなる。下書きの値をサーバー側で守ること（MergeConfirmed）と合わせて使う。
+func ValidateAlternating(messages []Message) error {
+	for index := 1; index < len(messages); index++ {
+		if messages[index].Role == messages[index-1].Role {
+			return fmt.Errorf("messages[%d].role must alternate between user and model", index)
+		}
+	}
+	return nil
 }

@@ -85,8 +85,9 @@ export async function generateSite(
 /**
  * 生成前のコンセプト相談を1ターン進める。
  *
- * 会話はサーバーに持たせず、毎回まとめて送る。DBを増やさずに済み、
- * 複数のタブで同時に相談されても状態が壊れない。
+ * 会話はサーバーに持たせず、毎回まとめて送る。DBを増やさずに済む一方、
+ * 履歴はサーバーから見て未信頼な入力になるため、確定済みの項目は
+ * サーバー側で保持される（こちらが送った下書きが勝手に書き換わることはない）。
  */
 export async function conceptChat(messages: ChatMessage[], draft: ConceptDraft): Promise<ConceptReply> {
   const response = await requestApi("/concept/chat", {

@@ -54,6 +54,7 @@ paths:
               properties:
                 topic: { type: string, minLength: 1, maxLength: 100 }
                 concept:
+                  # topicはリクエスト直下の値が正となり、ここに書いた値は上書きされる。
                   $ref: "#/components/schemas/ConceptDraft"
       responses:
         "200":
@@ -68,6 +69,10 @@ paths:
                   site: { $ref: "#/components/schemas/SiteModel" }
         "400":
           description: Invalid input
+        "429":
+          description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
+        "503":
+          description: 同時実行の上限に達した（Retry-Afterに待ち時間を返す）
   /concept/chat:
     post:
       operationId: conceptChat
@@ -123,6 +128,10 @@ paths:
                   provider: { type: string, enum: [gemini, static-sample] }
         "400":
           description: Invalid input
+        "429":
+          description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
+        "503":
+          description: 同時実行の上限に達した（Retry-Afterに待ち時間を返す）
   /projects:
     get:
       operationId: listProjects

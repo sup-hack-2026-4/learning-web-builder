@@ -50,6 +50,9 @@ func conceptChat(advisor ConceptAdvisor) http.HandlerFunc {
 		if advisor != nil {
 			reply, err := advisor.Chat(request.Context(), input.Messages, input.Draft)
 			if err == nil {
+				err = sanitizeReply(&reply, input.Draft)
+			}
+			if err == nil {
 				writeConceptReply(writer, reply, "gemini")
 				return
 			}
@@ -77,4 +80,16 @@ func writeConceptReply(writer http.ResponseWriter, reply concept.Reply, provider
 		"ready":    reply.Ready,
 		"provider": provider,
 	})
+}
+
+// sanitizeReply は、Advisor が返した内容をこの層でもう一度整える。
+//
+// いまの Gemini 実装は自分で検証しているが、それはインターフェースの約束ではない。
+// 別の実装に差し替わっても、確定済みの下書きが壊れたり、
+// 空欄のまま ready が立ったりしないよう、ここで最後にそろえ直す。
+func sanitizeReply(reply *concept.Reply, confirmed concept.Draft) error {
+	reply.Draft = concept.MergeConfirmed(confirmed, reply.Draft)
+	reply.Missing = concept.MissingFields(reply.Draft)
+	reply.Ready = concept.IsReady(reply.Draft)
+	return concept.ValidateReply(*reply)
 }

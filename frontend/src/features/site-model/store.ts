@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSampleSite } from "./sample";
 import type { AiUsage, LearningNote, SiteModel } from "./schema";
-import { emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
+import { conceptStateSchema, emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
 
 type BuilderState = {
   site: SiteModel;
@@ -21,11 +21,26 @@ type BuilderState = {
   reset: () => void;
   // 生成前のコンセプト相談。SiteModelとは独立に持つ。
   // 生成してもここは消さない。何を決めて生成したのかを後から見返せるようにするため。
+  // ただしリセットや別プロジェクトの読み込みでは消す（別の題材の相談が残ると混乱する）。
   chatMessages: ChatMessage[];
   conceptDraft: ConceptDraft;
+  // 直近の応答に付いてきた選択肢。会話と一緒に保存しないと、
+  // 再読み込みしたときだけ選択肢が消えて、続きを進めにくくなる。
+  conceptChoices: string[];
+  // 相談をやり直した回数。応答が返るころに会話が作り直されていたら、
+  // 古い応答だと分かるようにする。
+  conceptGeneration: number;
   appendChatMessage: (message: ChatMessage) => void;
-  setConceptDraft: (draft: ConceptDraft) => void;
+  // 楽観的に足した発言を取り消す。送信が失敗したときに使う。
+  dropLastChatMessage: () => void;
+  setConceptReply: (draft: ConceptDraft, choices: string[]) => void;
   resetConcept: () => void;
+};
+
+const emptyConcept = {
+  chatMessages: [] as ChatMessage[],
+  conceptDraft: emptyDraft,
+  conceptChoices: [] as string[],
 };
 
 const initialSite = createSampleSite();
@@ -49,12 +64,15 @@ export const useBuilderStore = create<BuilderState>()(
           }],
         }),
       loadSite: (site) =>
-        set({
+        set((state) => ({
           site,
           selectedElementId: "hero",
           notes: [],
           aiUsage: [],
-        }),
+          // 別のプロジェクトを開いたら、前の題材の相談は残さない。
+          ...emptyConcept,
+          conceptGeneration: state.conceptGeneration + 1,
+        })),
       selectElement: (selectedElementId) => set({ selectedElementId }),
       previewTheme: (key, value) =>
         set((state) => {
@@ -85,16 +103,37 @@ export const useBuilderStore = create<BuilderState>()(
         set((state) => ({
           notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString(), codeChanges }],
         })),
-      reset: () => set({ site: createSampleSite(), selectedElementId: "hero", notes: [], aiUsage: [] }),
-      chatMessages: [],
-      conceptDraft: emptyDraft,
+      reset: () =>
+        set((state) => ({
+          site: createSampleSite(),
+          selectedElementId: "hero",
+          notes: [],
+          aiUsage: [],
+          ...emptyConcept,
+          conceptGeneration: state.conceptGeneration + 1,
+        })),
+      ...emptyConcept,
+      conceptGeneration: 0,
       appendChatMessage: (message) =>
         set((state) => ({ chatMessages: trimHistory([...state.chatMessages, message]) })),
-      setConceptDraft: (conceptDraft) => set({ conceptDraft }),
-      resetConcept: () => set({ chatMessages: [], conceptDraft: emptyDraft }),
+      dropLastChatMessage: () =>
+        set((state) => ({ chatMessages: state.chatMessages.slice(0, -1) })),
+      setConceptReply: (conceptDraft, conceptChoices) => set({ conceptDraft, conceptChoices }),
+      resetConcept: () =>
+        set((state) => ({ ...emptyConcept, conceptGeneration: state.conceptGeneration + 1 })),
     }),
     {
       name: "learning-web-builder-draft-v1",
+      version: 2,
+      // v1には相談の項目が無い。壊れた値や古い形式のまま読み込むと、
+      // 描画中に例外になって画面ごと落ちるため、ここで形をそろえる。
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        if (version >= 2) {
+          return { ...state, ...conceptStateSchema.parse(state) };
+        }
+        return { ...state, ...emptyConcept, conceptGeneration: 0 };
+      },
       partialize: (state) => ({
         site: state.site,
         selectedElementId: state.selectedElementId,
@@ -102,6 +141,7 @@ export const useBuilderStore = create<BuilderState>()(
         aiUsage: state.aiUsage,
         chatMessages: state.chatMessages,
         conceptDraft: state.conceptDraft,
+        conceptChoices: state.conceptChoices,
       }),
     },
   ),
