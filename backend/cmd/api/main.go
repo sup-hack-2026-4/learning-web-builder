@@ -41,6 +41,8 @@ func main() {
 			log.Fatalf("configure Gemini client: %v", err)
 		}
 		routerConfig.Generator = geminiClient
+		// 生成と相談で同じクライアントを使う。時間予算だけがメソッド側で違う。
+		routerConfig.Advisor = geminiClient
 	}
 	var databasePool *pgxpool.Pool
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {

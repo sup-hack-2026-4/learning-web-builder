@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/concept"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/project"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
@@ -21,6 +22,7 @@ type Config struct {
 	AllowedOrigins []string
 	Authenticator  SessionAuthenticator
 	Generator      SiteGenerator
+	Advisor        ConceptAdvisor
 	Projects       project.Repository
 }
 
@@ -30,6 +32,11 @@ type SessionAuthenticator interface {
 
 type SiteGenerator interface {
 	Generate(context.Context, string) (site.Model, error)
+}
+
+// ConceptAdvisor は、生成前のコンセプトを固める相談を1ターン進める。
+type ConceptAdvisor interface {
+	Chat(context.Context, []concept.Message, concept.Draft) (concept.Reply, error)
 }
 
 type generateRequest struct {
@@ -50,6 +57,7 @@ func NewRouter(config Config) http.Handler {
 		})
 		api.With(optionalAuthentication(config.Authenticator)).Get("/session", session)
 		api.Post("/generate", generate(config.Generator))
+		api.Post("/concept/chat", conceptChat(config.Advisor))
 		api.With(optionalAuthentication(config.Authenticator)).Post("/projects", createProject(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects", listProjects(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}", getProject(config.Projects))
