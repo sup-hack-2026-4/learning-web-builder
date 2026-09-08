@@ -428,7 +428,7 @@ export default function App() {
           <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
           <div className="max-h-52 space-y-2 overflow-auto">
             {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
-              <div key={note.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+              <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs">
                 <strong>{note.target}</strong>
                 <p className="mt-1 text-slate-600">{note.reason}</p>
                 {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
@@ -501,6 +501,8 @@ export default function App() {
               // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
               // 畳んでいる間はタブ列しか見えないため、選択表示が残っていて差し支えない。
               const selected = activePanel === key;
+              // data-state は、選択中かどうかを見た目とは別に持たせるための印。
+              // テストがCSSクラスを直接見ていると、配色や余白を変えるだけで壊れてしまう。
               return (
                 <button
                   key={key}
@@ -508,6 +510,7 @@ export default function App() {
                   role="tab"
                   id={`panel-tab-${key}`}
                   aria-selected={selected}
+                  data-state={selected ? "active" : "inactive"}
                   aria-controls="panel-content"
                   tabIndex={selected ? 0 : -1}
                   title={panelLabels[key]}

@@ -45,7 +45,8 @@ test("内容変更の記録をはさんでも、デザイン変更には変更�
   await expect(page.getByText("デザイン変更の内容と理由を学習メモへ記録しました。")).toBeVisible();
 
   // メインカラーの変更には、手順1で入力した理由が紐づいていること。
-  const colorNote = page.locator("div").filter({ hasText: /^デザイン変更（メインカラーを #e11d48 に）/ }).last();
+  // メモの見出しでたどる。汎用のdivで拾うと、囲みを1つ足すだけで壊れる。
+  const colorNote = page.getByTestId("learning-note").filter({ hasText: "デザイン変更（メインカラーを #e11d48 に）" }).last();
   await expect(colorNote).toContainText("見出しを目立たせたいから");
   // 手順3で入力した理由が、手順1のデザイン変更へ紐づいていないこと。
   await expect(colorNote).not.toContainText("余白を広げて読みやすくしたいから");
@@ -214,8 +215,9 @@ test("モバイルで選択中タブを再クリックしても選択状態と�
   await designTab.click();
   await expect(designTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
-  // 選択中タブの背景も消えないこと（aria属性だけでなく見た目でも選択が分かる）。
-  await expect(designTab).toHaveClass(/bg-white/);
+  // 選択中タブの見た目も消えないこと（aria属性だけでなく見た目でも選択が分かる）。
+  // 配色を変えても壊れないよう、CSSクラスではなくdata-stateで確かめる。
+  await expect(designTab).toHaveAttribute("data-state", "active");
 });
 
 // レビュー指摘の再現ケース。
@@ -233,7 +235,7 @@ test("モバイルでタブを再クリックしてもデスクトップ幅で�
   // デスクトップ幅へ広げても、パネルは開いたまま。
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
-  await expect(designTab).toHaveClass(/bg-white/);
+  await expect(designTab).toHaveAttribute("data-state", "active");
 });
 
 test("デスクトップで畳んだ状態からモバイル幅にすると内容が見える", async ({ page }) => {
@@ -493,7 +495,7 @@ test("理由を記録すると、そのとき変わったコードが学習メ�
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
 
   // メモには理由と、実際に変わったCSSの行が並ぶ。
-  const note = page.locator("div").filter({ hasText: /^デザイン変更（余白を 9 に）/ }).last();
+  const note = page.getByTestId("learning-note").filter({ hasText: "デザイン変更（余白を 9 に）" }).last();
   await expect(note).toContainText("文章のまとまりが見やすくなるから");
   await expect(note).toContainText("--space: 36px;");
 });
@@ -520,7 +522,7 @@ test("セクションを非表示にすると、消えたコードが学習メ�
   await page.getByRole("checkbox", { name: "3つの魅力" }).uncheck();
 
   // 削除しか起きていなくても、消えた行が「-」付きで残る。
-  const note = page.locator("div").filter({ hasText: /^表示切替（3つの魅力）/ }).last();
+  const note = page.getByTestId("learning-note").filter({ hasText: "表示切替（3つの魅力）" }).last();
   await expect(note).toContainText("先に全体像を伝えたいから");
   await expect(note).toContainText("- <h2>3つの魅力</h2>");
 });
@@ -541,7 +543,7 @@ test("未記録の変更が残っていても、別のセクションのメモ�
   await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
 
   // 記録したセクションの変更だけがメモに入る。
-  const note = page.locator("div").filter({ hasText: /^内容変更（記録するほうの見出し）/ }).last();
+  const note = page.getByTestId("learning-note").filter({ hasText: "内容変更（記録するほうの見出し）" }).last();
   await expect(note).toContainText("記録するほうの見出し");
   await expect(note).not.toContainText("未記録のままにする見出し");
 });
