@@ -24,6 +24,8 @@ import { createSampleSite } from "@/features/site-model/sample";
 import type { SiteModel, SiteSection } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
+import { ConceptChatPanel } from "@/features/concept/chat-panel";
+import { conceptSummary, type ConceptDraft } from "@/features/concept/schema";
 
 type ThemeKey = "primary" | "background" | "text" | "heading" | "fontFamily" | "spacing";
 
@@ -234,19 +236,25 @@ export default function App() {
   };
 
   const generation = useMutation({
-    mutationFn: async (nextTopic: string) => {
+    mutationFn: async ({ topic: nextTopic, concept }: { topic: string; concept?: ConceptDraft }) => {
       try {
-        return await generateSite(nextTopic);
+        return { ...await generateSite(nextTopic, concept), concept };
       } catch {
-        return { site: createSampleSite(nextTopic), provider: "static-sample" as const };
+        return { site: createSampleSite(nextTopic), provider: "static-sample" as const, concept };
       }
     },
-    onSuccess: ({ site: generatedSite, provider }) => {
-      setSite(generatedSite, provider);
+    onSuccess: ({ site: generatedSite, provider, concept }) => {
+      const viaConcept = concept !== undefined;
+      setSite(generatedSite, provider, viaConcept ? "コンセプト相談と、サイト構成・仮文章の生成" : undefined);
       // サイトが差し替わると、記録前の変更内容は新しいサイトに対して意味を持たない。
       // 残したままだと、触れていない初期値を変更として誤記録してしまう。
       discardUnrecordedChanges();
       setCurrentProjectId(null);
+      // 相談で決めたことは、生成した本人の判断そのもの。学習メモに残して提出物へ含める。
+      // setSite がメモを空にするため、必ずそのあとで記録する。
+      if (concept) {
+        addNote("コンセプト", conceptSummary(concept));
+      }
       setNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
     },
   });
@@ -254,7 +262,16 @@ export default function App() {
   const submitTopic = (event: FormEvent) => {
     event.preventDefault();
     if (!topic.trim()) return;
-    generation.mutate(topic.trim());
+    generation.mutate({ topic: topic.trim() });
+  };
+
+  // 相談で固めたコンセプトからたたき台を作る。
+  // 題材欄にも反映して、あとから題材だけ変えて作り直せるようにする。
+  const generateFromConcept = (draft: ConceptDraft) => {
+    const nextTopic = draft.topic.trim();
+    if (!nextTopic) return;
+    setTopic(nextTopic);
+    generation.mutate({ topic: nextTopic, concept: draft });
   };
 
   // 色・余白・フォントの変更はプレビューへ即時反映するだけで、メモは残さない。
@@ -382,6 +399,10 @@ export default function App() {
           </div>
 
           <div className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${setupOpen ? "block" : "block xl:hidden"}`}>
+          <ConceptChatPanel onGenerate={generateFromConcept} generating={generation.isPending} />
+
+          <p className="my-4 text-center text-xs text-slate-400">または題材だけを入力して生成する</p>
+
           <form onSubmit={submitTopic} className="space-y-3">
             <label className="text-sm font-bold" htmlFor="topic">紹介サイトの題材</label>
             <Textarea id="topic" rows={3} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />

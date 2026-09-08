@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/concept"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
 
@@ -23,6 +24,9 @@ const (
 	maxGenerateAttempts     = 3
 	maxGenerationDuration   = 24 * time.Second
 	maxPrimaryModelDuration = 8 * time.Second
+	// チャットは往復するぶん、1回あたりの待ち時間を生成より短く抑える。
+	maxChatDuration        = 12 * time.Second
+	maxChatPrimaryDuration = 6 * time.Second
 )
 
 type Config struct {
@@ -45,6 +49,9 @@ type Client struct {
 }
 
 type content struct {
+	// 単発生成では role を送らない。systemInstruction でも同じ型を使うため、
+	// 空のときはフィールドごと落とす。
+	Role  string `json:"role,omitempty"`
 	Parts []part `json:"parts"`
 }
 
@@ -132,10 +139,14 @@ func NewClient(config Config) (*Client, error) {
 	}, nil
 }
 
-func (client *Client) Generate(ctx context.Context, topic string) (site.Model, error) {
+// Generate は題材からサイトの構成案を作る。
+//
+// draft は生成前の相談で固まったコンセプト。空でも動く（従来どおり題材だけで生成する）ため、
+// 相談を使わない導線はそのまま残せる。
+func (client *Client) Generate(ctx context.Context, topic string, draft concept.Draft) (site.Model, error) {
 	requestBody := generateContentRequest{
 		SystemInstruction: content{Parts: []part{{Text: systemPrompt}}},
-		Contents:          []content{{Parts: []part{{Text: fmt.Sprintf("題材: %q", topic)}}}},
+		Contents:          []content{{Parts: []part{{Text: generationInput(topic, draft)}}}},
 		GenerationConfig: generationConfig{
 			ResponseMIMEType:   "application/json",
 			ResponseJSONSchema: siteModelJSONSchema(),
@@ -150,34 +161,7 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 		return site.Model{}, fmt.Errorf("encode Gemini request: %w", err)
 	}
 
-	generationCtx, cancelGeneration := context.WithTimeout(ctx, client.generationTimeout)
-	defer cancelGeneration()
-
-	var primaryCtx context.Context = generationCtx
-	cancelPrimary := func() {}
-	if client.fallbackModel != "" {
-		primaryCtx, cancelPrimary = context.WithTimeout(generationCtx, client.primaryModelTimeout)
-	}
-	responseBody, err := client.generateContent(primaryCtx, client.model, encodedRequest)
-	primaryTimedOut := errors.Is(primaryCtx.Err(), context.DeadlineExceeded)
-	cancelPrimary()
-
-	if err != nil &&
-		client.fallbackModel != "" &&
-		generationCtx.Err() == nil &&
-		(isFallbackEligible(err) || primaryTimedOut) {
-		primaryErr := err
-		responseBody, err = client.generateContent(generationCtx, client.fallbackModel, encodedRequest)
-		if err != nil {
-			return site.Model{}, fmt.Errorf(
-				"Gemini primary model %s failed: %v; fallback model %s failed: %w",
-				client.model,
-				primaryErr,
-				client.fallbackModel,
-				err,
-			)
-		}
-	}
+	responseBody, err := client.callWithFallback(ctx, encodedRequest, client.generationTimeout, client.primaryModelTimeout)
 	if err != nil {
 		return site.Model{}, err
 	}
@@ -216,6 +200,49 @@ func (client *Client) Generate(ctx context.Context, topic string) (site.Model, e
 	}
 
 	return model, nil
+}
+
+// callWithFallback は主モデルへ投げ、失敗か時間切れなら控えのモデルへ切り替える。
+// 生成とチャットで時間予算だけが違うため、予算を引数で受け取る。
+func (client *Client) callWithFallback(
+	ctx context.Context,
+	encodedRequest []byte,
+	totalTimeout time.Duration,
+	primaryTimeout time.Duration,
+) ([]byte, error) {
+	totalCtx, cancelTotal := context.WithTimeout(ctx, totalTimeout)
+	defer cancelTotal()
+
+	var primaryCtx context.Context = totalCtx
+	cancelPrimary := func() {}
+	if client.fallbackModel != "" {
+		primaryCtx, cancelPrimary = context.WithTimeout(totalCtx, primaryTimeout)
+	}
+	responseBody, err := client.generateContent(primaryCtx, client.model, encodedRequest)
+	primaryTimedOut := errors.Is(primaryCtx.Err(), context.DeadlineExceeded)
+	cancelPrimary()
+
+	if err != nil &&
+		client.fallbackModel != "" &&
+		totalCtx.Err() == nil &&
+		(isFallbackEligible(err) || primaryTimedOut) {
+		primaryErr := err
+		responseBody, err = client.generateContent(totalCtx, client.fallbackModel, encodedRequest)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"Gemini primary model %s failed: %v; fallback model %s failed: %w",
+				client.model,
+				primaryErr,
+				client.fallbackModel,
+				err,
+			)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return responseBody, nil
 }
 
 func (client *Client) generateContent(ctx context.Context, model string, encodedRequest []byte) ([]byte, error) {
@@ -344,6 +371,27 @@ func decodeStrictJSON(reader io.Reader, destination any) error {
 		return err
 	}
 	return nil
+}
+
+// generationInput は、題材と（あれば）コンセプトを1つの入力文にまとめる。
+// 相談で決まった項目だけを渡し、決めていない項目は書かない。
+func generationInput(topic string, draft concept.Draft) string {
+	normalized := concept.Normalize(draft)
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("題材: %q", topic))
+	if normalized.Audience != "" {
+		builder.WriteString(fmt.Sprintf("\n読んでほしい人: %q", normalized.Audience))
+	}
+	if normalized.Goal != "" {
+		builder.WriteString(fmt.Sprintf("\n読んだあとどうしてほしいか: %q", normalized.Goal))
+	}
+	if normalized.Tone != "" {
+		builder.WriteString(fmt.Sprintf("\n雰囲気: %q", normalized.Tone))
+	}
+	if len(normalized.MustInclude) > 0 {
+		builder.WriteString(fmt.Sprintf("\n必ず載せる情報: %q", strings.Join(normalized.MustInclude, "、")))
+	}
+	return builder.String()
 }
 
 const systemPrompt = `あなたは学習用の静的紹介サイトの構成案を作成します。

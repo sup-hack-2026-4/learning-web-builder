@@ -2,13 +2,15 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSampleSite } from "./sample";
 import type { AiUsage, LearningNote, SiteModel } from "./schema";
+import { conceptStateSchema, emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
 
 type BuilderState = {
   site: SiteModel;
   selectedElementId: string;
   notes: LearningNote[];
   aiUsage: AiUsage[];
-  setSite: (site: SiteModel, provider: AiUsage["provider"]) => void;
+  // purpose は AI をどう使ったかの記録。コンセプト相談を経た生成だけ文言が変わる。
+  setSite: (site: SiteModel, provider: AiUsage["provider"], purpose?: string) => void;
   loadSite: (site: SiteModel) => void;
   selectElement: (id: string) => void;
   // テーマの更新はプレビュー反映のみ。学習メモはApp側の明示的な記録操作でaddNoteする。
@@ -17,6 +19,28 @@ type BuilderState = {
   updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string, codeChanges?: string[]) => void;
   addNote: (target: string, reason: string, codeChanges?: string[]) => void;
   reset: () => void;
+  // 生成前のコンセプト相談。SiteModelとは独立に持つ。
+  // 生成してもここは消さない。何を決めて生成したのかを後から見返せるようにするため。
+  // ただしリセットや別プロジェクトの読み込みでは消す（別の題材の相談が残ると混乱する）。
+  chatMessages: ChatMessage[];
+  conceptDraft: ConceptDraft;
+  // 直近の応答に付いてきた選択肢。会話と一緒に保存しないと、
+  // 再読み込みしたときだけ選択肢が消えて、続きを進めにくくなる。
+  conceptChoices: string[];
+  // 相談をやり直した回数。応答が返るころに会話が作り直されていたら、
+  // 古い応答だと分かるようにする。
+  conceptGeneration: number;
+  appendChatMessage: (message: ChatMessage) => void;
+  // 楽観的に足した発言を取り消す。送信が失敗したときに使う。
+  dropLastChatMessage: () => void;
+  setConceptReply: (draft: ConceptDraft, choices: string[]) => void;
+  resetConcept: () => void;
+};
+
+const emptyConcept = {
+  chatMessages: [] as ChatMessage[],
+  conceptDraft: emptyDraft,
+  conceptChoices: [] as string[],
 };
 
 const initialSite = createSampleSite();
@@ -28,20 +52,27 @@ export const useBuilderStore = create<BuilderState>()(
       selectedElementId: "hero",
       notes: [],
       aiUsage: [{ provider: "static-sample", purpose: "初期サンプル", generatedAt: new Date().toISOString() }],
-      setSite: (site, provider) =>
+      setSite: (site, provider, purpose) =>
         set({
           site,
           selectedElementId: "hero",
           notes: [],
-          aiUsage: [{ provider, purpose: "サイト構成と仮文章の生成", generatedAt: new Date().toISOString() }],
+          aiUsage: [{
+            provider,
+            purpose: purpose ?? "サイト構成と仮文章の生成",
+            generatedAt: new Date().toISOString(),
+          }],
         }),
       loadSite: (site) =>
-        set({
+        set((state) => ({
           site,
           selectedElementId: "hero",
           notes: [],
           aiUsage: [],
-        }),
+          // 別のプロジェクトを開いたら、前の題材の相談は残さない。
+          ...emptyConcept,
+          conceptGeneration: state.conceptGeneration + 1,
+        })),
       selectElement: (selectedElementId) => set({ selectedElementId }),
       previewTheme: (key, value) =>
         set((state) => {
@@ -72,11 +103,46 @@ export const useBuilderStore = create<BuilderState>()(
         set((state) => ({
           notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString(), codeChanges }],
         })),
-      reset: () => set({ site: createSampleSite(), selectedElementId: "hero", notes: [], aiUsage: [] }),
+      reset: () =>
+        set((state) => ({
+          site: createSampleSite(),
+          selectedElementId: "hero",
+          notes: [],
+          aiUsage: [],
+          ...emptyConcept,
+          conceptGeneration: state.conceptGeneration + 1,
+        })),
+      ...emptyConcept,
+      conceptGeneration: 0,
+      appendChatMessage: (message) =>
+        set((state) => ({ chatMessages: trimHistory([...state.chatMessages, message]) })),
+      dropLastChatMessage: () =>
+        set((state) => ({ chatMessages: state.chatMessages.slice(0, -1) })),
+      setConceptReply: (conceptDraft, conceptChoices) => set({ conceptDraft, conceptChoices }),
+      resetConcept: () =>
+        set((state) => ({ ...emptyConcept, conceptGeneration: state.conceptGeneration + 1 })),
     }),
     {
       name: "learning-web-builder-draft-v1",
-      partialize: (state) => ({ site: state.site, selectedElementId: state.selectedElementId, notes: state.notes, aiUsage: state.aiUsage }),
+      version: 2,
+      // v1には相談の項目が無い。壊れた値や古い形式のまま読み込むと、
+      // 描画中に例外になって画面ごと落ちるため、ここで形をそろえる。
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        if (version >= 2) {
+          return { ...state, ...conceptStateSchema.parse(state) };
+        }
+        return { ...state, ...emptyConcept, conceptGeneration: 0 };
+      },
+      partialize: (state) => ({
+        site: state.site,
+        selectedElementId: state.selectedElementId,
+        notes: state.notes,
+        aiUsage: state.aiUsage,
+        chatMessages: state.chatMessages,
+        conceptDraft: state.conceptDraft,
+        conceptChoices: state.conceptChoices,
+      }),
     },
   ),
 );

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/concept"
 	projectpkg "github.com/haru-yoshi-5/learning-web-builder/backend/internal/project"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
 )
@@ -18,9 +19,12 @@ import (
 type stubGenerator struct {
 	model site.Model
 	err   error
+	// 生成へ渡ってきたコンセプト。相談の結果が生成まで届くかを確かめる。
+	draft *concept.Draft
 }
 
-func (generator stubGenerator) Generate(_ context.Context, _ string) (site.Model, error) {
+func (generator *stubGenerator) Generate(_ context.Context, _ string, draft concept.Draft) (site.Model, error) {
+	generator.draft = &draft
 	return generator.model, generator.err
 }
 
@@ -169,7 +173,7 @@ func TestGenerateReturnsGeminiModel(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"topic":"学校の写真部"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	NewRouter(Config{Generator: stubGenerator{model: generated}}).ServeHTTP(response, request)
+	NewRouter(Config{Generator: &stubGenerator{model: generated}}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
@@ -183,7 +187,7 @@ func TestGenerateFallsBackWhenGeneratorFails(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"topic":"学校の写真部"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	NewRouter(Config{Generator: stubGenerator{err: errors.New("upstream unavailable")}}).ServeHTTP(response, request)
+	NewRouter(Config{Generator: &stubGenerator{err: errors.New("upstream unavailable")}}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
@@ -199,7 +203,7 @@ func TestGenerateFallsBackWhenGeneratedModelIsInvalid(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"topic":"学校の写真部"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	NewRouter(Config{Generator: stubGenerator{model: generated}}).ServeHTTP(response, request)
+	NewRouter(Config{Generator: &stubGenerator{model: generated}}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
