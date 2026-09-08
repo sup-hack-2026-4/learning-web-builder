@@ -14,7 +14,8 @@
       （`backend/internal/auth`。`backend/internal/project/postgres.go`が
       `clerk_user_id`で所有者を絞り込む）
 - [ ] Neon保存、マイグレーション、sqlcクエリ
-      （保存とマイグレーションは実装済み。sqlcのみ未完。下記参照）
+      （保存とマイグレーションは実装済みで、本番のNeonへの保存も確認済み。
+      sqlcのみ未完。下記参照）
 
 ## 2週目
 
@@ -33,7 +34,8 @@
       （`frontend/src/features/site-model/sample.ts`と
       [production-verification.md](production-verification.md)の縦断手順）
 - [x] Cloudflare Pages／Render／Neonへ接続
-      （3環境とも公開・疎通済み。ただし縦断確認は未了。下記参照）
+      （3環境とも公開・疎通済み。2026年9月8日にログインから保存・復元までの
+      縦断確認も完了。[production-verification.md](production-verification.md)）
 
 ## 残っている作業
 
@@ -42,9 +44,3 @@
 `db/queries/projects.sql`と`db/sqlc.yaml`は用意されていますが、
 生成先の`backend/internal/dbgen`が存在せず、`backend/internal/project/postgres.go`は
 生SQLで実装されています。動作はしているため、sqlcへ寄せるかどうかは判断が要ります。
-
-### 本番の縦断確認
-
-接続と機能は揃っていますが、ログインを伴う手順（保存・上書き保存・復元・ログアウト）と
-Neon側の確認が未了です。
-手順は[production-verification.md](production-verification.md)にあります。
