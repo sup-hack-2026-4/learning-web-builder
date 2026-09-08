@@ -672,3 +672,85 @@ test("altを埋めるとaxeの指摘が減る", async ({ page }) => {
   await page.getByRole("tab", { name: "品質" }).click();
   await expect(page.getByText("画像として扱っている要素に説明がありません。")).toHaveCount(0, { timeout: 20000 });
 });
+
+test("セクションを追加すると、増えたコードと理由が学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("追加するセクション").selectOption("gallery");
+  await page.getByRole("button", { name: "追加" }).click();
+
+  // 末尾に入り、プレビューにも出る。
+  await expect(page.getByRole("checkbox", { name: "写真・作品" })).toBeVisible();
+
+  // 追加しただけでは未説明の変更として残る。
+  await expect(page.getByText("未説明1件")).toBeVisible();
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("写真の節を足した。文章だけだと様子が伝わらないから。見た人が雰囲気をつかめる");
+  await page.getByRole("button", { name: "セクション構成の理由を記録" }).click();
+
+  const note = page.getByTestId("learning-note").filter({ hasText: "セクション追加（写真・作品）" }).last();
+  await expect(note).toContainText("見た人が雰囲気をつかめる");
+  await expect(note).toContainText("+ <h2>写真・作品</h2>");
+  await expect(page.getByText("未説明1件")).toBeHidden();
+});
+
+test("削除は確認を挟み、まず非表示にする道を示す", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "3つの魅力を削除" }).click();
+  await expect(page.getByText("削除すると元に戻せません。")).toBeVisible();
+
+  // 引き返せる。非表示にするだけならセクションは残る。
+  await page.getByRole("button", { name: "まず非表示にする" }).click();
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).not.toBeChecked();
+
+  // あらためて削除すると、一覧から消える。
+  await page.getByRole("button", { name: "3つの魅力を削除" }).click();
+  await page.getByRole("button", { name: "削除する" }).click();
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).toBeHidden();
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("魅力の節を削った。伝えたいことを絞りたいから。読み手が迷わなくなる");
+  await page.getByRole("button", { name: "セクション構成の理由を記録" }).click();
+
+  const note = page.getByTestId("learning-note").filter({ hasText: "セクション削除（3つの魅力）" }).last();
+  await expect(note).toContainText("読み手が迷わなくなる");
+  await expect(note).toContainText("- <h2>3つの魅力</h2>");
+});
+
+test("上限と下限に達すると、追加も削除もできなくなる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const addButton = page.getByRole("button", { name: "追加" });
+  // 初期サンプルは4件。8件になるまで足す。
+  for (let index = 0; index < 4; index += 1) await addButton.click();
+
+  await expect(page.getByText("セクションは8件までです。")).toBeVisible();
+  await expect(addButton).toBeDisabled();
+
+  // 2件になるまで削ると、今度は削除できなくなる。
+  for (let index = 0; index < 6; index += 1) {
+    await page.getByRole("button", { name: /を削除$/ }).first().click();
+    await page.getByRole("button", { name: "削除する" }).click();
+  }
+
+  await expect(page.getByRole("button", { name: /を削除$/ }).first()).toBeDisabled();
+  await expect(addButton).toBeEnabled();
+});
+
+test("追加したセクションをすぐ消すと、説明すべき変更として残らない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "追加" }).click();
+  await expect(page.getByText("未説明1件")).toBeVisible();
+
+  await page.getByRole("button", { name: "写真・作品を削除" }).click();
+  await page.getByRole("button", { name: "削除する" }).click();
+
+  // 足して消したなら構成は元のまま。書くべき説明も無い。
+  await expect(page.getByText(/未説明\d+件/)).toBeHidden();
+  await expect(page.getByRole("button", { name: "セクション構成の理由を記録" })).toBeHidden();
+});
