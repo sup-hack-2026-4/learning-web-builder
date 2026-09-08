@@ -290,19 +290,20 @@ test("内側タブは上下キーでフォーカスと選択が循環移動す�
   // ここではタブ列の中の移動だけを検証する。
   // ページ全体のTab順はプレビューiframeの中身も含むため、別の関心事として切り離す。
   await designTab.focus();
-  await page.keyboard.press("ArrowDown");
+  // タブ列は横並びのため、左右キーで移動する。
+  await page.keyboard.press("ArrowRight");
   await expect(explanationTab).toBeFocused();
   await expect(explanationTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("なぜこのコード？")).toBeVisible();
 
   // 末尾から先頭へ循環する。
-  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowRight");
   await expect(qualityTab).toBeFocused();
-  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowRight");
   await expect(designTab).toBeFocused();
 
-  // 上方向にも動き、Home/Endも効く。
-  await page.keyboard.press("ArrowUp");
+  // 逆方向にも動き、Home/Endも効く。
+  await page.keyboard.press("ArrowLeft");
   await expect(qualityTab).toBeFocused();
   await page.keyboard.press("Home");
   await expect(designTab).toBeFocused();

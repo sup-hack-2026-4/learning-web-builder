@@ -490,12 +490,24 @@ export default function App() {
           aria-labelledby="view-tab-panel"
           className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}
         >
-          {/* フォルダのつまみのような縦タブ。畳んでいる間もここだけは残る。 */}
-          <div className="flex w-14 shrink-0 flex-col items-end py-3">
-          {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。
-              デスクトップで畳んでいる間は、押しても結果が見えないタブを並べない。
-              モバイルには畳みの概念がないため常に出す。 */}
-          <div className={`flex-col items-end gap-1 ${panelOpen ? "flex" : "flex xl:hidden"}`} role="tablist" aria-label="調整と学習" aria-orientation="vertical">
+          {/* 畳んだときのつまみ。デスクトップで畳んでいる間はここだけが残る。 */}
+          <div className={`hidden w-10 shrink-0 flex-col items-center py-3 ${panelOpen ? "xl:hidden" : "xl:flex"}`}>
+            <button
+              type="button"
+              onClick={() => setPanelOpen(true)}
+              aria-expanded={false}
+              title="パネルを開く"
+              className="w-10 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
+            >
+              <ChevronLeft className="mx-auto size-4" />
+            </button>
+          </div>
+
+          {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
+          <div className={`flex min-w-0 flex-1 flex-col bg-white ${panelOpen ? "flex" : "flex xl:hidden"}`}>
+          {/* タブは横書き。縦書きだと1文字ずつ縦に並び、主要ナビゲーションとして読みにくい。
+              role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
+          <div className="flex shrink-0 items-center gap-1 border-b border-slate-200 px-2 pt-2" role="tablist" aria-label="調整と学習" aria-orientation="horizontal">
             {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
               // 選択状態は「どのパネルを選んでいるか」だけで決める。
               // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
@@ -515,7 +527,7 @@ export default function App() {
                   tabIndex={selected ? 0 : -1}
                   title={panelLabels[key]}
                   onKeyDown={(event) =>
-                    handleTabKeyDown(event, Object.keys(panelLabels) as PanelKey[], activePanel, "vertical", (k) => `panel-tab-${k}`, setActivePanel)
+                    handleTabKeyDown(event, Object.keys(panelLabels) as PanelKey[], activePanel, "horizontal", (k) => `panel-tab-${k}`, setActivePanel)
                   }
                   onClick={() => {
                     // タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
@@ -523,36 +535,32 @@ export default function App() {
                     // 画面に出ていない「デスクトップの畳み状態」を勝手に書き換えてしまう。
                     setActivePanel(key);
                   }}
-                  className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "bg-white text-slate-900" : "text-slate-600 hover:bg-white/60 hover:text-slate-800"}`}
+                  className={`relative rounded-t-lg px-3 py-2 text-sm font-bold whitespace-nowrap transition ${selected ? "bg-white text-blue-700 shadow-[inset_0_-2px_0_0_currentColor]" : "text-slate-500 hover:bg-white/60 hover:text-slate-800"}`}
                 >
-                  {/* 縦書き。折り返すと1文字ずつ横に割れるため、折り返しを禁止する。 */}
-                  <span className="whitespace-nowrap [writing-mode:vertical-rl]">{panelLabels[key]}</span>
+                  <span>{panelLabels[key]}</span>
                   {key === "quality" && hasQualityIssue && (
                     <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-600" />
                   )}
                 </button>
               );
             })}
-          </div>
             <button
               type="button"
-              onClick={() => setPanelOpen((open) => !open)}
+              onClick={() => setPanelOpen(false)}
               aria-expanded={panelOpen}
-              title={panelOpen ? "パネルを畳んでプレビューを広げる" : "パネルを開く"}
-              className="mt-1 hidden w-12 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700 xl:block"
+              title="パネルを畳んでプレビューを広げる"
+              className="ml-auto hidden rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 xl:block"
             >
-              {panelOpen ? <ChevronRight className="mx-auto size-4" /> : <ChevronLeft className="mx-auto size-4" />}
+              <ChevronRight className="size-4" />
             </button>
           </div>
 
-          {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
           <div
             id="panel-content"
             role="tabpanel"
             aria-labelledby={`panel-tab-${activePanel}`}
-            className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${panelOpen ? "block" : "block xl:hidden"}`}
+            className="flex-1 overflow-y-auto p-4 pb-20 xl:pb-4"
           >
-          <h2 className="text-base font-black">調整と学習</h2>
 
           {activePanel === "design" && <>
           <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
@@ -669,6 +677,7 @@ export default function App() {
               </p>
             </section>
           </Card>}
+          </div>
           </div>
         </aside>
       </div>
