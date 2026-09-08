@@ -1,6 +1,6 @@
 # 2週間MVPバックログ
 
-2026年9月2日時点の状況です。チェックは、リポジトリの実装を確認できたものだけに付けています。
+2026年9月8日時点の状況です。チェックは、リポジトリの実装を確認できたものだけに付けています。
 
 ## 1週目
 
@@ -14,14 +14,17 @@
       （`backend/internal/auth`。`backend/internal/project/postgres.go`が
       `clerk_user_id`で所有者を絞り込む）
 - [ ] Neon保存、マイグレーション、sqlcクエリ
-      （保存とマイグレーションは実装済み。sqlcのみ未完。下記参照）
+      （保存とマイグレーションは実装済みで、本番のNeonへの保存も確認済み。
+      sqlcのみ未完。下記参照）
 
 ## 2週目
 
 - [x] 監修済み解説辞書の拡充
       （`frontend/src/features/explanations/dictionary.ts`。6要素すべてに個別の解説）
-- [ ] axe-core結果の画面統合
-      （`axe-core`は依存に入っているが、`frontend/src`から参照されていない。未着手）
+- [x] axe-core結果の画面統合
+      （`frontend/src/features/quality/`のaxe-audit・run-axe-audit・use-axe-audit。
+      画面外のiframeで実測し、品質パネルに実行中・結果・失敗を出し分ける。
+      結果は提出物ZIPにも含まれる）
 - [x] Playwrightの主要デモシナリオ安定化
       （`frontend/e2e/builder.spec.ts`に34シナリオ。CIの`e2e`ジョブで実行）
 - [x] API停止・不正入力・通信復旧の確認
@@ -31,7 +34,8 @@
       （`frontend/src/features/site-model/sample.ts`と
       [production-verification.md](production-verification.md)の縦断手順）
 - [x] Cloudflare Pages／Render／Neonへ接続
-      （3環境とも公開・疎通済み。ただし縦断確認は未了。下記参照）
+      （3環境とも公開・疎通済み。2026年9月8日にログインから保存・復元までの
+      縦断確認も完了。[production-verification.md](production-verification.md)）
 
 ## 残っている作業
 
@@ -40,14 +44,3 @@
 `db/queries/projects.sql`と`db/sqlc.yaml`は用意されていますが、
 生成先の`backend/internal/dbgen`が存在せず、`backend/internal/project/postgres.go`は
 生SQLで実装されています。動作はしているため、sqlcへ寄せるかどうかは判断が要ります。
-
-### axe-core結果の画面統合
-
-`frontend/package.json`に`axe-core`はありますが、`frontend/src`から参照されていません。
-品質チェックは`frontend/src/features/quality/evaluate-quality.ts`の独自判定のみです。
-
-### 本番の縦断確認
-
-接続と機能は揃っていますが、ログインを伴う手順（保存・上書き保存・復元・ログアウト）と
-Neon側の確認が未了です。
-手順は[production-verification.md](production-verification.md)にあります。
