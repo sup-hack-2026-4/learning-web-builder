@@ -26,6 +26,8 @@ import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 import { ConceptChatPanel } from "@/features/concept/chat-panel";
 import { conceptSummary, type ConceptDraft } from "@/features/concept/schema";
+import { StepNav } from "@/components/step-nav";
+import { nextAction, stepViews, type FlowState } from "@/features/learning-flow/steps";
 
 type ThemeKey = "primary" | "background" | "text" | "heading" | "fontFamily" | "spacing";
 
@@ -158,6 +160,34 @@ export default function App() {
     () => ({ ...site, theme: themeBaseline, sections: baselineSections }),
     [site, themeBaseline, baselineSections],
   );
+
+  // 学習の工程を、いまの画面の状態から導く。
+  // 説明していない変更は、デザインと内容の両方を数える。
+  const unexplainedSectionCount = useMemo(
+    () =>
+      site.sections.filter((section) => {
+        const baseline = sectionBaselines[section.id];
+        if (!baseline) return false;
+        return (
+          baseline.title !== section.title ||
+          baseline.body !== section.body ||
+          baseline.imageAlt !== section.imageAlt ||
+          baseline.visible !== section.visible
+        );
+      }).length,
+    [site.sections, sectionBaselines],
+  );
+  const flowState: FlowState = useMemo(
+    () => ({
+      // 生成したかどうかは、AIの利用記録が「初期サンプル」以外を含むかで見る。
+      generated: aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
+      unexplainedCount: touchedThemeKeys.length + unexplainedSectionCount,
+      noteCount: notes.length,
+    }),
+    [aiUsage, touchedThemeKeys.length, unexplainedSectionCount, notes.length],
+  );
+  const steps = useMemo(() => stepViews(flowState), [flowState]);
+  const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
   // axeの自動チェックはiframeでの実測が要るため非同期。終わるまでは静的な3項目だけで判断する。
@@ -343,7 +373,10 @@ export default function App() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 xl:h-screen">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
-        <h1 className="text-2xl font-black tracking-tight text-blue-600">Whyve</h1>
+        <div className="flex min-w-0 items-center gap-4">
+          <h1 className="text-2xl font-black tracking-tight text-blue-600">Whyve</h1>
+          <StepNav steps={steps} />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <AuthControls enabled={clerkConfig.enabled} />
           <ProjectControls
@@ -355,6 +388,14 @@ export default function App() {
             onNotice={setNotice}
           />
           <Button variant="ghost" onClick={resetBuilder}><RotateCcw className="mr-2 size-4" />リセット</Button>
+          {/* 提出の手前で、何件記録できていて何件未説明かが分かるようにする。
+              「理由を書かずに提出してしまう」のを止めるための最後の目印。 */}
+          <span className="text-xs text-slate-500">
+            メモ<strong className="mx-0.5 text-slate-800">{notes.length}</strong>件
+            {flowState.unexplainedCount > 0 && (
+              <strong className="ml-2 text-amber-700">未説明{flowState.unexplainedCount}件</strong>
+            )}
+          </span>
           <Button onClick={() => void exportProject(site, notes, aiUsage, axeAudit.status === "ready" ? [axeAudit.check] : [])}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
       </header>
@@ -549,6 +590,13 @@ export default function App() {
             aria-labelledby={`panel-tab-${activePanel}`}
             className="flex-1 overflow-y-auto p-4 pb-20 xl:pb-4"
           >
+          {/* いま一番やってほしいことを1つだけ出す。複数並べると、
+              結局どれから手を付ければよいのか分からなくなる。 */}
+          <section aria-labelledby="next-action-heading" className="mb-4 rounded-xl bg-blue-50 p-3">
+            <h3 id="next-action-heading" className="text-xs font-bold text-blue-700">次にすること</h3>
+            <p className="mt-1 text-sm font-black text-blue-950">{nextToDo.title}</p>
+            <p className="mt-1 text-xs leading-5 text-blue-900">{nextToDo.detail}</p>
+          </section>
 
           {activePanel === "design" && <>
           <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
