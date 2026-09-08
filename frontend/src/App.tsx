@@ -83,9 +83,8 @@ function effectiveThemeValue(theme: SiteModel["theme"], key: ThemeKey): string |
   return theme[key];
 }
 
-// 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
-// あとで理由欄が書き換わっても過去の変更には影響しないようにする。
-type TouchedThemeChange = { key: ThemeKey; reason: string };
+// まだ説明を書いていないデザイン変更の項目。
+// 先に変えてから説明を書くため、理由は記録するときに1つだけ受け取る。
 
 // プレビューとコードの高さ配分。どちらも読めなくならない範囲に収める。
 const minCodeHeight = 120;
@@ -96,9 +95,8 @@ export default function App() {
   const [reason, setReason] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
-  // 記録ボタンを押すまでに変更したテーマ項目を、そのとき入力されていた理由と対にして覚えておく。
-  // 記録時はこの理由を使うため、途中で理由欄を書き換えても過去の変更には紐づかない。
-  const [touchedThemeChanges, setTouchedThemeChanges] = useState<TouchedThemeChange[]>([]);
+  // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
+  const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
   // 右カラムは縦に積むと画面へ収まらないため、常に1パネルだけ表示する。
   const [activePanel, setActivePanel] = useState<PanelKey>("design");
   // 畳むとプレビューがPC幅まで広がり、出力時に近い見た目を確認できる。
@@ -203,7 +201,7 @@ export default function App() {
   // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
   // 差し替え後のサイトが新しい基準になるため、コード上の変更表示もここで消える。
   const discardUnrecordedChanges = () => {
-    setTouchedThemeChanges([]);
+    setTouchedThemeKeys([]);
     setReason("");
     const current = useBuilderStore.getState().site;
     setThemeBaseline(current.theme);
@@ -276,14 +274,11 @@ export default function App() {
 
   // 色・余白・フォントの変更はプレビューへ即時反映するだけで、メモは残さない。
   // カラーピッカー等は操作ごとに大量のイベントが発火するため、記録は明示ボタンで行う。
-  // 理由未入力のうちは変更させず、先に「なぜ変えるか」を言語化させる（理解確認）。
+  //
+  // 変更そのものは止めない。まず変えて、見た目の違いを確かめてから
+  // 「何を・なぜ・どう良くなるか」を書く順序のほうが、言葉にしやすいため。
   // 変更した項目は覚えておき、記録時に「何をどの値に変えたか」をまとめてメモへ残す。
   const changeTheme = (key: ThemeKey, value: string | number) => {
-    const trimmedReason = reason.trim();
-    if (!trimmedReason) {
-      setNotice("先に『なぜ変えるか』を入力してください。");
-      return;
-    }
     // 基準の値まで戻したなら、その項目は変更していないのと同じ。
     // このとき基準に保存されていた値そのものへ戻す。見出しの色を「未指定」から
     // 触って戻した場合、同じ色を明示値として残すとメインカラーへ追従しなくなり、
@@ -291,44 +286,33 @@ export default function App() {
     const backToBaseline = effectiveThemeValue(themeBaseline, key) === value;
     previewTheme(key, backToBaseline ? themeBaseline[key] : value);
 
-    setTouchedThemeChanges((changes) => {
-      const others = changes.filter((change) => change.key !== key);
+    setTouchedThemeKeys((keys) => {
+      const others = keys.filter((touched) => touched !== key);
       // 差分が無いのに「デザイン変更」のメモを作れてしまわないよう、対象から外す。
       if (backToBaseline) return others;
-      // 同じ項目を触り直したときは、そのときの理由で上書きする。
-      return [...others, { key, reason: trimmedReason }];
+      return [...others, key];
     });
   };
 
   // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由をメモへ残す。
-  // 理由は入力欄の現在値ではなく、変更時に記録しておいた理由を使う。
-  // 異なる理由で変更した項目が混在している場合は、理由ごとに分けて1件ずつ残す。
+  // まだ説明していない変更をまとめて1件にし、そのとき書かれている理由を付ける。
   const recordThemeReason = () => {
     if (!reason.trim()) {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
-    if (touchedThemeChanges.length === 0) {
+    if (touchedThemeKeys.length === 0) {
       setNotice("先に色・余白・フォントを変更してください。");
       return;
     }
-    const groupedByReason = touchedThemeChanges.reduce<{ reason: string; keys: ThemeKey[] }[]>((groups, change) => {
-      const group = groups.find((candidate) => candidate.reason === change.reason);
-      if (group) group.keys.push(change.key);
-      else groups.push({ reason: change.reason, keys: [change.key] });
-      return groups;
-    }, []);
-    for (const group of groupedByReason) {
-      const summary = group.keys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
-      addNote(`デザイン変更（${summary}）`, group.reason, cssChangesForThemeKeys(group.keys));
-    }
+    const summary = touchedThemeKeys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
+    addNote(`デザイン変更（${summary}）`, reason.trim(), cssChangesForThemeKeys(touchedThemeKeys));
     setNotice(noticeForRecordedReason("デザイン変更の内容と理由を学習メモへ記録しました。"));
     setThemeBaseline(site.theme);
-    setTouchedThemeChanges([]);
+    setTouchedThemeKeys([]);
     setReason("");
   };
 
-  // 理由欄をクリアしても、未記録のデザイン変更は変更時の理由を保持しているため影響を受けない。
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
     addNote(
@@ -601,12 +585,6 @@ export default function App() {
             <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => changeTheme("spacing", Number(event.target.value))} /></label>
             <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
             <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
-            {!reason.trim() && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl bg-white/75 px-4 text-center backdrop-blur-[1px]">
-                <span className="text-sm font-black text-slate-700">まず変更の理由を入力</span>
-                <span className="text-xs text-slate-500">上の欄に理由を書くと調整できます。</span>
-              </div>
-            )}
           </Card>
 
           {selectedSection && <Card className="mt-4 space-y-3 p-4">

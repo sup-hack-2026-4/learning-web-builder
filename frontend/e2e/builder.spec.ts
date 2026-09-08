@@ -26,30 +26,38 @@ test("リセットすると未記録のテーマ変更と理由を破棄する",
 // 未記録のデザイン変更が残ったまま内容変更を記録すると理由欄だけが空になるため、
 // そのあと別の理由でデザイン変更を記録すると、以前のデザイン変更に無関係な理由が
 // 紐づいてしまう恐れがあった。デザイン変更は変更時点の理由を保持する。
-test("内容変更の記録をはさんでも、デザイン変更には変更時の理由が紐づく", async ({ page }) => {
+test("理由を書かずに変更でき、あとから説明して記録できる", async ({ page }) => {
   await page.goto("/");
 
-  // 1. デザイン変更の理由を入力して、メインカラーを変更する（まだ記録しない）。
-  await page.getByLabel("なぜこの変更をしますか？").fill("見出しを目立たせたいから");
+  // 先に変える。見た目の違いを確かめてからでないと、どう良くなったかは書けない。
   await page.getByLabel("メインカラー").fill("#e11d48");
+  await expect(page.getByText("先に『なぜ変えるか』を入力してください。")).toBeHidden();
 
-  // 2. 記録しないまま、別の理由で内容変更を記録する。ここで理由欄が空になる。
-  await page.getByLabel("なぜこの変更をしますか？").fill("紹介文を分かりやすくしたいから");
-  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
-  await expect(page.getByText("内容変更の理由を学習メモへ記録しました。")).toBeVisible();
-  await expect(page.getByLabel("なぜこの変更をしますか？")).toHaveValue("");
-
-  // 3. さらに別の理由を入力してデザイン変更を記録する。
-  await page.getByLabel("なぜこの変更をしますか？").fill("余白を広げて読みやすくしたいから");
+  // 変えたあとで説明を書いて記録する。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しを赤にした。目立たせて読み始めてもらいたいから");
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
   await expect(page.getByText("デザイン変更の内容と理由を学習メモへ記録しました。")).toBeVisible();
 
-  // メインカラーの変更には、手順1で入力した理由が紐づいていること。
   // メモの見出しでたどる。汎用のdivで拾うと、囲みを1つ足すだけで壊れる。
   const colorNote = page.getByTestId("learning-note").filter({ hasText: "デザイン変更（メインカラーを #e11d48 に）" }).last();
-  await expect(colorNote).toContainText("見出しを目立たせたいから");
-  // 手順3で入力した理由が、手順1のデザイン変更へ紐づいていないこと。
-  await expect(colorNote).not.toContainText("余白を広げて読みやすくしたいから");
+  await expect(colorNote).toContainText("見出しを赤にした。目立たせて読み始めてもらいたいから");
+});
+
+test("説明していない変更が複数あると、まとめて1件として記録される", async ({ page }) => {
+  await page.goto("/");
+
+  // 説明を書かないまま、続けて2つ変える。
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByLabel(/^余白/).fill("9");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("色と余白を変えた。全体を明るくして読みやすくしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // 2つの変更が1件のメモにまとまること。
+  const note = page.getByTestId("learning-note").filter({ hasText: "デザイン変更（" }).last();
+  await expect(note).toContainText("メインカラーを #e11d48 に");
+  await expect(note).toContainText("余白を 9 に");
+  await expect(note).toContainText("色と余白を変えた。全体を明るくして読みやすくしたいから");
 });
 
 test("同じ理由でまとめて変更した項目は1件のメモに残る", async ({ page }) => {
