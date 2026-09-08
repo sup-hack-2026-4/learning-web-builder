@@ -376,7 +376,7 @@ export default function App() {
       </header>
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
-      <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[290px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
+      <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[340px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
         {/* 下部バーのタブから参照されるパネル。xl以上では3カラム同時表示になるが、
             タブ列自体がxl:hiddenで消えるため、関連付けが残っていても支障はない。 */}
         <aside
@@ -401,15 +401,18 @@ export default function App() {
           <div className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${setupOpen ? "block" : "block xl:hidden"}`}>
           <ConceptChatPanel onGenerate={generateFromConcept} generating={generation.isPending} />
 
-          <p className="my-4 text-center text-xs text-slate-400">または題材だけを入力して生成する</p>
-
-          <form onSubmit={submitTopic} className="space-y-3">
-            <label className="text-sm font-bold" htmlFor="topic">紹介サイトの題材</label>
-            <Textarea id="topic" rows={3} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />
-            <Button className="w-full" disabled={!topic.trim() || generation.isPending}>
-              <Sparkles className="mr-2 size-4" />{generation.isPending ? "生成中…" : "たたき台を生成"}
-            </Button>
-          </form>
+          {/* 直接入力は補助の導線。畳んでしまうと題材から始めたい人が迷うため表示は残し、
+              見た目の重みだけを落として、相談が主であることを示す。 */}
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            <p className="mb-2 text-xs text-slate-500">題材が決まっているなら、直接入力しても始められます。</p>
+            <form onSubmit={submitTopic} className="space-y-2">
+              <label className="text-xs font-bold text-slate-600" htmlFor="topic">紹介サイトの題材</label>
+              <Textarea id="topic" rows={2} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />
+              <Button variant="secondary" className="w-full" disabled={!topic.trim() || generation.isPending}>
+                <Sparkles className="mr-2 size-4" />{generation.isPending ? "生成中…" : "たたき台を生成"}
+              </Button>
+            </form>
+          </div>
 
           <div className="my-5 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">
             <strong>AI生成文は仮テキストです。</strong><br />事実情報は必ず自分で調べて入力してください。
@@ -426,7 +429,8 @@ export default function App() {
           </div>
 
           <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
-          <div className="max-h-52 space-y-2 overflow-auto">
+          {/* 内側でスクロールさせない。列のスクロールと二重になり、どちらを動かせばよいか分からなくなる。 */}
+          <div className="space-y-2">
             {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
               <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs">
                 <strong>{note.target}</strong>
