@@ -23,6 +23,7 @@ backend/      Go + chi API
 db/           PostgreSQLマイグレーションとsqlc設定
 openapi/      API契約
 docs/         設計・役割分担・開発規約
+scripts/      開発用スクリプト（開発サーバーの一括起動）
 .github/      CI、PR・Issueテンプレート、CODEOWNERS
 ```
 
@@ -99,6 +100,31 @@ psql $env:DATABASE_URL -f db/migrations/001_initial.sql
 
 ## 開発サーバー
 
+リポジトリのルートで次を実行すると、フロントエンドとバックエンドが1つのターミナルでまとめて起動します。
+
+```powershell
+.\scripts\dev.ps1
+```
+
+- フロントエンド: http://localhost:5173
+- API: http://localhost:8080/api/v1/health
+
+`Ctrl+C`で両方まとめて停止します。`go run`が生成する子バイナリやViteの孫プロセスもツリーごと終了するため、ポートが掴まれたまま残りません。どちらかが落ちた場合は、もう片方も停止します（片方だけ生きていると、動いているつもりで壊れた状態を触ることになるため）。
+
+起動前に以下を確認し、足りない場合は何をすべきかを表示して終了します。
+
+- `go`と`npm`がPATHにあるか
+- `frontend/node_modules`があるか（なければ[初回セットアップ](#初回セットアップ)を案内）
+- `DATABASE_URL`が設定されているか（未設定でも起動し、保存APIだけが`503`を返す旨を警告）
+
+実行ポリシーで拒否される場合は、次のように呼び出してください。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+```
+
+### 個別に起動する場合
+
 ターミナル1:
 
 ```powershell
@@ -112,9 +138,6 @@ go run ./cmd/api
 cd frontend
 npm.cmd run dev
 ```
-
-- フロントエンド: http://localhost:5173
-- API: http://localhost:8080/api/v1/health
 
 ## 動作確認
 
