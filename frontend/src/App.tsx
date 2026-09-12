@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Info, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Info, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,14 @@ import { evaluateQuality } from "@/features/quality/evaluate-quality";
 import { impactLabels } from "@/features/quality/axe-audit";
 import { useAxeAudit } from "@/features/quality/use-axe-audit";
 import { createSampleSite } from "@/features/site-model/sample";
+import {
+  addSectionBlockReason,
+  maxSections,
+  removeSectionBlockReason,
+  sectionKindLabels,
+  sectionKinds,
+  type SectionKind,
+} from "@/features/site-model/sections";
 import type { SiteModel, SiteSection } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
@@ -88,6 +96,11 @@ function effectiveThemeValue(theme: SiteModel["theme"], key: ThemeKey): string |
 // まだ説明を書いていないデザイン変更の項目。
 // 先に変えてから説明を書くため、理由は記録するときに1つだけ受け取る。
 
+// まだ説明を書いていない構成の変更1件。
+// 「セクション追加（〜）」のように同じ文言が並ぶことがあるため、
+// 打ち消し（追加してすぐ削除）を扱えるようidを持たせる。
+type StructureChange = { id: string; label: string };
+
 // プレビューとコードの高さ配分。どちらも読めなくならない範囲に収める。
 const minCodeHeight = 120;
 const minPreviewHeight = 240;
@@ -142,7 +155,7 @@ export default function App() {
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
   }, [codeOpen, limitCodeHeight, measureMaxCodeHeight]);
-  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addNote, reset } = useBuilderStore();
+  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addSection, removeSection, addNote, reset } = useBuilderStore();
 
   // 「まだ理由を書いていない変更」をコード上で示すための基準。
   // デザインと内容は別々に記録するため、基準も分けて持つ。
@@ -152,14 +165,34 @@ export default function App() {
   const [sectionBaselines, setSectionBaselines] = useState<Record<string, SiteSection>>(() =>
     Object.fromEntries(site.sections.map((section) => [section.id, section])),
   );
+  // 構成（どのセクションが何番目にあるか）の基準。内容の基準とは別に持つ。
+  // 内容の基準はid単位なので、セクションが増えた・減ったこと自体は表せない。
+  const [structureBaseline, setStructureBaseline] = useState<SiteSection[]>(() => site.sections);
+  // まだ説明を書いていない構成の変更。押した順に並べ、まとめて1件として記録する。
+  const [pendingStructure, setPendingStructure] = useState<StructureChange[]>([]);
+  // 削除の確認を出している行。取り消せない操作なので、押した行の中で一度確かめる。
+  const [removalTargetId, setRemovalTargetId] = useState<string | null>(null);
+  // 追加するセクションの種類。生成結果には入りにくく、かつ足す判断をしやすい
+  // 「写真・作品」を初期値にする。ヒーローを初期値にすると、h1が2つある構造を
+  // 何気なく作ってしまいやすい（品質チェックには出るが、最初の一歩としては遠回り）。
+  const [newSectionKind, setNewSectionKind] = useState<SectionKind>("gallery");
+
+  // 内容の基準。顔ぶれと並びは「いまの構成」に合わせ、中身だけ基準値へ戻す。
+  // 内容の差分を取るときに、構成の変更が混ざらないようにするため。
   // 生成やプロジェクト読み込みで増えたセクションは、その時点の内容を基準として扱う。
-  const baselineSections = useMemo(
+  const contentBaselineSections = useMemo(
     () => site.sections.map((section) => sectionBaselines[section.id] ?? section),
     [site.sections, sectionBaselines],
   );
+  // 構成の基準。顔ぶれも中身も、最後に記録した時点のまま。
+  const structureBaselineSections = useMemo(
+    () => structureBaseline.map((section) => sectionBaselines[section.id] ?? section),
+    [structureBaseline, sectionBaselines],
+  );
+  // コード上の「未記録の変更」には、内容の書き換えと構成の増減の両方を含める。
   const baselineSite = useMemo(
-    () => ({ ...site, theme: themeBaseline, sections: baselineSections }),
-    [site, themeBaseline, baselineSections],
+    () => ({ ...site, theme: themeBaseline, sections: structureBaselineSections }),
+    [site, themeBaseline, structureBaselineSections],
   );
 
   // 学習の工程を、いまの画面の状態から導く。
@@ -183,12 +216,20 @@ export default function App() {
       topicReady: topic.trim().length > 0,
       // 生成したかどうかは、AIの利用記録が「初期サンプル」以外を含むかで見る。
       generated: loadedProject || aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
-      unexplainedCount: touchedThemeKeys.length + unexplainedSectionCount,
+      unexplainedCount: touchedThemeKeys.length + unexplainedSectionCount + pendingStructure.length,
       // コンセプトの記録だけでは、調整とその理由説明を終えたことにはならない。
       explainedCount: notes.filter((note) => note.target !== "コンセプト").length,
       noteCount: notes.length,
     }),
-    [topic, loadedProject, aiUsage, touchedThemeKeys.length, unexplainedSectionCount, notes],
+    [
+      topic,
+      loadedProject,
+      aiUsage,
+      touchedThemeKeys.length,
+      unexplainedSectionCount,
+      pendingStructure.length,
+      notes,
+    ],
   );
   const steps = useMemo(() => stepViews(flowState), [flowState]);
   const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
@@ -220,16 +261,29 @@ export default function App() {
   // 対象のセクションだけを基準から動かして比べるため、他のセクションを未記録のまま
   // 触っていても、その分は今回のメモへ混ざらない。
   const htmlChangesForSection = (sectionId: string, nextSection: SiteSection): string[] => {
-    const changedSections = baselineSections.map((section) =>
+    const changedSections = contentBaselineSections.map((section) =>
       section.id === sectionId ? nextSection : section,
     );
     return collectChangedLineTexts(
       buildSiteArtifacts({ ...site, sections: changedSections }).html,
-      buildSiteArtifacts({ ...site, sections: baselineSections }).html,
+      buildSiteArtifacts({ ...site, sections: contentBaselineSections }).html,
     );
   };
+
+  // 構成の変更はHTMLのsectionごと増減する。両側に内容の基準値を当てて比べることで、
+  // まだ説明していない文章の書き換えが、構成の説明へ混ざらないようにする。
+  const htmlChangesForStructure = (): string[] =>
+    collectChangedLineTexts(
+      buildSiteArtifacts({ ...site, sections: contentBaselineSections }).html,
+      buildSiteArtifacts({ ...site, sections: structureBaselineSections }).html,
+    );
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
-  const explanation = explanationDictionary[selectedElementId] ?? explanationDictionary.about;
+  // 追加したセクションのidは「gallery-2」のように採番されるため、idだけでは引けない。
+  // 種類ごとの解説へ落として、別のセクションの説明が出てしまうのを避ける。
+  const explanation =
+    explanationDictionary[selectedElementId] ??
+    (selectedSection ? explanationDictionary[selectedSection.kind] : undefined) ??
+    explanationDictionary.about;
 
   // 記録されないまま残っている「変更中の状態」を捨てる。
   // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
@@ -240,6 +294,9 @@ export default function App() {
     const current = useBuilderStore.getState().site;
     setThemeBaseline(current.theme);
     setSectionBaselines(Object.fromEntries(current.sections.map((section) => [section.id, section])));
+    setStructureBaseline(current.sections);
+    setPendingStructure([]);
+    setRemovalTargetId(null);
   };
 
   // セクションの表示切替は、理由が入っていればその場で学習メモへ残る。
@@ -257,6 +314,59 @@ export default function App() {
     if (trimmedReason && nextSection) {
       setSectionBaselines((baselines) => ({ ...baselines, [id]: nextSection }));
     }
+  };
+
+  // セクションの追加。末尾へ入る。どこへ入るか分からないと、押したあとで画面を探すことになる。
+  const handleAddSection = (kind: SectionKind) => {
+    if (addSectionBlockReason(site.sections.length)) return;
+    addSection(kind);
+    // 採番はstoreの中で行うため、追加後の状態から実際に入った1件を取り出す。
+    const added = useBuilderStore.getState().site.sections.at(-1);
+    if (!added) return;
+    const restoredBaseline = structureBaseline.find((section) => section.id === added.id);
+    const removedId = `remove-${added.id}`;
+    // 追加した時点の内容を、その節の内容の基準にする。
+    // ここで基準を置かないと、追加後に書き換えた文章が未説明の内容変更として数えられない。
+    // ただし、記録前に削除したidを再利用した場合は元の内容を基準へ戻す。
+    // 構成の削除と再追加は相殺し、プリセットとの差だけを内容変更として扱う。
+    setSectionBaselines((baselines) => ({
+      ...baselines,
+      [added.id]: restoredBaseline ?? added,
+    }));
+    setPendingStructure((changes) => {
+      if (restoredBaseline && changes.some((change) => change.id === removedId)) {
+        return changes.filter((change) => change.id !== removedId);
+      }
+      return [
+        ...changes,
+        { id: `add-${added.id}`, label: `セクション追加（${added.title}）` },
+      ];
+    });
+    setNotice(`「${added.title}」を末尾に追加しました。なぜ足すのかを書いて記録してください。`);
+  };
+
+  // セクションの削除。確認を通ってから呼ぶ。
+  const handleRemoveSection = (section: SiteSection) => {
+    if (removeSectionBlockReason(site.sections.length)) return;
+    removeSection(section.id);
+    setRemovalTargetId(null);
+    // 消したセクションの内容の基準は残さない。残すと、もう画面に無い変更を
+    // 未説明として数え続けてしまう。
+    setSectionBaselines((baselines) => {
+      const rest = { ...baselines };
+      delete rest[section.id];
+      return rest;
+    });
+    setPendingStructure((changes) => {
+      // 追加したばかりのものを消したなら、構成は元に戻っている。説明する変更も無い。
+      const addedId = `add-${section.id}`;
+      if (changes.some((change) => change.id === addedId)) {
+        return changes.filter((change) => change.id !== addedId);
+      }
+      if (changes.some((change) => change.id === `remove-${section.id}`)) return changes;
+      return [...changes, { id: `remove-${section.id}`, label: `セクション削除（${section.title}）` }];
+    });
+    setNotice(`「${section.title}」を削除しました。なぜ削るのかを書いて記録してください。`);
   };
 
   // 記録は止めないが、書けていない観点があれば次に何を書けばよいかを添える。
@@ -361,6 +471,28 @@ export default function App() {
     setReason("");
   };
 
+  // 構成の変更は、まとめて1件のメモにする。「足して削った」のように
+  // 複数の判断が続くことがあり、1つずつ理由を書かせると同じ説明が並んでしまう。
+  const recordStructureReason = () => {
+    if (!reason.trim()) {
+      setNotice("先に『なぜ変えるか』を入力してください。");
+      return;
+    }
+    if (pendingStructure.length === 0) {
+      setNotice("先にセクションを追加または削除してください。");
+      return;
+    }
+    addNote(
+      pendingStructure.map((change) => change.label).join(" / "),
+      reason.trim(),
+      htmlChangesForStructure(),
+    );
+    setNotice(noticeForRecordedReason("セクション構成の変更と理由を学習メモへ記録しました。"));
+    setStructureBaseline(site.sections);
+    setPendingStructure([]);
+    setReason("");
+  };
+
   const resetBuilder = () => {
     reset();
     discardUnrecordedChanges();
@@ -368,6 +500,10 @@ export default function App() {
     setCurrentProjectId(null);
     setNotice("初期サンプルへ戻しました。");
   };
+
+  // 上限・下限に達したら押せなくする。押せない理由は文言でも示す。
+  const addBlockReason = addSectionBlockReason(site.sections.length);
+  const removeBlockReason = removeSectionBlockReason(site.sections.length);
 
   const loadProject = (loadedSite: typeof site) => {
     loadSite(loadedSite);
@@ -450,14 +586,73 @@ export default function App() {
             <strong>AI生成文は仮テキストです。</strong><br />事実情報は必ず自分で調べて入力してください。
           </div>
 
-          <h2 className="mb-2 text-sm font-black">セクション</h2>
-          <div className="space-y-2">
+          <h2 className="mb-1 text-sm font-black">
+            セクション <span className="font-normal text-slate-400">{site.sections.length} / {maxSections}</span>
+          </h2>
+          <p className="mb-2 text-[11px] leading-4 text-slate-500">
+            チェックを外すと非表示になります。使わないと決めたものは削除できます。
+          </p>
+          <ul className="space-y-2">
             {site.sections.map((section) => (
-              <label key={section.id} className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                <span>{section.title}</span>
-                <input type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
-              </label>
+              <li key={section.id} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2">
+                    <span className="truncate">{section.title}</span>
+                    <input type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setRemovalTargetId(section.id)}
+                    disabled={removeBlockReason !== null}
+                    aria-label={`${section.title}を削除`}
+                    title={removeBlockReason ?? `${section.title}を削除`}
+                    className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+
+                {/* 削除は取り消せないため、押した行の中でもう一度確かめる。
+                    ブラウザのconfirmだと操作が止まるうえ、「まず非表示にする」という
+                    引き返し方を示せない。消す前に、消さずに済む道を出しておく。 */}
+                {removalTargetId === section.id && (
+                  <div className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-900">
+                    <p className="leading-4">削除すると元に戻せません。迷うなら、まず非表示にして様子を見てください。</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="min-h-8 px-2 text-xs"
+                        onClick={() => { toggleSection(section.id, false); setRemovalTargetId(null); }}
+                      >
+                        まず非表示にする
+                      </Button>
+                      <Button type="button" variant="ghost" className="min-h-8 px-2 text-xs" onClick={() => setRemovalTargetId(null)}>やめる</Button>
+                      <Button type="button" variant="ghost" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-100" onClick={() => handleRemoveSection(section)}>削除する</Button>
+                    </div>
+                  </div>
+                )}
+              </li>
             ))}
+          </ul>
+
+          {/* 追加は末尾へ入る。種類によって出力されるHTML・CSSが変わるため、種類は自分で選ぶ。 */}
+          <div className="mt-3 rounded-xl border border-dashed border-slate-300 p-3">
+            <label className="block text-xs font-bold text-slate-600" htmlFor="new-section-kind">追加するセクション</label>
+            <div className="mt-1 flex gap-2">
+              <select
+                id="new-section-kind"
+                className="min-h-10 min-w-0 flex-1 rounded-xl border border-slate-300 px-2 text-sm"
+                value={newSectionKind}
+                onChange={(event) => setNewSectionKind(event.target.value as SectionKind)}
+              >
+                {sectionKinds.map((kind) => <option key={kind} value={kind}>{sectionKindLabels[kind]}</option>)}
+              </select>
+              <Button type="button" variant="secondary" className="shrink-0 px-3" disabled={addBlockReason !== null} onClick={() => handleAddSection(newSectionKind)}>
+                <Plus className="mr-1 size-4" />追加
+              </Button>
+            </div>
+            {addBlockReason && <p className="mt-2 text-[11px] leading-4 text-amber-700">{addBlockReason}</p>}
           </div>
 
           <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
@@ -641,6 +836,16 @@ export default function App() {
             <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
           </Card>
 
+          {/* 構成の変更は、色や文章の書き換えより判断の粒度が大きい。
+              何を足して何を削ったのかを並べ、まとめて1件の説明として残す。 */}
+          {pendingStructure.length > 0 && <Card className="mt-4 space-y-3 p-4">
+            <h3 className="text-sm font-black">セクション構成の変更</h3>
+            <ul className="space-y-1 text-xs text-slate-600">
+              {pendingStructure.map((change) => <li key={change.id}>・{change.label}</li>)}
+            </ul>
+            <Button type="button" className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordStructureReason}>セクション構成の理由を記録</Button>
+          </Card>}
+
           {selectedSection && <Card className="mt-4 space-y-3 p-4">
             <h3 className="text-sm font-black">選択中: {selectedSection.title}</h3>
             <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
@@ -746,4 +951,3 @@ export default function App() {
     </div>
   );
 }
-
