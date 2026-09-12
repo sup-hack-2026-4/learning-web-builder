@@ -323,13 +323,25 @@ export default function App() {
     // 採番はstoreの中で行うため、追加後の状態から実際に入った1件を取り出す。
     const added = useBuilderStore.getState().site.sections.at(-1);
     if (!added) return;
+    const restoredBaseline = structureBaseline.find((section) => section.id === added.id);
+    const removedId = `remove-${added.id}`;
     // 追加した時点の内容を、その節の内容の基準にする。
     // ここで基準を置かないと、追加後に書き換えた文章が未説明の内容変更として数えられない。
-    setSectionBaselines((baselines) => ({ ...baselines, [added.id]: added }));
-    setPendingStructure((changes) => [
-      ...changes,
-      { id: `add-${added.id}`, label: `セクション追加（${added.title}）` },
-    ]);
+    // ただし、記録前に削除したidを再利用した場合は元の内容を基準へ戻す。
+    // 構成の削除と再追加は相殺し、プリセットとの差だけを内容変更として扱う。
+    setSectionBaselines((baselines) => ({
+      ...baselines,
+      [added.id]: restoredBaseline ?? added,
+    }));
+    setPendingStructure((changes) => {
+      if (restoredBaseline && changes.some((change) => change.id === removedId)) {
+        return changes.filter((change) => change.id !== removedId);
+      }
+      return [
+        ...changes,
+        { id: `add-${added.id}`, label: `セクション追加（${added.title}）` },
+      ];
+    });
     setNotice(`「${added.title}」を末尾に追加しました。なぜ足すのかを書いて記録してください。`);
   };
 
@@ -351,6 +363,7 @@ export default function App() {
       if (changes.some((change) => change.id === addedId)) {
         return changes.filter((change) => change.id !== addedId);
       }
+      if (changes.some((change) => change.id === `remove-${section.id}`)) return changes;
       return [...changes, { id: `remove-${section.id}`, label: `セクション削除（${section.title}）` }];
     });
     setNotice(`「${section.title}」を削除しました。なぜ削るのかを書いて記録してください。`);
@@ -938,4 +951,3 @@ export default function App() {
     </div>
   );
 }
-

@@ -94,6 +94,15 @@ describe("サイトの差し替えと相談の関係", () => {
     expect(state.conceptGeneration).toBe(before + 1);
   });
 
+  it("ヒーローがないプロジェクトを読み込むと、実在する先頭セクションを選ぶ", () => {
+    const site = createSampleSite("別の題材");
+    site.sections = site.sections.filter((section) => section.id !== "hero");
+
+    useBuilderStore.getState().loadSite(site);
+
+    expect(useBuilderStore.getState().selectedElementId).toBe(site.sections[0].id);
+  });
+
   it("全体をリセットすると相談も消える", () => {
     seedConversation();
 

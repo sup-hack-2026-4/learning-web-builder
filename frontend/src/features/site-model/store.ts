@@ -61,7 +61,7 @@ export const useBuilderStore = create<BuilderState>()(
       setSite: (site, provider, purpose) =>
         set({
           site,
-          selectedElementId: "hero",
+          selectedElementId: site.sections[0]?.id ?? "hero",
           notes: [],
           aiUsage: [{
             provider,
@@ -72,7 +72,7 @@ export const useBuilderStore = create<BuilderState>()(
       loadSite: (site) =>
         set((state) => ({
           site,
-          selectedElementId: "hero",
+          selectedElementId: site.sections[0]?.id ?? "hero",
           notes: [],
           aiUsage: [],
           // 別のプロジェクトを開いたら、前の題材の相談は残さない。

@@ -754,3 +754,20 @@ test("追加したセクションをすぐ消すと、説明すべき変更と�
   await expect(page.getByText(/未説明\d+件/)).toBeHidden();
   await expect(page.getByRole("button", { name: "セクション構成の理由を記録" })).toBeHidden();
 });
+
+test("削除した種類をすぐ追加し直すと、構成変更は相殺される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "3つの魅力を削除" }).click();
+  await page.getByRole("button", { name: "削除する" }).click();
+
+  await page.getByLabel("追加するセクション").selectOption("features");
+  await page.getByRole("button", { name: "追加" }).click();
+
+  // 同じidのセクションが戻り、顔ぶれとしては元どおりになる。
+  await expect(page.getByText(/未説明\d+件/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "セクション構成の理由を記録" })).toBeHidden();
+  // 初期サンプルとプリセットの文章差は、内容変更として説明対象に残る。
+  await expect(page.getByRole("button", { name: "内容変更の理由を記録" })).toBeVisible();
+});
