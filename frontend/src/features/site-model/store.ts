@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSampleSite } from "./sample";
+import { createSection, maxSections, minSections, type SectionKind } from "./sections";
 import type { AiUsage, LearningNote, SiteModel } from "./schema";
 import { conceptStateSchema, emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
 
@@ -17,6 +18,11 @@ type BuilderState = {
   // 見出しの色は「未指定（メインカラーを継承）」も正しい状態なので、undefinedも受け取る。
   previewTheme: (key: keyof SiteModel["theme"], value: string | number | undefined) => void;
   updateSection: (id: string, values: Partial<SiteModel["sections"][number]>, reason?: string, codeChanges?: string[]) => void;
+  // 構成そのものを変える操作。理由の記録はApp側でまとめて行うため、ここでは受け取らない。
+  // 「何を足すか・何を削るか」の判断は、色の調整より粒度が大きく、
+  // まとめて1件の説明として残したほうが読み返せるため。
+  addSection: (kind: SectionKind) => void;
+  removeSection: (id: string) => void;
   addNote: (target: string, reason: string, codeChanges?: string[]) => void;
   reset: () => void;
   // 生成前のコンセプト相談。SiteModelとは独立に持つ。
@@ -55,7 +61,7 @@ export const useBuilderStore = create<BuilderState>()(
       setSite: (site, provider, purpose) =>
         set({
           site,
-          selectedElementId: "hero",
+          selectedElementId: site.sections[0]?.id ?? "hero",
           notes: [],
           aiUsage: [{
             provider,
@@ -66,7 +72,7 @@ export const useBuilderStore = create<BuilderState>()(
       loadSite: (site) =>
         set((state) => ({
           site,
-          selectedElementId: "hero",
+          selectedElementId: site.sections[0]?.id ?? "hero",
           notes: [],
           aiUsage: [],
           // 別のプロジェクトを開いたら、前の題材の相談は残さない。
@@ -97,6 +103,31 @@ export const useBuilderStore = create<BuilderState>()(
             notes: reason
               ? [...state.notes, { id: crypto.randomUUID(), target: `表示切替（${targetLabel}）`, reason, createdAt: new Date().toISOString(), codeChanges }]
               : state.notes,
+          };
+        }),
+      addSection: (kind) =>
+        set((state) => {
+          // 上限はスキーマとサーバー側の検証と同じ。画面側でボタンを無効にしていても、
+          // ここを最後の砦として残しておく。
+          if (state.site.sections.length >= maxSections) return {};
+          const section = createSection(kind, state.site.sections.map((existing) => existing.id));
+          return {
+            site: { ...state.site, sections: [...state.site.sections, section] },
+            // 追加したセクションを選択状態にする。追加直後に中身を書き始められるようにするため。
+            selectedElementId: section.id,
+          };
+        }),
+      removeSection: (id) =>
+        set((state) => {
+          if (state.site.sections.length <= minSections) return {};
+          const sections = state.site.sections.filter((section) => section.id !== id);
+          // 存在しないidなら何もしない。件数だけ減ると、消えた理由が追えなくなる。
+          if (sections.length === state.site.sections.length) return {};
+          return {
+            site: { ...state.site, sections },
+            // 消したセクションを選んだままだと、右パネルの編集欄が消えて何も選べなくなる。
+            selectedElementId:
+              state.selectedElementId === id ? sections[0].id : state.selectedElementId,
           };
         }),
       addNote: (target, reason, codeChanges) =>
