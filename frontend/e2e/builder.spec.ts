@@ -224,8 +224,18 @@ test("モバイルで選択中タブを再クリックしても選択状態と�
   await expect(designTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
   // 選択中タブの見た目も消えないこと（aria属性だけでなく見た目でも選択が分かる）。
-  // 配色を変えても壊れないよう、CSSクラスではなくdata-stateで確かめる。
-  await expect(designTab).toHaveAttribute("data-state", "active");
+  const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
+  const [activeStyle, inactiveStyle] = await Promise.all([
+    designTab.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.color, style.backgroundColor, style.boxShadow].join("|");
+    }),
+    explanationTab.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.color, style.backgroundColor, style.boxShadow].join("|");
+    }),
+  ]);
+  expect(activeStyle).not.toBe(inactiveStyle);
 });
 
 // レビュー指摘の再現ケース。
@@ -243,7 +253,7 @@ test("モバイルでタブを再クリックしてもデスクトップ幅で�
   // デスクトップ幅へ広げても、パネルは開いたまま。
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
-  await expect(designTab).toHaveAttribute("data-state", "active");
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
 });
 
 test("デスクトップで畳んだ状態からモバイル幅にすると内容が見える", async ({ page }) => {
@@ -283,10 +293,12 @@ test("デスクトップで畳んだ状態は、モバイルでタブを切り�
   await expect(page.getByRole("button", { name: "パネルを開く" })).toBeVisible();
 });
 
-test("内側タブは上下キーでフォーカスと選択が循環移動する", async ({ page }) => {
+test("内側タブは左右キーでフォーカスと選択が循環移動する", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
 
+  const tabList = page.getByRole("tablist", { name: "調整と学習" });
+  await expect(tabList.locator(":scope > :not([role='tab'])")).toHaveCount(0);
   const designTab = page.getByRole("tab", { name: "調整", exact: true });
   const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
   const qualityTab = page.getByRole("tab", { name: "品質", exact: true });

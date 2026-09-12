@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { currentStep, nextAction, stepViews, type FlowState } from "./steps";
 
-const start: FlowState = { generated: false, unexplainedCount: 0, noteCount: 0 };
+const start: FlowState = { topicReady: false, generated: false, unexplainedCount: 0, explainedCount: 0, noteCount: 0 };
 
 describe("currentStep", () => {
   it("生成前は題材から始まる", () => {
     expect(currentStep(start)).toBe("topic");
+  });
+
+  it("題材を入力したら生成へ進む", () => {
+    expect(currentStep({ ...start, topicReady: true })).toBe("generate");
+  });
+
+  it("コンセプトメモだけでは調整と説明を済み扱いにしない", () => {
+    expect(currentStep({ ...start, topicReady: true, generated: true, noteCount: 1 })).toBe("adjust");
   });
 
   it("生成しただけなら、次は調整", () => {
@@ -13,26 +21,26 @@ describe("currentStep", () => {
   });
 
   it("説明していない変更があれば説明へ進む", () => {
-    expect(currentStep({ generated: true, unexplainedCount: 2, noteCount: 0 })).toBe("explain");
+    expect(currentStep({ topicReady: true, generated: true, unexplainedCount: 2, explainedCount: 0, noteCount: 0 })).toBe("explain");
   });
 
   it("記録が残っていても、説明していない変更があれば説明へ戻す", () => {
     // 書かないまま次の変更へ進んでしまうのを防ぐのが、この製品の狙い。
-    expect(currentStep({ generated: true, unexplainedCount: 1, noteCount: 3 })).toBe("explain");
+    expect(currentStep({ topicReady: true, generated: true, unexplainedCount: 1, explainedCount: 3, noteCount: 3 })).toBe("explain");
   });
 
   it("すべて説明済みなら提出へ", () => {
-    expect(currentStep({ generated: true, unexplainedCount: 0, noteCount: 1 })).toBe("submit");
+    expect(currentStep({ topicReady: true, generated: true, unexplainedCount: 0, explainedCount: 1, noteCount: 1 })).toBe("submit");
   });
 
   it("生成前でも、変更したなら説明が先", () => {
     // 静的サンプルのままでも調整と記録はできる。
     // 未説明の変更を抱えたまま別のことへ進ませない。
-    expect(currentStep({ generated: false, unexplainedCount: 2, noteCount: 0 })).toBe("explain");
+    expect(currentStep({ topicReady: false, generated: false, unexplainedCount: 2, explainedCount: 0, noteCount: 0 })).toBe("explain");
   });
 
   it("生成前で変更もないなら題材から", () => {
-    expect(currentStep({ generated: false, unexplainedCount: 0, noteCount: 1 })).toBe("topic");
+    expect(currentStep({ topicReady: false, generated: false, unexplainedCount: 0, explainedCount: 1, noteCount: 1 })).toBe("topic");
   });
 });
 
@@ -62,8 +70,15 @@ describe("stepViews", () => {
     expect(views.find((step) => step.key === "adjust")?.done).toBe(false);
   });
 
+  it("題材を入力すると生成が現在地になる", () => {
+    const views = stepViews({ ...start, topicReady: true });
+
+    expect(views.find((step) => step.key === "topic")?.done).toBe(true);
+    expect(views.find((step) => step.key === "generate")?.current).toBe(true);
+  });
+
   it("変更すると調整が済みになる", () => {
-    const views = stepViews({ generated: true, unexplainedCount: 1, noteCount: 0 });
+    const views = stepViews({ topicReady: true, generated: true, unexplainedCount: 1, explainedCount: 0, noteCount: 0 });
     expect(views.find((step) => step.key === "explain")?.current).toBe(true);
 
     expect(views.find((step) => step.key === "adjust")?.done).toBe(true);
@@ -71,13 +86,13 @@ describe("stepViews", () => {
   });
 
   it("記録すると説明が済みになる", () => {
-    const views = stepViews({ generated: true, unexplainedCount: 0, noteCount: 1 });
+    const views = stepViews({ topicReady: true, generated: true, unexplainedCount: 0, explainedCount: 1, noteCount: 1 });
 
     expect(views.find((step) => step.key === "explain")?.done).toBe(true);
   });
 
   it("提出は最後の工程なので済み扱いにしない", () => {
-    const views = stepViews({ generated: true, unexplainedCount: 0, noteCount: 5 });
+    const views = stepViews({ topicReady: true, generated: true, unexplainedCount: 0, explainedCount: 5, noteCount: 5 });
 
     expect(views.find((step) => step.key === "submit")?.done).toBe(false);
     expect(views.find((step) => step.key === "submit")?.current).toBe(true);
@@ -87,9 +102,9 @@ describe("stepViews", () => {
     const states: FlowState[] = [
       start,
       { ...start, generated: true },
-      { generated: true, unexplainedCount: 1, noteCount: 0 },
-      { generated: true, unexplainedCount: 0, noteCount: 2 },
-      { generated: true, unexplainedCount: 3, noteCount: 2 },
+      { topicReady: true, generated: true, unexplainedCount: 1, explainedCount: 0, noteCount: 0 },
+      { topicReady: true, generated: true, unexplainedCount: 0, explainedCount: 2, noteCount: 2 },
+      { topicReady: true, generated: true, unexplainedCount: 3, explainedCount: 2, noteCount: 2 },
     ];
 
     for (const state of states) {
@@ -107,16 +122,20 @@ describe("nextAction", () => {
     expect(nextAction({ ...start, generated: true }).title).toBe("デザインや文章を変えてみる");
   });
 
+  it("題材を入力したら、たたき台を作るよう促す", () => {
+    expect(nextAction({ ...start, topicReady: true }).title).toBe("たたき台を作る");
+  });
+
   it("未説明の件数を本文に出す", () => {
     // 件数が分からないと、あと何を書けば終わるのか見えない。
-    const action = nextAction({ generated: true, unexplainedCount: 3, noteCount: 0 });
+    const action = nextAction({ topicReady: true, generated: true, unexplainedCount: 3, explainedCount: 0, noteCount: 0 });
 
     expect(action.title).toBe("変えた理由を書く");
     expect(action.detail).toContain("3件");
   });
 
   it("提出時はメモの件数を伝える", () => {
-    const action = nextAction({ generated: true, unexplainedCount: 0, noteCount: 4 });
+    const action = nextAction({ topicReady: true, generated: true, unexplainedCount: 0, explainedCount: 4, noteCount: 4 });
 
     expect(action.title).toBe("提出物をダウンロードする");
     expect(action.detail).toContain("4件");
@@ -126,8 +145,8 @@ describe("nextAction", () => {
     const states: FlowState[] = [
       start,
       { ...start, generated: true },
-      { generated: true, unexplainedCount: 1, noteCount: 0 },
-      { generated: true, unexplainedCount: 0, noteCount: 1 },
+      { topicReady: true, generated: true, unexplainedCount: 1, explainedCount: 0, noteCount: 0 },
+      { topicReady: true, generated: true, unexplainedCount: 0, explainedCount: 1, noteCount: 1 },
     ];
 
     for (const state of states) {

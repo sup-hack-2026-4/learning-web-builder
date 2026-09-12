@@ -96,6 +96,7 @@ export default function App() {
   const [topic, setTopic] = useState("");
   const [reason, setReason] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [loadedProject, setLoadedProject] = useState(false);
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
   // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
   const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
@@ -179,12 +180,15 @@ export default function App() {
   );
   const flowState: FlowState = useMemo(
     () => ({
+      topicReady: topic.trim().length > 0,
       // 生成したかどうかは、AIの利用記録が「初期サンプル」以外を含むかで見る。
-      generated: aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
+      generated: loadedProject || aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
       unexplainedCount: touchedThemeKeys.length + unexplainedSectionCount,
+      // コンセプトの記録だけでは、調整とその理由説明を終えたことにはならない。
+      explainedCount: notes.filter((note) => note.target !== "コンセプト").length,
       noteCount: notes.length,
     }),
-    [aiUsage, touchedThemeKeys.length, unexplainedSectionCount, notes.length],
+    [topic, loadedProject, aiUsage, touchedThemeKeys.length, unexplainedSectionCount, notes],
   );
   const steps = useMemo(() => stepViews(flowState), [flowState]);
   const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
@@ -277,6 +281,7 @@ export default function App() {
       // サイトが差し替わると、記録前の変更内容は新しいサイトに対して意味を持たない。
       // 残したままだと、触れていない初期値を変更として誤記録してしまう。
       discardUnrecordedChanges();
+      setLoadedProject(false);
       setCurrentProjectId(null);
       // 相談で決めたことは、生成した本人の判断そのもの。学習メモに残して提出物へ含める。
       // setSite がメモを空にするため、必ずそのあとで記録する。
@@ -359,6 +364,7 @@ export default function App() {
   const resetBuilder = () => {
     reset();
     discardUnrecordedChanges();
+    setLoadedProject(false);
     setCurrentProjectId(null);
     setNotice("初期サンプルへ戻しました。");
   };
@@ -366,6 +372,7 @@ export default function App() {
   const loadProject = (loadedSite: typeof site) => {
     loadSite(loadedSite);
     discardUnrecordedChanges();
+    setLoadedProject(true);
   };
 
   // ヘッダーはflex-wrapで高さが変わるため、縦flexで残り高さをグリッドへ渡し、
@@ -536,14 +543,13 @@ export default function App() {
           <div className={`flex min-w-0 flex-1 flex-col bg-white ${panelOpen ? "flex" : "flex xl:hidden"}`}>
           {/* タブは横書き。縦書きだと1文字ずつ縦に並び、主要ナビゲーションとして読みにくい。
               role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
-          <div className="flex shrink-0 items-center gap-1 border-b border-slate-200 px-2 pt-2" role="tablist" aria-label="調整と学習" aria-orientation="horizontal">
+          <div className="flex shrink-0 items-center border-b border-slate-200 px-2 pt-2">
+            <div className="flex items-center gap-1" role="tablist" aria-label="調整と学習" aria-orientation="horizontal">
             {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
               // 選択状態は「どのパネルを選んでいるか」だけで決める。
               // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
               // 畳んでいる間はタブ列しか見えないため、選択表示が残っていて差し支えない。
               const selected = activePanel === key;
-              // data-state は、選択中かどうかを見た目とは別に持たせるための印。
-              // テストがCSSクラスを直接見ていると、配色や余白を変えるだけで壊れてしまう。
               return (
                 <button
                   key={key}
@@ -551,7 +557,6 @@ export default function App() {
                   role="tab"
                   id={`panel-tab-${key}`}
                   aria-selected={selected}
-                  data-state={selected ? "active" : "inactive"}
                   aria-controls="panel-content"
                   tabIndex={selected ? 0 : -1}
                   title={panelLabels[key]}
@@ -573,6 +578,7 @@ export default function App() {
                 </button>
               );
             })}
+            </div>
             <button
               type="button"
               onClick={() => setPanelOpen(false)}

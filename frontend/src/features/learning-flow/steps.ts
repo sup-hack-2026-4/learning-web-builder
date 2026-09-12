@@ -12,10 +12,14 @@
 export type LearningStepKey = "topic" | "generate" | "adjust" | "explain" | "submit";
 
 export type FlowState = {
+  /** 生成に使う題材が入力されているか。 */
+  topicReady: boolean;
   /** たたき台を作ったか。静的サンプルのままなら false。 */
   generated: boolean;
   /** まだ理由を書いていない変更の数。 */
   unexplainedCount: number;
+  /** 変更理由を記録したメモの数。コンセプトメモは含めない。 */
+  explainedCount: number;
   /** 記録済みの学習メモの数。 */
   noteCount: number;
 };
@@ -44,15 +48,16 @@ function isDone(key: LearningStepKey, state: FlowState): boolean {
   switch (key) {
     // 題材と生成は、たたき台ができた時点でどちらも済んだことになる。
     case "topic":
+      return state.topicReady || state.generated;
     case "generate":
       return state.generated;
     // 何かを変えたか、すでに記録が残っていれば「調整」は通っている。
     // 静的サンプルのまま調整することもあるため、生成の有無は問わない。
     case "adjust":
-      return state.unexplainedCount > 0 || state.noteCount > 0;
+      return state.unexplainedCount > 0 || state.explainedCount > 0;
     // 説明は、記録が1件でも残っていれば通っている。
     case "explain":
-      return state.noteCount > 0;
+      return state.explainedCount > 0;
     // 提出は最後の工程なので、ここでは済み扱いにしない。
     case "submit":
       return false;
@@ -68,8 +73,8 @@ function isDone(key: LearningStepKey, state: FlowState): boolean {
  */
 export function currentStep(state: FlowState): LearningStepKey {
   if (state.unexplainedCount > 0) return "explain";
-  if (!state.generated) return "topic";
-  if (state.noteCount === 0) return "adjust";
+  if (!state.generated) return state.topicReady ? "generate" : "topic";
+  if (state.explainedCount === 0) return "adjust";
   return "submit";
 }
 
