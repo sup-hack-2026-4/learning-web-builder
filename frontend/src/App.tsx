@@ -26,6 +26,8 @@ import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 import { ConceptChatPanel } from "@/features/concept/chat-panel";
 import { conceptSummary, type ConceptDraft } from "@/features/concept/schema";
+import { StepNav } from "@/components/step-nav";
+import { nextAction, stepViews, type FlowState } from "@/features/learning-flow/steps";
 
 type ThemeKey = "primary" | "background" | "text" | "heading" | "fontFamily" | "spacing";
 
@@ -83,9 +85,8 @@ function effectiveThemeValue(theme: SiteModel["theme"], key: ThemeKey): string |
   return theme[key];
 }
 
-// 未記録のデザイン変更。変更した瞬間の理由を一緒に持たせ、
-// あとで理由欄が書き換わっても過去の変更には影響しないようにする。
-type TouchedThemeChange = { key: ThemeKey; reason: string };
+// まだ説明を書いていないデザイン変更の項目。
+// 先に変えてから説明を書くため、理由は記録するときに1つだけ受け取る。
 
 // プレビューとコードの高さ配分。どちらも読めなくならない範囲に収める。
 const minCodeHeight = 120;
@@ -95,10 +96,10 @@ export default function App() {
   const [topic, setTopic] = useState("");
   const [reason, setReason] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [loadedProject, setLoadedProject] = useState(false);
   const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
-  // 記録ボタンを押すまでに変更したテーマ項目を、そのとき入力されていた理由と対にして覚えておく。
-  // 記録時はこの理由を使うため、途中で理由欄を書き換えても過去の変更には紐づかない。
-  const [touchedThemeChanges, setTouchedThemeChanges] = useState<TouchedThemeChange[]>([]);
+  // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
+  const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
   // 右カラムは縦に積むと画面へ収まらないため、常に1パネルだけ表示する。
   const [activePanel, setActivePanel] = useState<PanelKey>("design");
   // 畳むとプレビューがPC幅まで広がり、出力時に近い見た目を確認できる。
@@ -161,6 +162,37 @@ export default function App() {
     [site, themeBaseline, baselineSections],
   );
 
+  // 学習の工程を、いまの画面の状態から導く。
+  // 説明していない変更は、デザインと内容の両方を数える。
+  const unexplainedSectionCount = useMemo(
+    () =>
+      site.sections.filter((section) => {
+        const baseline = sectionBaselines[section.id];
+        if (!baseline) return false;
+        return (
+          baseline.title !== section.title ||
+          baseline.body !== section.body ||
+          baseline.imageAlt !== section.imageAlt ||
+          baseline.visible !== section.visible
+        );
+      }).length,
+    [site.sections, sectionBaselines],
+  );
+  const flowState: FlowState = useMemo(
+    () => ({
+      topicReady: topic.trim().length > 0,
+      // 生成したかどうかは、AIの利用記録が「初期サンプル」以外を含むかで見る。
+      generated: loadedProject || aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
+      unexplainedCount: touchedThemeKeys.length + unexplainedSectionCount,
+      // コンセプトの記録だけでは、調整とその理由説明を終えたことにはならない。
+      explainedCount: notes.filter((note) => note.target !== "コンセプト").length,
+      noteCount: notes.length,
+    }),
+    [topic, loadedProject, aiUsage, touchedThemeKeys.length, unexplainedSectionCount, notes],
+  );
+  const steps = useMemo(() => stepViews(flowState), [flowState]);
+  const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
+
   const quality = useMemo(() => evaluateQuality(site), [site]);
   // axeの自動チェックはiframeでの実測が要るため非同期。終わるまでは静的な3項目だけで判断する。
   const axeAudit = useAxeAudit(site);
@@ -203,7 +235,7 @@ export default function App() {
   // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
   // 差し替え後のサイトが新しい基準になるため、コード上の変更表示もここで消える。
   const discardUnrecordedChanges = () => {
-    setTouchedThemeChanges([]);
+    setTouchedThemeKeys([]);
     setReason("");
     const current = useBuilderStore.getState().site;
     setThemeBaseline(current.theme);
@@ -249,6 +281,7 @@ export default function App() {
       // サイトが差し替わると、記録前の変更内容は新しいサイトに対して意味を持たない。
       // 残したままだと、触れていない初期値を変更として誤記録してしまう。
       discardUnrecordedChanges();
+      setLoadedProject(false);
       setCurrentProjectId(null);
       // 相談で決めたことは、生成した本人の判断そのもの。学習メモに残して提出物へ含める。
       // setSite がメモを空にするため、必ずそのあとで記録する。
@@ -276,14 +309,11 @@ export default function App() {
 
   // 色・余白・フォントの変更はプレビューへ即時反映するだけで、メモは残さない。
   // カラーピッカー等は操作ごとに大量のイベントが発火するため、記録は明示ボタンで行う。
-  // 理由未入力のうちは変更させず、先に「なぜ変えるか」を言語化させる（理解確認）。
+  //
+  // 変更そのものは止めない。まず変えて、見た目の違いを確かめてから
+  // 「何を・なぜ・どう良くなるか」を書く順序のほうが、言葉にしやすいため。
   // 変更した項目は覚えておき、記録時に「何をどの値に変えたか」をまとめてメモへ残す。
   const changeTheme = (key: ThemeKey, value: string | number) => {
-    const trimmedReason = reason.trim();
-    if (!trimmedReason) {
-      setNotice("先に『なぜ変えるか』を入力してください。");
-      return;
-    }
     // 基準の値まで戻したなら、その項目は変更していないのと同じ。
     // このとき基準に保存されていた値そのものへ戻す。見出しの色を「未指定」から
     // 触って戻した場合、同じ色を明示値として残すとメインカラーへ追従しなくなり、
@@ -291,44 +321,33 @@ export default function App() {
     const backToBaseline = effectiveThemeValue(themeBaseline, key) === value;
     previewTheme(key, backToBaseline ? themeBaseline[key] : value);
 
-    setTouchedThemeChanges((changes) => {
-      const others = changes.filter((change) => change.key !== key);
+    setTouchedThemeKeys((keys) => {
+      const others = keys.filter((touched) => touched !== key);
       // 差分が無いのに「デザイン変更」のメモを作れてしまわないよう、対象から外す。
       if (backToBaseline) return others;
-      // 同じ項目を触り直したときは、そのときの理由で上書きする。
-      return [...others, { key, reason: trimmedReason }];
+      return [...others, key];
     });
   };
 
   // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由をメモへ残す。
-  // 理由は入力欄の現在値ではなく、変更時に記録しておいた理由を使う。
-  // 異なる理由で変更した項目が混在している場合は、理由ごとに分けて1件ずつ残す。
+  // まだ説明していない変更をまとめて1件にし、そのとき書かれている理由を付ける。
   const recordThemeReason = () => {
     if (!reason.trim()) {
       setNotice("先に『なぜ変えるか』を入力してください。");
       return;
     }
-    if (touchedThemeChanges.length === 0) {
+    if (touchedThemeKeys.length === 0) {
       setNotice("先に色・余白・フォントを変更してください。");
       return;
     }
-    const groupedByReason = touchedThemeChanges.reduce<{ reason: string; keys: ThemeKey[] }[]>((groups, change) => {
-      const group = groups.find((candidate) => candidate.reason === change.reason);
-      if (group) group.keys.push(change.key);
-      else groups.push({ reason: change.reason, keys: [change.key] });
-      return groups;
-    }, []);
-    for (const group of groupedByReason) {
-      const summary = group.keys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
-      addNote(`デザイン変更（${summary}）`, group.reason, cssChangesForThemeKeys(group.keys));
-    }
+    const summary = touchedThemeKeys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
+    addNote(`デザイン変更（${summary}）`, reason.trim(), cssChangesForThemeKeys(touchedThemeKeys));
     setNotice(noticeForRecordedReason("デザイン変更の内容と理由を学習メモへ記録しました。"));
     setThemeBaseline(site.theme);
-    setTouchedThemeChanges([]);
+    setTouchedThemeKeys([]);
     setReason("");
   };
 
-  // 理由欄をクリアしても、未記録のデザイン変更は変更時の理由を保持しているため影響を受けない。
   const recordContentReason = () => {
     if (!reason.trim() || !selectedSection) return;
     addNote(
@@ -345,6 +364,7 @@ export default function App() {
   const resetBuilder = () => {
     reset();
     discardUnrecordedChanges();
+    setLoadedProject(false);
     setCurrentProjectId(null);
     setNotice("初期サンプルへ戻しました。");
   };
@@ -352,6 +372,7 @@ export default function App() {
   const loadProject = (loadedSite: typeof site) => {
     loadSite(loadedSite);
     discardUnrecordedChanges();
+    setLoadedProject(true);
   };
 
   // ヘッダーはflex-wrapで高さが変わるため、縦flexで残り高さをグリッドへ渡し、
@@ -359,7 +380,10 @@ export default function App() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 xl:h-screen">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
-        <h1 className="text-2xl font-black tracking-tight text-blue-600">Whyve</h1>
+        <div className="flex min-w-0 items-center gap-4">
+          <h1 className="text-2xl font-black tracking-tight text-blue-600">Whyve</h1>
+          <StepNav steps={steps} />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <AuthControls enabled={clerkConfig.enabled} />
           <ProjectControls
@@ -371,12 +395,20 @@ export default function App() {
             onNotice={setNotice}
           />
           <Button variant="ghost" onClick={resetBuilder}><RotateCcw className="mr-2 size-4" />リセット</Button>
+          {/* 提出の手前で、何件記録できていて何件未説明かが分かるようにする。
+              「理由を書かずに提出してしまう」のを止めるための最後の目印。 */}
+          <span className="text-xs text-slate-500">
+            メモ<strong className="mx-0.5 text-slate-800">{notes.length}</strong>件
+            {flowState.unexplainedCount > 0 && (
+              <strong className="ml-2 text-amber-700">未説明{flowState.unexplainedCount}件</strong>
+            )}
+          </span>
           <Button onClick={() => void exportProject(site, notes, aiUsage, axeAudit.status === "ready" ? [axeAudit.check] : [])}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
       </header>
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
-      <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[290px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
+      <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[340px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
         {/* 下部バーのタブから参照されるパネル。xl以上では3カラム同時表示になるが、
             タブ列自体がxl:hiddenで消えるため、関連付けが残っていても支障はない。 */}
         <aside
@@ -401,15 +433,18 @@ export default function App() {
           <div className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${setupOpen ? "block" : "block xl:hidden"}`}>
           <ConceptChatPanel onGenerate={generateFromConcept} generating={generation.isPending} />
 
-          <p className="my-4 text-center text-xs text-slate-400">または題材だけを入力して生成する</p>
-
-          <form onSubmit={submitTopic} className="space-y-3">
-            <label className="text-sm font-bold" htmlFor="topic">紹介サイトの題材</label>
-            <Textarea id="topic" rows={3} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />
-            <Button className="w-full" disabled={!topic.trim() || generation.isPending}>
-              <Sparkles className="mr-2 size-4" />{generation.isPending ? "生成中…" : "たたき台を生成"}
-            </Button>
-          </form>
+          {/* 直接入力は補助の導線。畳んでしまうと題材から始めたい人が迷うため表示は残し、
+              見た目の重みだけを落として、相談が主であることを示す。 */}
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            <p className="mb-2 text-xs text-slate-500">題材が決まっているなら、直接入力しても始められます。</p>
+            <form onSubmit={submitTopic} className="space-y-2">
+              <label className="text-xs font-bold text-slate-600" htmlFor="topic">紹介サイトの題材</label>
+              <Textarea id="topic" rows={2} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />
+              <Button variant="secondary" className="w-full" disabled={!topic.trim() || generation.isPending}>
+                <Sparkles className="mr-2 size-4" />{generation.isPending ? "生成中…" : "たたき台を生成"}
+              </Button>
+            </form>
+          </div>
 
           <div className="my-5 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">
             <strong>AI生成文は仮テキストです。</strong><br />事実情報は必ず自分で調べて入力してください。
@@ -426,9 +461,10 @@ export default function App() {
           </div>
 
           <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
-          <div className="max-h-52 space-y-2 overflow-auto">
+          {/* 内側でスクロールさせない。列のスクロールと二重になり、どちらを動かせばよいか分からなくなる。 */}
+          <div className="space-y-2">
             {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
-              <div key={note.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+              <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs">
                 <strong>{note.target}</strong>
                 <p className="mt-1 text-slate-600">{note.reason}</p>
                 {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
@@ -490,12 +526,25 @@ export default function App() {
           aria-labelledby="view-tab-panel"
           className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}
         >
-          {/* フォルダのつまみのような縦タブ。畳んでいる間もここだけは残る。 */}
-          <div className="flex w-14 shrink-0 flex-col items-end py-3">
-          {/* role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。
-              デスクトップで畳んでいる間は、押しても結果が見えないタブを並べない。
-              モバイルには畳みの概念がないため常に出す。 */}
-          <div className={`flex-col items-end gap-1 ${panelOpen ? "flex" : "flex xl:hidden"}`} role="tablist" aria-label="調整と学習" aria-orientation="vertical">
+          {/* 畳んだときのつまみ。デスクトップで畳んでいる間はここだけが残る。 */}
+          <div className={`hidden w-10 shrink-0 flex-col items-center py-3 ${panelOpen ? "xl:hidden" : "xl:flex"}`}>
+            <button
+              type="button"
+              onClick={() => setPanelOpen(true)}
+              aria-expanded={false}
+              title="パネルを開く"
+              className="w-10 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
+            >
+              <ChevronLeft className="mx-auto size-4" />
+            </button>
+          </div>
+
+          {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
+          <div className={`flex min-w-0 flex-1 flex-col bg-white ${panelOpen ? "flex" : "flex xl:hidden"}`}>
+          {/* タブは横書き。縦書きだと1文字ずつ縦に並び、主要ナビゲーションとして読みにくい。
+              role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
+          <div className="flex shrink-0 items-center border-b border-slate-200 px-2 pt-2">
+            <div className="flex items-center gap-1" role="tablist" aria-label="調整と学習" aria-orientation="horizontal">
             {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
               // 選択状態は「どのパネルを選んでいるか」だけで決める。
               // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
@@ -512,7 +561,7 @@ export default function App() {
                   tabIndex={selected ? 0 : -1}
                   title={panelLabels[key]}
                   onKeyDown={(event) =>
-                    handleTabKeyDown(event, Object.keys(panelLabels) as PanelKey[], activePanel, "vertical", (k) => `panel-tab-${k}`, setActivePanel)
+                    handleTabKeyDown(event, Object.keys(panelLabels) as PanelKey[], activePanel, "horizontal", (k) => `panel-tab-${k}`, setActivePanel)
                   }
                   onClick={() => {
                     // タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
@@ -520,36 +569,40 @@ export default function App() {
                     // 画面に出ていない「デスクトップの畳み状態」を勝手に書き換えてしまう。
                     setActivePanel(key);
                   }}
-                  className={`relative flex w-12 justify-center rounded-l-lg py-4 text-xs font-bold transition ${selected ? "bg-white text-slate-900" : "text-slate-600 hover:bg-white/60 hover:text-slate-800"}`}
+                  className={`relative rounded-t-lg px-3 py-2 text-sm font-bold whitespace-nowrap transition ${selected ? "bg-white text-blue-700 shadow-[inset_0_-2px_0_0_currentColor]" : "text-slate-500 hover:bg-white/60 hover:text-slate-800"}`}
                 >
-                  {/* 縦書き。折り返すと1文字ずつ横に割れるため、折り返しを禁止する。 */}
-                  <span className="whitespace-nowrap [writing-mode:vertical-rl]">{panelLabels[key]}</span>
+                  <span>{panelLabels[key]}</span>
                   {key === "quality" && hasQualityIssue && (
                     <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-600" />
                   )}
                 </button>
               );
             })}
-          </div>
+            </div>
             <button
               type="button"
-              onClick={() => setPanelOpen((open) => !open)}
+              onClick={() => setPanelOpen(false)}
               aria-expanded={panelOpen}
-              title={panelOpen ? "パネルを畳んでプレビューを広げる" : "パネルを開く"}
-              className="mt-1 hidden w-12 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700 xl:block"
+              title="パネルを畳んでプレビューを広げる"
+              className="ml-auto hidden rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 xl:block"
             >
-              {panelOpen ? <ChevronRight className="mx-auto size-4" /> : <ChevronLeft className="mx-auto size-4" />}
+              <ChevronRight className="size-4" />
             </button>
           </div>
 
-          {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
           <div
             id="panel-content"
             role="tabpanel"
             aria-labelledby={`panel-tab-${activePanel}`}
-            className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${panelOpen ? "block" : "block xl:hidden"}`}
+            className="flex-1 overflow-y-auto p-4 pb-20 xl:pb-4"
           >
-          <h2 className="text-base font-black">調整と学習</h2>
+          {/* いま一番やってほしいことを1つだけ出す。複数並べると、
+              結局どれから手を付ければよいのか分からなくなる。 */}
+          <section aria-labelledby="next-action-heading" className="mb-4 rounded-xl bg-blue-50 p-3">
+            <h3 id="next-action-heading" className="text-xs font-bold text-blue-700">次にすること</h3>
+            <p className="mt-1 text-sm font-black text-blue-950">{nextToDo.title}</p>
+            <p className="mt-1 text-xs leading-5 text-blue-900">{nextToDo.detail}</p>
+          </section>
 
           {activePanel === "design" && <>
           <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
@@ -586,12 +639,6 @@ export default function App() {
             <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => changeTheme("spacing", Number(event.target.value))} /></label>
             <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
             <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
-            {!reason.trim() && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-xl bg-white/75 px-4 text-center backdrop-blur-[1px]">
-                <span className="text-sm font-black text-slate-700">まず変更の理由を入力</span>
-                <span className="text-xs text-slate-500">上の欄に理由を書くと調整できます。</span>
-              </div>
-            )}
           </Card>
 
           {selectedSection && <Card className="mt-4 space-y-3 p-4">
@@ -666,6 +713,7 @@ export default function App() {
               </p>
             </section>
           </Card>}
+          </div>
           </div>
         </aside>
       </div>
