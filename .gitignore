@@ -9,6 +9,10 @@ backend/.gocache/
 .env
 .env.local
 *.log
+# 発表資料の下書きや動画フレームなど、共有しない一時作業物
+tmp_*/
+outputs/
+.codex-tmp/
 .DS_Store
 .idea/
 .vscode/

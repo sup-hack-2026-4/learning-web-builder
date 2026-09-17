@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/concept"
 )
 
 func TestGenerateReturnsValidatedModel(t *testing.T) {
@@ -64,7 +66,7 @@ func TestGenerateReturnsValidatedModel(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 
-	model, err := client.Generate(context.Background(), "学校の写真部")
+	model, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -101,7 +103,7 @@ func TestGenerateRejectsUnknownGeneratedField(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 
-	_, err = client.Generate(context.Background(), "写真部")
+	_, err = client.Generate(context.Background(), "写真部", concept.Draft{})
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("expected unknown field error, got %v", err)
 	}
@@ -136,7 +138,7 @@ func TestGenerateRejectsHTTPError(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 
-	_, err = client.Generate(context.Background(), "写真部")
+	_, err = client.Generate(context.Background(), "写真部", concept.Draft{})
 	if err == nil ||
 		!strings.Contains(err.Error(), "HTTP 400") ||
 		!strings.Contains(err.Error(), "status=INVALID_ARGUMENT") ||
@@ -185,7 +187,7 @@ func TestGenerateRetriesTemporaryHTTPError(t *testing.T) {
 	}
 	client.retryDelay = func(int) time.Duration { return 0 }
 
-	model, err := client.Generate(context.Background(), "学校の写真部")
+	model, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{})
 	if err != nil {
 		t.Fatalf("generate after retries: %v", err)
 	}
@@ -240,7 +242,7 @@ func TestGenerateFallsBackAfterTemporaryHTTPFailures(t *testing.T) {
 	}
 	client.retryDelay = func(int) time.Duration { return 0 }
 
-	model, err := client.Generate(context.Background(), "学校の写真部")
+	model, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{})
 	if err != nil {
 		t.Fatalf("generate with fallback: %v", err)
 	}
@@ -293,7 +295,7 @@ func TestGenerateFallsBackWhenPrimaryModelTimesOut(t *testing.T) {
 	client.primaryModelTimeout = 50 * time.Millisecond
 	client.generationTimeout = time.Second
 
-	model, err := client.Generate(context.Background(), "学校の写真部")
+	model, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{})
 	if err != nil {
 		t.Fatalf("generate after primary timeout: %v", err)
 	}
@@ -328,7 +330,7 @@ func TestGenerateReturnsWithinTotalTimeBudget(t *testing.T) {
 	client.generationTimeout = 150 * time.Millisecond
 
 	startedAt := time.Now()
-	_, err = client.Generate(context.Background(), "学校の写真部")
+	_, err = client.Generate(context.Background(), "学校の写真部", concept.Draft{})
 	elapsed := time.Since(startedAt)
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected generation deadline error, got %v", err)

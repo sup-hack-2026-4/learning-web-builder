@@ -1,4 +1,7 @@
-import type { SiteModel } from "../site-model/schema";
+import type { SectionImage, SiteModel, SiteSection } from "../site-model/schema";
+
+/** 提出物ZIPの中で画像を置くディレクトリ。HTMLはこの名前を相対パスで参照する。 */
+export const IMAGE_DIRECTORY = "images";
 
 export type SiteArtifacts = {
   html: string;
@@ -8,7 +11,32 @@ export type SiteArtifacts = {
   /** 編集画面のプレビュー用。cssに選択枠などを上乗せしたもの。 */
   editorCss: string;
   srcdoc: string;
+  /**
+   * 提出物ZIPへ同梱する画像。表示中のセクションで実際に使われているものだけを入れる。
+   * HTMLは相対パスで参照するため、この一覧が欠けると提出物の画像が表示できない。
+   */
+  images: SectionImage[];
 };
+
+/** 提出物HTMLが画像を参照するときの相対パス。 */
+export function sectionImagePath(image: SectionImage): string {
+  return `${IMAGE_DIRECTORY}/${image.fileName}`;
+}
+
+/**
+ * 相対パスで参照している画像を、データURIへ差し替える。
+ *
+ * 提出物のHTMLは画像を相対パスで参照するが、srcdocで開く文書には解決先が無い。
+ * プレビューと品質チェック(axe)はどちらもsrcdocで読み込むため、
+ * 差し替えないと画像が欠けた状態を見て・判定することになる。
+ */
+export function inlineSectionImages(html: string, images: readonly SectionImage[]): string {
+  return images.reduce(
+    (document, image) =>
+      document.replaceAll(`src="${escapeHtml(sectionImagePath(image))}"`, () => `src="${image.dataUri}"`),
+    html,
+  );
+}
 
 const fontFamilies: Record<SiteModel["theme"]["fontFamily"], string> = {
   sans: 'Inter, "Noto Sans JP", system-ui, sans-serif',
@@ -61,17 +89,37 @@ export function escapeHtml(value: string): string {
   });
 }
 
+// h1を出す先頭セクションかどうか。表示中セクションでの並び順から判定する。
+// コード表示側でも「h1がどのセクションの見出しか」を同じ基準で示すため、ここから共有する。
+export function isHeroSection(section: SiteSection, index: number): boolean {
+  return section.kind === "hero" || index === 0;
+}
+
+// 画像を選んでいればimgを、選んでいなければ従来のプレースホルダーを出す。
+// altは画像の有無にかかわらず出力する。altが空のimgは品質チェックとaxeの指摘対象になり、
+// 実際の写真に対して説明を書く、という学習がここで初めて成立する。
+function buildSectionImageHtml(section: SiteSection): string {
+  if (section.kind === "contact") return "";
+  if (section.image) {
+    return `<img class="section-image" src="${escapeHtml(sectionImagePath(section.image))}" alt="${escapeHtml(section.imageAlt)}">`;
+  }
+  return `<div class="image-placeholder" role="img" aria-label="${escapeHtml(section.imageAlt)}"><span>IMAGE</span></div>`;
+}
+
 export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {
-  const sections = model.sections
-    .filter((section) => section.visible)
+  const visibleSections = model.sections.filter((section) => section.visible);
+  // 非表示セクションの画像は提出物に現れないため、ZIPにも入れない。
+  const images = visibleSections.flatMap((section) =>
+    section.kind !== "contact" && section.image ? [section.image] : [],
+  );
+
+  const sections = visibleSections
     .map((section, index) => {
-      const isHero = section.kind === "hero" || index === 0;
+      const isHero = isHeroSection(section, index);
       const heading = isHero
         ? `<h1>${escapeHtml(section.title)}</h1>`
         : `<h2>${escapeHtml(section.title)}</h2>`;
-      const image = section.kind === "contact"
-        ? ""
-        : `<div class="image-placeholder" role="img" aria-label="${escapeHtml(section.imageAlt)}"><span>IMAGE</span></div>`;
+      const image = buildSectionImageHtml(section);
 
       return `<section class="section section-${escapeHtml(section.kind)}" data-builder-id="${escapeHtml(section.id)}" tabindex="0">
   <div class="section-inner">
@@ -134,6 +182,7 @@ h1 { max-width: 780px; margin: 0 0 20px; font-size: clamp(42px, 8vw, 88px); line
 h2 { margin: 0 0 16px; color: var(--heading); font-size: clamp(28px, 4vw, 46px); }
 p { max-width: 720px; margin: 0 0 28px; }
 .image-placeholder { min-height: 220px; display: grid; place-items: center; color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--background)); border: 2px dashed color-mix(in srgb, var(--primary) 35%, var(--background)); border-radius: 20px; font-weight: 800; letter-spacing: .18em; }
+.section-image { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 20px; background: color-mix(in srgb, var(--primary) 10%, var(--background)); }
 .section-features { background: var(--surface); }
 footer { padding: calc(var(--space) * 1.4); text-align: center; color: var(--text-muted); background: var(--surface); border-top: 1px solid var(--border); font-size: 13px; }
 @media (max-width: 640px) {
@@ -170,9 +219,13 @@ window.addEventListener('message', (event) => {
 .section { cursor: pointer; }
 .section:focus, .section:hover { outline: 3px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -6px; }`;
 
-  const srcdoc = html
-    .replace('<link rel="stylesheet" href="style.css">', `<style id="builder-theme">${editorCss}</style>`)
-    .replace('<script src="script.js"></script>', `<script>${javascript}</script>`);
+  // コード表示にはhtmlをそのまま使うので、巨大なbase64が画面に出ることはない。
+  const srcdoc = inlineSectionImages(
+    html
+      .replace('<link rel="stylesheet" href="style.css">', `<style id="builder-theme">${editorCss}</style>`)
+      .replace('<script src="script.js"></script>', `<script>${javascript}</script>`),
+    images,
+  );
 
-  return { html, css, javascript, editorCss, srcdoc };
+  return { html, css, javascript, editorCss, srcdoc, images };
 }

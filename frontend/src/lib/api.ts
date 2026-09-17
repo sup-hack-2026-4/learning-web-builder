@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { siteModelSchema, type SiteModel } from "@/features/site-model/schema";
+import { conceptReplySchema, trimHistory, type ChatMessage, type ConceptDraft, type ConceptReply } from "@/features/concept/schema";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
@@ -53,11 +54,20 @@ export async function getSession(getToken: TokenProvider): Promise<SessionStatus
   return { authenticated: false, mode: "guest" };
 }
 
-export async function generateSite(topic: string): Promise<{ site: SiteModel; provider: "gemini" | "static-sample" }> {
+/**
+ * 題材からたたき台を生成する。
+ *
+ * concept は相談で固めたコンセプト。省略できるため、相談を使わずに
+ * 題材だけで生成する導線もこれまでどおり動く。
+ */
+export async function generateSite(
+  topic: string,
+  concept?: ConceptDraft,
+): Promise<{ site: SiteModel; provider: "gemini" | "static-sample" }> {
   const response = await requestApi("/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ topic }),
+    body: JSON.stringify(concept ? { topic, concept } : { topic }),
   });
 
   if (!response.ok) {
@@ -70,6 +80,27 @@ export async function generateSite(topic: string): Promise<{ site: SiteModel; pr
     site: siteModelSchema.parse(envelope.site),
     provider: envelope.provider === "gemini" ? "gemini" : "static-sample",
   };
+}
+
+/**
+ * 生成前のコンセプト相談を1ターン進める。
+ *
+ * 会話はサーバーに持たせず、毎回まとめて送る。DBを増やさずに済む一方、
+ * 履歴はサーバーから見て未信頼な入力になるため、確定済みの項目は
+ * サーバー側で保持される（こちらが送った下書きが勝手に書き換わることはない）。
+ */
+export async function conceptChat(messages: ChatMessage[], draft: ConceptDraft): Promise<ConceptReply> {
+  const response = await requestApi("/concept/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: trimHistory(messages), draft }),
+  });
+
+  if (!response.ok) {
+    throw new Error("コンセプト相談を利用できません。");
+  }
+
+  return conceptReplySchema.parse(await response.json());
 }
 
 export async function listProjects(getToken: TokenProvider): Promise<Project[]> {

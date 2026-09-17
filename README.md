@@ -7,10 +7,14 @@
 - 題材からサンプルサイトを生成（API停止時は静的JSONへ自動フォールバック）
 - `SiteModel`からHTML・CSS・JavaScriptを生成し、sandbox付きiframeで表示
 - 色・余白・フォント・セクション表示をリアルタイム変更
+- セクションの追加・削除（2〜8件）
+- セクションへの画像の挿入（選んだ画像はブラウザ側でJPEGへ縮小。1枚200KB・合計600KB・全体で4枚まで）
 - プレビュー上の要素選択と、監修済み固定解説の表示
-- 変更理由を学習メモとして保存
+- プレビューと並べた生成コードの表示（選択中の要素にあたる行と、まだ理由を書いていない変更行を色分け）
+- 変更理由を学習メモとして保存（何を・なぜ・どう良くなるかの観点表示と、そのとき変わったコードの記録）
 - 見出し構造・画像のalt・モバイル対応の品質チェック
-- コード、学習メモ、品質レポート、AI利用記録、READMEをZIP出力
+- axe-coreによるアクセシビリティの自動チェック（提出物と同じHTML・CSSを読み込んで判定し、指摘は日本語の理由付きで表示）
+- コード、学習メモ、品質レポート、AI利用記録、READMEをZIP出力（画像は`images/`へ実ファイルとして同梱）
 - ブラウザへの自動一時保存
 
 ## 構成
@@ -21,6 +25,7 @@ backend/      Go + chi API
 db/           PostgreSQLマイグレーションとsqlc設定
 openapi/      API契約
 docs/         設計・役割分担・開発規約
+scripts/      開発用スクリプト（開発サーバーの一括起動）
 .github/      CI、PR・Issueテンプレート、CODEOWNERS
 ```
 
@@ -97,6 +102,31 @@ psql $env:DATABASE_URL -f db/migrations/001_initial.sql
 
 ## 開発サーバー
 
+リポジトリのルートで次を実行すると、フロントエンドとバックエンドが1つのターミナルでまとめて起動します。
+
+```powershell
+.\scripts\dev.ps1
+```
+
+- フロントエンド: http://localhost:5173
+- API: http://localhost:8080/api/v1/health
+
+`Ctrl+C`で両方まとめて停止します。`go run`が生成する子バイナリやViteの孫プロセスもツリーごと終了するため、ポートが掴まれたまま残りません。どちらかが落ちた場合は、もう片方も停止します（片方だけ生きていると、動いているつもりで壊れた状態を触ることになるため）。
+
+起動前に以下を確認し、足りない場合は何をすべきかを表示して終了します。
+
+- `go`と`npm`がPATHにあるか
+- `frontend/node_modules`があるか（なければ[初回セットアップ](#初回セットアップ)を案内）
+- `DATABASE_URL`が設定されているか（未設定でも起動し、保存APIだけが`503`を返す旨を警告）
+
+実行ポリシーで拒否される場合は、次のように呼び出してください。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+```
+
+### 個別に起動する場合
+
 ターミナル1:
 
 ```powershell
@@ -110,9 +140,6 @@ go run ./cmd/api
 cd frontend
 npm.cmd run dev
 ```
-
-- フロントエンド: http://localhost:5173
-- API: http://localhost:8080/api/v1/health
 
 ## 動作確認
 

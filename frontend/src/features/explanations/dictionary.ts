@@ -30,6 +30,12 @@ export const explanationDictionary: Record<string, Explanation> = {
     css: ".section-featuresだけ背景色に--surfaceを指定しており、前後のセクションと視覚的に区切られます。--surfaceは背景色から少しずらした色なので、テーマの背景色を変えても区切りが保たれます。",
     why: "読み手が内容を素早く比較・理解できるよう、他のセクションと背景色を変えて目立たせているためです。",
   },
+  gallery: {
+    title: "gallery（写真・作品セクション）",
+    html: "aboutと同じsection構造で、見せたいものを紹介する内容が入ります。画像プレースホルダーも表示されます。",
+    css: "gallery専用のCSSは無く、他の内容セクションと同じ.sectionの余白ルールと.section-innerの横幅制限に従っています。",
+    why: "見せたいものを並べる場所なので、装飾より「何をどの順で見せるか」の判断が中心になります。画像のaltを書く練習にもなる場所です。",
+  },
   contact: {
     title: "contact（基本情報セクション）",
     html: "他のセクションと異なり、画像プレースホルダーを出力していません(section.kindがcontactの場合だけ画像用のdivを空文字にしています)。",

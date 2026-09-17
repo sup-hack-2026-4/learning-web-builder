@@ -84,14 +84,36 @@ func (repository *PostgresRepository) Get(ctx context.Context, ownerID, projectI
 	return record, err
 }
 
+// ListLimit は一覧で返すプロジェクトの最大件数。
+// 一覧は選択用の見出しを出すだけなので、全件を無制限に運ぶ必要がない。
+const ListLimit = 50
+
 func (repository *PostgresRepository) List(ctx context.Context, ownerID string) ([]Record, error) {
+	// 一覧はタイトルの表示にしか使わないため、画像を落としてから返す。
+	// 画像込みのモデルを全件運ぶと、保存数に比例して転送量と復号の負担が増える。
+	// 読み込み時は個別取得(Get)で画像ごと受け取るので、ここで欠けても支障はない。
 	rows, err := repository.db.Query(
 		ctx,
-		`SELECT id, clerk_user_id, site_model, version, created_at, updated_at
+		`SELECT id,
+		        clerk_user_id,
+		        jsonb_set(
+		          site_model,
+		          '{sections}',
+		          COALESCE((
+		            SELECT jsonb_agg(entry.section - 'image' ORDER BY entry.ordinality)
+		            FROM jsonb_array_elements(site_model->'sections')
+		                 WITH ORDINALITY AS entry(section, ordinality)
+		          ), '[]'::jsonb)
+		        ) AS site_model,
+		        version,
+		        created_at,
+		        updated_at
 		 FROM projects
 		 WHERE clerk_user_id = $1
-		 ORDER BY updated_at DESC`,
+		 ORDER BY updated_at DESC
+		 LIMIT $2`,
 		ownerID,
+		ListLimit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)

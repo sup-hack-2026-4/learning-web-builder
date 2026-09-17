@@ -26,29 +26,38 @@ test("リセットすると未記録のテーマ変更と理由を破棄する",
 // 未記録のデザイン変更が残ったまま内容変更を記録すると理由欄だけが空になるため、
 // そのあと別の理由でデザイン変更を記録すると、以前のデザイン変更に無関係な理由が
 // 紐づいてしまう恐れがあった。デザイン変更は変更時点の理由を保持する。
-test("内容変更の記録をはさんでも、デザイン変更には変更時の理由が紐づく", async ({ page }) => {
+test("理由を書かずに変更でき、あとから説明して記録できる", async ({ page }) => {
   await page.goto("/");
 
-  // 1. デザイン変更の理由を入力して、メインカラーを変更する（まだ記録しない）。
-  await page.getByLabel("なぜこの変更をしますか？").fill("見出しを目立たせたいから");
+  // 先に変える。見た目の違いを確かめてからでないと、どう良くなったかは書けない。
   await page.getByLabel("メインカラー").fill("#e11d48");
+  await expect(page.getByText("先に『なぜ変えるか』を入力してください。")).toBeHidden();
 
-  // 2. 記録しないまま、別の理由で内容変更を記録する。ここで理由欄が空になる。
-  await page.getByLabel("なぜこの変更をしますか？").fill("紹介文を分かりやすくしたいから");
-  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
-  await expect(page.getByText("内容変更の理由を学習メモへ記録しました。")).toBeVisible();
-  await expect(page.getByLabel("なぜこの変更をしますか？")).toHaveValue("");
-
-  // 3. さらに別の理由を入力してデザイン変更を記録する。
-  await page.getByLabel("なぜこの変更をしますか？").fill("余白を広げて読みやすくしたいから");
+  // 変えたあとで説明を書いて記録する。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しを赤にした。目立たせて読み始めてもらいたいから");
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
   await expect(page.getByText("デザイン変更の内容と理由を学習メモへ記録しました。")).toBeVisible();
 
-  // メインカラーの変更には、手順1で入力した理由が紐づいていること。
-  const colorNote = page.locator("div").filter({ hasText: /^デザイン変更（メインカラーを #e11d48 に）/ }).last();
-  await expect(colorNote).toContainText("見出しを目立たせたいから");
-  // 手順3で入力した理由が、手順1のデザイン変更へ紐づいていないこと。
-  await expect(colorNote).not.toContainText("余白を広げて読みやすくしたいから");
+  // メモの見出しでたどる。汎用のdivで拾うと、囲みを1つ足すだけで壊れる。
+  const colorNote = page.getByTestId("learning-note").filter({ hasText: "デザイン変更（メインカラーを #e11d48 に）" }).last();
+  await expect(colorNote).toContainText("見出しを赤にした。目立たせて読み始めてもらいたいから");
+});
+
+test("説明していない変更が複数あると、まとめて1件として記録される", async ({ page }) => {
+  await page.goto("/");
+
+  // 説明を書かないまま、続けて2つ変える。
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByLabel(/^余白/).fill("9");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("色と余白を変えた。全体を明るくして読みやすくしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // 2つの変更が1件のメモにまとまること。
+  const note = page.getByTestId("learning-note").filter({ hasText: "デザイン変更（" }).last();
+  await expect(note).toContainText("メインカラーを #e11d48 に");
+  await expect(note).toContainText("余白を 9 に");
+  await expect(note).toContainText("色と余白を変えた。全体を明るくして読みやすくしたいから");
 });
 
 test("同じ理由でまとめて変更した項目は1件のメモに残る", async ({ page }) => {
@@ -214,8 +223,19 @@ test("モバイルで選択中タブを再クリックしても選択状態と�
   await designTab.click();
   await expect(designTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
-  // 選択中タブの背景も消えないこと（aria属性だけでなく見た目でも選択が分かる）。
-  await expect(designTab).toHaveClass(/bg-white/);
+  // 選択中タブの見た目も消えないこと（aria属性だけでなく見た目でも選択が分かる）。
+  const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
+  const [activeStyle, inactiveStyle] = await Promise.all([
+    designTab.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.color, style.backgroundColor, style.boxShadow].join("|");
+    }),
+    explanationTab.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.color, style.backgroundColor, style.boxShadow].join("|");
+    }),
+  ]);
+  expect(activeStyle).not.toBe(inactiveStyle);
 });
 
 // レビュー指摘の再現ケース。
@@ -233,7 +253,7 @@ test("モバイルでタブを再クリックしてもデスクトップ幅で�
   // デスクトップ幅へ広げても、パネルは開いたまま。
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
-  await expect(designTab).toHaveClass(/bg-white/);
+  await expect(designTab).toHaveAttribute("aria-selected", "true");
 });
 
 test("デスクトップで畳んだ状態からモバイル幅にすると内容が見える", async ({ page }) => {
@@ -273,10 +293,12 @@ test("デスクトップで畳んだ状態は、モバイルでタブを切り�
   await expect(page.getByRole("button", { name: "パネルを開く" })).toBeVisible();
 });
 
-test("内側タブは上下キーでフォーカスと選択が循環移動する", async ({ page }) => {
+test("内側タブは左右キーでフォーカスと選択が循環移動する", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
 
+  const tabList = page.getByRole("tablist", { name: "調整と学習" });
+  await expect(tabList.locator(":scope > :not([role='tab'])")).toHaveCount(0);
   const designTab = page.getByRole("tab", { name: "調整", exact: true });
   const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
   const qualityTab = page.getByRole("tab", { name: "品質", exact: true });
@@ -288,19 +310,20 @@ test("内側タブは上下キーでフォーカスと選択が循環移動す�
   // ここではタブ列の中の移動だけを検証する。
   // ページ全体のTab順はプレビューiframeの中身も含むため、別の関心事として切り離す。
   await designTab.focus();
-  await page.keyboard.press("ArrowDown");
+  // タブ列は横並びのため、左右キーで移動する。
+  await page.keyboard.press("ArrowRight");
   await expect(explanationTab).toBeFocused();
   await expect(explanationTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("なぜこのコード？")).toBeVisible();
 
   // 末尾から先頭へ循環する。
-  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowRight");
   await expect(qualityTab).toBeFocused();
-  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowRight");
   await expect(designTab).toBeFocused();
 
-  // 上方向にも動き、Home/Endも効く。
-  await page.keyboard.press("ArrowUp");
+  // 逆方向にも動き、Home/Endも効く。
+  await page.keyboard.press("ArrowLeft");
   await expect(qualityTab).toBeFocused();
   await page.keyboard.press("Home");
   await expect(designTab).toBeFocused();
@@ -352,4 +375,521 @@ test("プレビュー内の要素へキーボードで到達できる", async ({
 
   await page.keyboard.press("Tab");
   await expect(frame.locator("[data-builder-id='hero']")).toBeFocused();
+});
+
+// 「理由を書くときに、目の前にコードがある」状態を作るための表示。
+// プレビューとコードを同時に見せ、選んだ要素がコードのどこかを示す。
+test("プレビューの下に生成コードが並び、選んだ要素の行が示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await expect(codeView).toBeVisible();
+  // プレビューを隠さずに、同時に見えていること。
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+
+  // 初期表示はindex.html。提出物ZIPと同じファイル名で示す。
+  await expect(codeView.getByRole("tab", { name: "index.html" })).toHaveAttribute("aria-selected", "true");
+  await expect(codeView).toContainText("<!doctype html>");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+
+  await expect(codeView).toContainText("選んだ要素: 私たちについて");
+  const selectedLines = codeView.locator("li[data-selected='true']");
+  // 選んだセクションを書いている行だけが示される。
+  await expect(selectedLines.filter({ hasText: "私たちについて" })).toHaveCount(1);
+  await expect(selectedLines.filter({ hasText: "3つの魅力" })).toHaveCount(0);
+});
+
+test("CSSタブでは、選んだ要素に効いているルールが示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+
+  const selectedLines = codeView.locator("li[data-selected='true']");
+  // ヒーローはh1と.section-heroの両方で装飾されている。
+  // .section-heroは通常時と@media内の2か所にあり、どちらもヒーローに効いている。
+  await expect(selectedLines.filter({ hasText: ".section-hero {" })).toHaveCount(2);
+  await expect(selectedLines.filter({ hasText: "h1 {" })).toHaveCount(1);
+  // 他のセクションだけに効くルールは対象外。
+  await expect(selectedLines.filter({ hasText: "h2 {" })).toHaveCount(0);
+});
+
+// 「なぜ変えるか」を書く場面で、自分の操作がコードのどこを動かしたかを見せる。
+test("デザインを変えると、コード上に未記録の変更として示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+  await expect(codeView.locator("li[data-changed='true']")).toHaveCount(0);
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("元気な印象にしたいから");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+
+  const changedLines = codeView.locator("li[data-changed='true']");
+  await expect(changedLines.filter({ hasText: "--primary:" })).toHaveCount(1);
+  await expect(changedLines.filter({ hasText: "#e11d48" }).first()).toBeVisible();
+  await expect(codeView).toContainText("未記録の変更");
+
+  // 理由を記録すると、そこが新しい基準になり「未記録」ではなくなる。
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(codeView.locator("li[data-changed='true']")).toHaveCount(0);
+  await expect(codeView).not.toContainText("未記録の変更");
+});
+
+test("コードを隠すとプレビューが縦に広がる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const preview = page.locator("iframe[title='生成サイトのプレビュー']");
+  const initialPreviewHeight = (await preview.boundingBox())!.height;
+
+  await page.getByRole("button", { name: "コードを隠す" }).click();
+  await expect(codeView).toBeHidden();
+  expect((await preview.boundingBox())!.height).toBeGreaterThan(initialPreviewHeight);
+
+  await page.getByRole("button", { name: "コードを見る" }).click();
+  await expect(codeView).toBeVisible();
+});
+
+test("プレビューとコードの高さを境目で調整できる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const heightOf = async () => (await codeView.boundingBox())!.height;
+  const initial = await heightOf();
+
+  // ドラッグできない環境でも変えられるよう、キーボードでも操作できる。
+  await page.getByRole("separator", { name: "プレビューとコードの高さを調整" }).focus();
+  await page.keyboard.press("ArrowUp");
+  expect(await heightOf()).toBeGreaterThan(initial);
+
+  await page.keyboard.press("ArrowDown");
+  expect(await heightOf()).toBeCloseTo(initial, 0);
+});
+
+test("モバイルのプレビュー画面でもコードを一緒に見られる", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
+  await expect(page.getByRole("region", { name: "生成されたコード" })).toBeVisible();
+});
+
+// 「理由を書けた＝理解できている」とは限らないという指摘への対応。
+// 何を・なぜ・どう良くなるかの3点を、書いている最中に示す。
+test("理由を書くと、書けている観点がその場で示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const aspects = page.getByRole("list", { name: "理由の書けている観点" });
+  // 空欄のうちは、3つとも書き足しかたの案内が出ている。
+  await expect(aspects).toContainText("色・余白・見出しなど、変えた部分の名前を入れましょう。");
+  await expect(aspects).toContainText("「〜だから」「〜のため」と、根拠まで書きましょう。");
+
+  // 変えた部分だけを書くと、その観点だけが満たされる。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を変えた");
+  await expect(aspects).not.toContainText("色・余白・見出しなど、変えた部分の名前を入れましょう。");
+  await expect(aspects).toContainText("「〜だから」「〜のため」と、根拠まで書きましょう。");
+
+  // 根拠と効果まで書くと3つそろう。
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を濃くした。背景との差が小さいと読みにくいから");
+  await expect(page.getByText("3つそろいました。記録すると、変わったコードも一緒に残ります。")).toBeVisible();
+});
+
+test("理由を記録すると、そのとき変わったコードが学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("余白を広げた。文章のまとまりが見やすくなるから");
+  // サンプルの初期値(6)と違う値にする。
+  await page.getByLabel(/^余白/).fill("9");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // メモには理由と、実際に変わったCSSの行が並ぶ。
+  const note = page.getByTestId("learning-note").filter({ hasText: "デザイン変更（余白を 9 に）" }).last();
+  await expect(note).toContainText("文章のまとまりが見やすくなるから");
+  await expect(note).toContainText("--space: 36px;");
+});
+
+test("観点が足りない理由でも記録でき、次に書く観点を案内する", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 変えた部分は書いているが、根拠と効果がない理由。
+  await page.getByLabel("なぜこの変更をしますか？").fill("メインカラーを赤にした");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+
+  // 記録は止めない。そのうえで、書けていない観点を示す。
+  await expect(page.getByText("デザイン変更の内容と理由を学習メモへ記録しました。")).toBeVisible();
+  await expect(page.getByText(/次は「なぜ変えるか」「どう良くなるか」も書けると/)).toBeVisible();
+});
+
+test("セクションを非表示にすると、消えたコードが学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("3つの魅力を隠した。先に全体像を伝えたいから。読み手が迷わなくなる");
+  await page.getByRole("checkbox", { name: "3つの魅力" }).uncheck();
+
+  // 削除しか起きていなくても、消えた行が「-」付きで残る。
+  const note = page.getByTestId("learning-note").filter({ hasText: "表示切替（3つの魅力）" }).last();
+  await expect(note).toContainText("先に全体像を伝えたいから");
+  await expect(note).toContainText("- <h2>3つの魅力</h2>");
+});
+
+test("未記録の変更が残っていても、別のセクションのメモには混ざらない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 1. ヒーローの見出しを、理由を書かずに書き換えておく（未記録のまま残す）。
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("見出し", { exact: true }).fill("未記録のままにする見出し");
+
+  // 2. 別のセクションを選び、そちらだけ理由を書いて記録する。
+  await frame.locator("[data-builder-id='about']").click();
+  await page.getByLabel("見出し", { exact: true }).fill("記録するほうの見出し");
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しを具体的にした。内容が伝わるようにしたいから。読み手が迷わなくなる");
+  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
+
+  // 記録したセクションの変更だけがメモに入る。
+  const note = page.getByTestId("learning-note").filter({ hasText: "内容変更（記録するほうの見出し）" }).last();
+  await expect(note).toContainText("記録するほうの見出し");
+  await expect(note).not.toContainText("未記録のままにする見出し");
+});
+
+test("変えた値を元に戻すと、デザイン変更として記録されない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("余白を試しに変えた");
+  const spacing = page.getByLabel(/^余白/);
+  const original = await spacing.inputValue();
+  await spacing.fill("9");
+  await spacing.fill(original);
+
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+});
+
+test("削除しか起きない変更も、コード上に消えた行として示される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await expect(codeView).not.toContainText("未記録の変更");
+
+  // 理由を書かずに非表示にするので、記録されず「未記録の変更」として残る。
+  await page.getByRole("checkbox", { name: "3つの魅力" }).uncheck();
+
+  // 消えた行は今のコードに無いため、消える前の位置へ差し込んで見せる。
+  await expect(codeView).toContainText("未記録の変更");
+  await expect(codeView).toContainText("うち削除");
+  await expect(codeView.getByText("<h2>3つの魅力</h2>")).toBeVisible();
+});
+
+test("見出しの色を初期値へ戻すと、デザイン変更として記録されない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 見出しの色は未指定のときメインカラーを引き継ぐ。その実効値が初期値になる。
+  const original = await page.getByLabel("メインカラー").inputValue();
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を試しに変えた");
+  await page.getByLabel("見出しの色").fill("#e11d48");
+  await page.getByLabel("見出しの色").fill(original);
+
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+});
+
+// レビュー指摘の再現ケース。
+// 見出しの色を触って初期色へ戻したとき、同じ色を明示値として残すと
+// 「未指定（メインカラーを継承）」へ戻らず、以降メインカラーへ追従しなくなる。
+test("見出しの色を初期値へ戻すと、メインカラーへの追従も元どおりになる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const heading = page.getByLabel("見出しの色");
+  const primary = page.getByLabel("メインカラー");
+  const original = await primary.inputValue();
+
+  // 未指定の状態では、見出しの色にメインカラーの実効値が出ている。
+  await expect(heading).toHaveValue(original);
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("見出しの色を試しに変えた");
+  await heading.fill("#e11d48");
+  await heading.fill(original);
+
+  // メインカラーを変えると、未指定へ戻っているので見出しの色も追従する。
+  await primary.fill("#16a34a");
+  await expect(heading).toHaveValue("#16a34a");
+
+  // 追従した結果なので、記録されるのはメインカラーの変更だけ。
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(page.getByText("デザイン変更（メインカラーを #16a34a に）")).toBeVisible();
+  await expect(page.getByText("見出しの色を #e11d48 に")).toHaveCount(0);
+});
+
+test("品質タブでaxeの自動チェック結果を読める", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "品質" }).click();
+
+  // 検査はiframeでの実測なので、まず実行中の状態が出る。
+  await expect(page.getByTestId("axe-loading")).toBeVisible();
+
+  // 既定のサンプルは画像の説明が空のため、指摘が並ぶ。
+  const findings = page.getByTestId("axe-findings");
+  await expect(findings).toBeVisible({ timeout: 20000 });
+  await expect(findings.getByText("画像として扱っている要素に説明がありません。")).toBeVisible();
+  await expect(findings.getByText(/影響: /).first()).toBeVisible();
+});
+
+test("altを埋めるとaxeの指摘が減る", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "品質" }).click();
+  const findings = page.getByTestId("axe-findings");
+  await expect(findings).toBeVisible({ timeout: 20000 });
+  await expect(findings.getByText("画像として扱っている要素に説明がありません。")).toBeVisible();
+
+  // 既定のサンプルで説明が空なのはヒーローだけなので、そこを埋めれば指摘は消える。
+  await page.getByRole("tab", { name: "調整", exact: true }).click();
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("画像の説明（alt）").fill("植物園の入口に並ぶ鉢植えの写真");
+
+  await page.getByRole("tab", { name: "品質" }).click();
+  await expect(page.getByText("画像として扱っている要素に説明がありません。")).toHaveCount(0, { timeout: 20000 });
+});
+
+test("セクションを追加すると、増えたコードと理由が学習メモに残る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByLabel("追加するセクション").selectOption("gallery");
+  await page.getByRole("button", { name: "追加" }).click();
+
+  // 末尾に入り、プレビューにも出る。
+  await expect(page.getByRole("checkbox", { name: "写真・作品" })).toBeVisible();
+
+  // 追加しただけでは未説明の変更として残る。
+  await expect(page.getByText("未説明1件")).toBeVisible();
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("写真の節を足した。文章だけだと様子が伝わらないから。見た人が雰囲気をつかめる");
+  await page.getByRole("button", { name: "セクション構成の理由を記録" }).click();
+
+  const note = page.getByTestId("learning-note").filter({ hasText: "セクション追加（写真・作品）" }).last();
+  await expect(note).toContainText("見た人が雰囲気をつかめる");
+  await expect(note).toContainText("+ <h2>写真・作品</h2>");
+  await expect(page.getByText("未説明1件")).toBeHidden();
+});
+
+test("削除は確認を挟み、まず非表示にする道を示す", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "3つの魅力を削除" }).click();
+  await expect(page.getByText("削除すると元に戻せません。")).toBeVisible();
+
+  // 引き返せる。非表示にするだけならセクションは残る。
+  await page.getByRole("button", { name: "まず非表示にする" }).click();
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).not.toBeChecked();
+
+  // あらためて削除すると、一覧から消える。
+  await page.getByRole("button", { name: "3つの魅力を削除" }).click();
+  await page.getByRole("button", { name: "削除する" }).click();
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).toBeHidden();
+
+  await page.getByLabel("なぜこの変更をしますか？").fill("魅力の節を削った。伝えたいことを絞りたいから。読み手が迷わなくなる");
+  await page.getByRole("button", { name: "セクション構成の理由を記録" }).click();
+
+  const note = page.getByTestId("learning-note").filter({ hasText: "セクション削除（3つの魅力）" }).last();
+  await expect(note).toContainText("読み手が迷わなくなる");
+  await expect(note).toContainText("- <h2>3つの魅力</h2>");
+});
+
+test("上限と下限に達すると、追加も削除もできなくなる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const addButton = page.getByRole("button", { name: "追加" });
+  // 初期サンプルは4件。8件になるまで足す。
+  for (let index = 0; index < 4; index += 1) await addButton.click();
+
+  await expect(page.getByText("セクションは8件までです。")).toBeVisible();
+  await expect(addButton).toBeDisabled();
+
+  // 2件になるまで削ると、今度は削除できなくなる。
+  for (let index = 0; index < 6; index += 1) {
+    await page.getByRole("button", { name: /を削除$/ }).first().click();
+    await page.getByRole("button", { name: "削除する" }).click();
+  }
+
+  await expect(page.getByRole("button", { name: /を削除$/ }).first()).toBeDisabled();
+  await expect(addButton).toBeEnabled();
+});
+
+test("追加したセクションをすぐ消すと、説明すべき変更として残らない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "追加" }).click();
+  await expect(page.getByText("未説明1件")).toBeVisible();
+
+  await page.getByRole("button", { name: "写真・作品を削除" }).click();
+  await page.getByRole("button", { name: "削除する" }).click();
+
+  // 足して消したなら構成は元のまま。書くべき説明も無い。
+  await expect(page.getByText(/未説明\d+件/)).toBeHidden();
+  await expect(page.getByRole("button", { name: "セクション構成の理由を記録" })).toBeHidden();
+});
+
+test("削除した種類をすぐ追加し直すと、構成変更は相殺される", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "3つの魅力を削除" }).click();
+  await page.getByRole("button", { name: "削除する" }).click();
+
+  await page.getByLabel("追加するセクション").selectOption("features");
+  await page.getByRole("button", { name: "追加" }).click();
+
+  // 同じidのセクションが戻り、顔ぶれとしては元どおりになる。
+  await expect(page.getByText(/未説明\d+件/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "セクション構成の理由を記録" })).toBeHidden();
+  // 初期サンプルとプリセットの文章差は、内容変更として説明対象に残る。
+  await expect(page.getByRole("button", { name: "内容変更の理由を記録" })).toBeVisible();
+});
+
+/**
+ * 画像機能の確認で使うJPEGを、ブラウザ自身に作らせる。
+ *
+ * ブラウザがデコードできる本物のJPEGでないと、選択後の縮小・再圧縮まで通せない。
+ * 固定のバイト列をリポジトリへ置くより、その場で作るほうが壊れにくい。
+ */
+async function createTestJpeg(page: import("@playwright/test").Page, size = 900) {
+  const base64 = await page.evaluate((edge) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = edge;
+    canvas.height = Math.round((edge * 3) / 4);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("canvasを使えません");
+    // 単色だとJPEGが極端に小さくなり、縮小処理を通ったかどうかが分からなくなる。
+    for (let x = 0; x < canvas.width; x += 12) {
+      context.fillStyle = `hsl(${(x * 7) % 360} 70% 55%)`;
+      context.fillRect(x, 0, 12, canvas.height);
+    }
+    return canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+  }, size);
+
+  return { name: "photo.jpg", mimeType: "image/jpeg", buffer: Buffer.from(base64, "base64") };
+}
+
+async function generateSite(page: import("@playwright/test").Page, topic: string) {
+  await page.goto("/");
+  await page.getByLabel("紹介サイトの題材").fill(topic);
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByRole("heading", { name: topic, exact: true })).toBeVisible();
+}
+
+test("画像を選ぶとプレビューに表示され、削除すると仮の枠へ戻る", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+  await expect(page.getByText("選択中: 私たちについて", { exact: true })).toBeVisible();
+
+  // 画像を選ぶ前は仮の枠が出ている。
+  await expect(page.getByText("画像は未設定です。選ぶまでは仮の枠が表示されます。")).toBeVisible();
+  await expect(frame.locator("[data-builder-id='about'] .image-placeholder")).toBeVisible();
+
+  await page.locator("[data-testid='section-image-field'] input[type='file']")
+    .setInputFiles(await createTestJpeg(page));
+
+  // 縮小と再圧縮が終わると、編集パネルとプレビューの両方へ反映される。
+  await expect(page.getByTestId("section-image-preview")).toBeVisible();
+  const previewImage = frame.locator("[data-builder-id='about'] img.section-image");
+  await expect(previewImage).toBeVisible();
+  // opaque originのiframeでも、データURIなら画像を読み込める。
+  await expect(previewImage).toHaveJSProperty("complete", true);
+  expect(await previewImage.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "画像を削除" }).click();
+  await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
+  await expect(frame.locator("[data-builder-id='about'] .image-placeholder")).toBeVisible();
+});
+
+test("扱えない形式の画像は理由を示して受け付けない", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+
+  await page.locator("[data-testid='section-image-field'] input[type='file']").setInputFiles({
+    name: "note.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("これは画像ではありません"),
+  });
+
+  await expect(page.getByRole("alert")).toContainText("JPEG・PNG・WebPの画像を選んでください。");
+  await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
+});
+
+test("基本情報のセクションには画像欄を出さない", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='contact']").click();
+  await expect(page.getByText("選択中: 基本情報", { exact: true })).toBeVisible();
+
+  await expect(page.getByTestId("section-image-field")).toHaveCount(0);
+});
+
+test("画像の差し替えも、理由を書く対象の変更として数える", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+  await page.locator("[data-testid='section-image-field'] input[type='file']")
+    .setInputFiles(await createTestJpeg(page));
+  await expect(page.getByTestId("section-image-preview")).toBeVisible();
+
+  // 説明を書けば学習メモへ残る。
+  await page.getByLabel("なぜこの変更をしますか？").fill("活動の様子が伝わる写真を入れた。文章だけより雰囲気が伝わるから");
+  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
+  await expect(page.getByTestId("learning-note").first()).toContainText("活動の様子が伝わる写真を入れた");
+});
+
+test("提出物ZIPへ画像を同梱し、HTMLは相対パスで参照する", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+  await page.locator("[data-testid='section-image-field'] input[type='file']")
+    .setInputFiles(await createTestJpeg(page));
+  await expect(page.getByTestId("section-image-preview")).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "提出物ZIP" }).click();
+  const download = await downloadPromise;
+
+  // 提出物を開いたときに画像が出るかは、ZIPの中身を見ないと分からない。
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const archive = Buffer.concat(chunks).toString("latin1");
+
+  expect(archive).toContain("images/about.jpg");
+  expect(archive).toContain('src="images/about.jpg"');
 });
