@@ -771,3 +771,125 @@ test("削除した種類をすぐ追加し直すと、構成変更は相殺さ�
   // 初期サンプルとプリセットの文章差は、内容変更として説明対象に残る。
   await expect(page.getByRole("button", { name: "内容変更の理由を記録" })).toBeVisible();
 });
+
+/**
+ * 画像機能の確認で使うJPEGを、ブラウザ自身に作らせる。
+ *
+ * ブラウザがデコードできる本物のJPEGでないと、選択後の縮小・再圧縮まで通せない。
+ * 固定のバイト列をリポジトリへ置くより、その場で作るほうが壊れにくい。
+ */
+async function createTestJpeg(page: import("@playwright/test").Page, size = 900) {
+  const base64 = await page.evaluate((edge) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = edge;
+    canvas.height = Math.round((edge * 3) / 4);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("canvasを使えません");
+    // 単色だとJPEGが極端に小さくなり、縮小処理を通ったかどうかが分からなくなる。
+    for (let x = 0; x < canvas.width; x += 12) {
+      context.fillStyle = `hsl(${(x * 7) % 360} 70% 55%)`;
+      context.fillRect(x, 0, 12, canvas.height);
+    }
+    return canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+  }, size);
+
+  return { name: "photo.jpg", mimeType: "image/jpeg", buffer: Buffer.from(base64, "base64") };
+}
+
+async function generateSite(page: import("@playwright/test").Page, topic: string) {
+  await page.goto("/");
+  await page.getByLabel("紹介サイトの題材").fill(topic);
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByRole("heading", { name: topic, exact: true })).toBeVisible();
+}
+
+test("画像を選ぶとプレビューに表示され、削除すると仮の枠へ戻る", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+  await expect(page.getByText("選択中: 私たちについて", { exact: true })).toBeVisible();
+
+  // 画像を選ぶ前は仮の枠が出ている。
+  await expect(page.getByText("画像は未設定です。選ぶまでは仮の枠が表示されます。")).toBeVisible();
+  await expect(frame.locator("[data-builder-id='about'] .image-placeholder")).toBeVisible();
+
+  await page.locator("[data-testid='section-image-field'] input[type='file']")
+    .setInputFiles(await createTestJpeg(page));
+
+  // 縮小と再圧縮が終わると、編集パネルとプレビューの両方へ反映される。
+  await expect(page.getByTestId("section-image-preview")).toBeVisible();
+  const previewImage = frame.locator("[data-builder-id='about'] img.section-image");
+  await expect(previewImage).toBeVisible();
+  // opaque originのiframeでも、データURIなら画像を読み込める。
+  await expect(previewImage).toHaveJSProperty("complete", true);
+  expect(await previewImage.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "画像を削除" }).click();
+  await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
+  await expect(frame.locator("[data-builder-id='about'] .image-placeholder")).toBeVisible();
+});
+
+test("扱えない形式の画像は理由を示して受け付けない", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+
+  await page.locator("[data-testid='section-image-field'] input[type='file']").setInputFiles({
+    name: "note.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("これは画像ではありません"),
+  });
+
+  await expect(page.getByRole("alert")).toContainText("JPEG・PNG・WebPの画像を選んでください。");
+  await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
+});
+
+test("基本情報のセクションには画像欄を出さない", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='contact']").click();
+  await expect(page.getByText("選択中: 基本情報", { exact: true })).toBeVisible();
+
+  await expect(page.getByTestId("section-image-field")).toHaveCount(0);
+});
+
+test("画像の差し替えも、理由を書く対象の変更として数える", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+  await page.locator("[data-testid='section-image-field'] input[type='file']")
+    .setInputFiles(await createTestJpeg(page));
+  await expect(page.getByTestId("section-image-preview")).toBeVisible();
+
+  // 説明を書けば学習メモへ残る。
+  await page.getByLabel("なぜこの変更をしますか？").fill("活動の様子が伝わる写真を入れた。文章だけより雰囲気が伝わるから");
+  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
+  await expect(page.getByTestId("learning-note").first()).toContainText("活動の様子が伝わる写真を入れた");
+});
+
+test("提出物ZIPへ画像を同梱し、HTMLは相対パスで参照する", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+  await page.locator("[data-testid='section-image-field'] input[type='file']")
+    .setInputFiles(await createTestJpeg(page));
+  await expect(page.getByTestId("section-image-preview")).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "提出物ZIP" }).click();
+  const download = await downloadPromise;
+
+  // 提出物を開いたときに画像が出るかは、ZIPの中身を見ないと分からない。
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const archive = Buffer.concat(chunks).toString("latin1");
+
+  expect(archive).toContain("images/about.jpg");
+  expect(archive).toContain('src="images/about.jpg"');
+});

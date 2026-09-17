@@ -9,6 +9,7 @@ import { CodePanel } from "@/components/code-panel";
 import { SitePreview } from "@/components/site-preview";
 import { VerticalSplitter } from "@/components/vertical-splitter";
 import { handleTabKeyDown } from "@/lib/tab-keyboard";
+import { SectionImageField } from "@/features/images/section-image-field";
 import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
 import { collectChangedLineTexts } from "@/features/code-view/annotate-code";
 import { countPassedAspects, evaluateReason } from "@/features/reasoning/evaluate-reason";
@@ -155,7 +156,7 @@ export default function App() {
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
   }, [codeOpen, limitCodeHeight, measureMaxCodeHeight]);
-  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addSection, removeSection, addNote, reset } = useBuilderStore();
+  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addSection, removeSection, setSectionImage, removeSectionImage, addNote, reset } = useBuilderStore();
 
   // 「まだ理由を書いていない変更」をコード上で示すための基準。
   // デザインと内容は別々に記録するため、基準も分けて持つ。
@@ -206,6 +207,8 @@ export default function App() {
           baseline.title !== section.title ||
           baseline.body !== section.body ||
           baseline.imageAlt !== section.imageAlt ||
+          // 画像の差し替えと削除も、理由を書く対象の変更として数える。
+          baseline.image?.dataUri !== section.image?.dataUri ||
           baseline.visible !== section.visible
         );
       }).length,
@@ -850,6 +853,14 @@ export default function App() {
             <h3 className="text-sm font-black">選択中: {selectedSection.title}</h3>
             <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
             <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} /></label>
+            {selectedSection.kind !== "contact" && (
+              <SectionImageField
+                section={selectedSection}
+                sections={site.sections}
+                onSelect={(image) => setSectionImage(selectedSection.id, image)}
+                onRemove={() => removeSectionImage(selectedSection.id)}
+              />
+            )}
             {selectedSection.kind !== "contact" && <label className="block text-xs font-bold">画像の説明（alt）<Input className="mt-1" value={selectedSection.imageAlt} onChange={(event) => updateSection(selectedSection.id, { imageAlt: event.target.value })} placeholder="画像が見えない人にも伝わる説明" /></label>}
             <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordContentReason}>内容変更の理由を記録</Button>
           </Card>}
