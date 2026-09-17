@@ -27,5 +27,18 @@ type Section struct {
 	Title    string `json:"title"`
 	Body     string `json:"body"`
 	ImageAlt string `json:"imageAlt"`
-	Visible  bool   `json:"visible"`
+	// 利用者が選んだ画像。任意項目で、未指定なら従来どおりプレースホルダーを表示する。
+	// 保存済みの古いプロジェクトはこの項目を持たないため、必須にすると復元できなくなる。
+	Image   *SectionImage `json:"image,omitempty"`
+	Visible bool          `json:"visible"`
+}
+
+// SectionImage はセクションに差し込む画像を表す。
+// 画像はブラウザ側でJPEGへ圧縮したうえでデータURIとして持ち回る。
+// 外部ストレージを持たない構成のため、保存も提出物への同梱もこの1か所から行える。
+type SectionImage struct {
+	// data:image/jpeg;base64, で始まるデータURI。プレビューにそのまま渡す。
+	DataURI string `json:"dataUri"`
+	// 提出物ZIPの中でのファイル名。HTMLはこの名前を相対パスで参照する。
+	FileName string `json:"fileName"`
 }
