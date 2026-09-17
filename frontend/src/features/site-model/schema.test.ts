@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createSampleSite } from "./sample";
-import { siteModelSchema } from "./schema";
+import {
+  MAX_IMAGE_BASE64_BYTES,
+  MAX_IMAGE_COUNT,
+  MAX_TOTAL_IMAGE_BASE64_BYTES,
+  siteModelSchema,
+} from "./schema";
 
 describe("siteModelSchema", () => {
   it("サンプルサイトを正常に検証できる", () => {
@@ -76,5 +81,74 @@ describe("siteModelSchema", () => {
     const site = createSampleSite();
     expect(() => siteModelSchema.parse({ ...site, theme: { ...site.theme, heading: "#b91c1c" } })).not.toThrow();
     expect(() => siteModelSchema.parse({ ...site, theme: { ...site.theme, heading: "red" } })).toThrow();
+  });
+});
+
+describe("セクションの画像", () => {
+  const image = { dataUri: "data:image/jpeg;base64,/9j/4AAQ", fileName: "about.jpg" };
+
+  function withImages(count: number, base64Bytes: number) {
+    const site = createSampleSite();
+    const base = site.sections[0];
+    site.sections = Array.from({ length: Math.max(count, 2) }, (_, index) => ({
+      ...base,
+      id: `s${index}`,
+      image:
+        index < count
+          ? { dataUri: `data:image/jpeg;base64,${"A".repeat(base64Bytes)}`, fileName: `s${index}.jpg` }
+          : undefined,
+    }));
+    return site;
+  }
+
+  it("画像を持たないモデルを受け付ける", () => {
+    // 保存済みの古いプロジェクトはこの項目を持たない。必須にすると復元できなくなる。
+    expect(() => siteModelSchema.parse(createSampleSite())).not.toThrow();
+  });
+
+  it("JPEGのデータURIを受け付ける", () => {
+    const site = createSampleSite();
+    site.sections[1].image = image;
+    expect(() => siteModelSchema.parse(site)).not.toThrow();
+  });
+
+  it("JPEG以外のデータURIを拒否する", () => {
+    const site = createSampleSite();
+    site.sections[1].image = { ...image, dataUri: "data:image/png;base64,iVBORw0KGgo=" };
+    expect(() => siteModelSchema.parse(site)).toThrow();
+  });
+
+  it("外部URLを拒否する", () => {
+    const site = createSampleSite();
+    site.sections[1].image = { ...image, dataUri: "https://example.com/photo.jpg" };
+    expect(() => siteModelSchema.parse(site)).toThrow();
+  });
+
+  it("ZIPのパスとして危険なファイル名を拒否する", () => {
+    const site = createSampleSite();
+    site.sections[1].image = { ...image, fileName: "../about.jpg" };
+    expect(() => siteModelSchema.parse(site)).toThrow();
+  });
+
+  it("画像1枚が上限を超えると拒否する", () => {
+    expect(() => siteModelSchema.parse(withImages(1, MAX_IMAGE_BASE64_BYTES + 4))).toThrow();
+  });
+
+  it("枚数が上限を超えると拒否する", () => {
+    expect(() => siteModelSchema.parse(withImages(MAX_IMAGE_COUNT + 1, 100))).toThrow();
+  });
+
+  it("合計が上限を超えると拒否する", () => {
+    // 1枚ずつは上限内でも、合計では超える組み合わせを弾けることを確かめる。
+    // 上限いっぱいの画像を枚数の上限まで並べると、合計だけが超える。
+    expect(MAX_IMAGE_COUNT * MAX_IMAGE_BASE64_BYTES).toBeGreaterThan(MAX_TOTAL_IMAGE_BASE64_BYTES);
+    expect(() => siteModelSchema.parse(withImages(MAX_IMAGE_COUNT, MAX_IMAGE_BASE64_BYTES))).toThrow();
+  });
+
+  it("ファイル名の重複を拒否する", () => {
+    const site = createSampleSite();
+    site.sections[1].image = { ...image, fileName: "photo.jpg" };
+    site.sections[2].image = { ...image, fileName: "photo.jpg" };
+    expect(() => siteModelSchema.parse(site)).toThrow();
   });
 });

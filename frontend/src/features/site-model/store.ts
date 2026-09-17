@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSampleSite } from "./sample";
 import { createSection, maxSections, minSections, type SectionKind } from "./sections";
-import type { AiUsage, LearningNote, SiteModel } from "./schema";
+import type { AiUsage, LearningNote, SectionImage, SiteModel } from "./schema";
 import { conceptStateSchema, emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
 
 type BuilderState = {
@@ -23,6 +23,11 @@ type BuilderState = {
   // まとめて1件の説明として残したほうが読み返せるため。
   addSection: (kind: SectionKind) => void;
   removeSection: (id: string) => void;
+  // 画像の差し替えと削除。上限の判定と理由の表示はApp側で行い、ここは最後の砦として置く。
+  // 削除はキーごと消す。undefinedを値として残すと「未設定」ではなく「未設定という値」になり、
+  // 保存時のスキーマ検証やHTML生成の分岐がぶれる。
+  setSectionImage: (id: string, image: SectionImage) => void;
+  removeSectionImage: (id: string) => void;
   addNote: (target: string, reason: string, codeChanges?: string[]) => void;
   reset: () => void;
   // 生成前のコンセプト相談。SiteModelとは独立に持つ。
@@ -130,6 +135,29 @@ export const useBuilderStore = create<BuilderState>()(
               state.selectedElementId === id ? sections[0].id : state.selectedElementId,
           };
         }),
+      setSectionImage: (id, image) =>
+        set((state) => ({
+          site: {
+            ...state.site,
+            sections: state.site.sections.map((section) =>
+              // 基本情報のセクションは画像を出力しないため、持たせても提出物には現れない。
+              // サーバー側の検証も弾くので、ここでも入れない。
+              section.id === id && section.kind !== "contact" ? { ...section, image } : section,
+            ),
+          },
+        })),
+      removeSectionImage: (id) =>
+        set((state) => ({
+          site: {
+            ...state.site,
+            sections: state.site.sections.map((section) => {
+              if (section.id !== id) return section;
+              const next = { ...section };
+              delete next.image;
+              return next;
+            }),
+          },
+        })),
       addNote: (target, reason, codeChanges) =>
         set((state) => ({
           notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString(), codeChanges }],

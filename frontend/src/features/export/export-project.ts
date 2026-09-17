@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { buildSiteArtifacts } from "../artifacts/build-site-artifacts";
+import { buildSiteArtifacts, IMAGE_DIRECTORY, sectionImagePath } from "../artifacts/build-site-artifacts";
 import { evaluateQuality } from "../quality/evaluate-quality";
 import type { AiUsage, LearningNote, QualityCheck, SiteModel } from "../site-model/schema";
 
@@ -18,6 +18,11 @@ export async function exportProject(
   zip.file("index.html", artifacts.html);
   zip.file("style.css", artifacts.css);
   zip.file("script.js", artifacts.javascript);
+  // index.htmlは画像を相対パスで参照するため、実ファイルとして同梱する。
+  // これが無いと、提出物をそのまま開いたときに画像だけ表示されない。
+  for (const image of artifacts.images) {
+    zip.file(sectionImagePath(image), toBase64Payload(image.dataUri), { base64: true });
+  }
   zip.file("learning-notes.md", buildLearningNotes(notes));
   zip.file(
     "quality-report.md",
@@ -26,7 +31,7 @@ export async function exportProject(
   zip.file("ai-usage.json", JSON.stringify(aiUsage, null, 2));
   zip.file(
     "README.md",
-    `# ${site.siteTitle}\n\nこのフォルダはLearning Web Builderから出力されました。index.htmlをブラウザで開くと確認できます。AI生成文は仮テキストです。提出前に事実確認し、自分の言葉へ直してください。\n`,
+    `# ${site.siteTitle}\n\nこのフォルダはLearning Web Builderから出力されました。index.htmlをブラウザで開くと確認できます。AI生成文は仮テキストです。提出前に事実確認し、自分の言葉へ直してください。${artifacts.images.length > 0 ? `画像は${IMAGE_DIRECTORY}フォルダに入っています。index.htmlと同じ場所に置いたまま開いてください。` : ""}\n`,
   );
 
   const blob = await zip.generateAsync({ type: "blob" });
@@ -36,6 +41,11 @@ export async function exportProject(
   anchor.download = `${toSafeFileName(site.topic)}-site.zip`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+// データURIからbase64部分だけを取り出す。JSZipへはこの部分を渡す。
+function toBase64Payload(dataUri: string): string {
+  return dataUri.slice(dataUri.indexOf(",") + 1);
 }
 
 // コード中にバッククォートが含まれていても書式が壊れないよう、

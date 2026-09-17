@@ -431,5 +431,19 @@ components:
               title: { type: string, minLength: 1, maxLength: 80 }
               body: { type: string, maxLength: 800 }
               imageAlt: { type: string, maxLength: 160 }
+              # 利用者が選んだ画像。任意項目で、未指定ならプレースホルダーを表示する。
+              # 保存済みの古いプロジェクトはこの項目を持たないため必須にしない。
+              # contactセクションは画像を出力しないため、付けるとサーバー側で拒否する。
+              # 画像は1枚あたりbase64で200KiBまで、合計600KiBまで、全体で4枚まで。
+              image:
+                type: object
+                additionalProperties: false
+                required: [dataUri, fileName]
+                properties:
+                  dataUri:
+                    type: string
+                    pattern: "^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$"
+                    maxLength: 204823
+                  fileName: { type: string, pattern: "^[a-z0-9-]{1,40}\.jpg$" }
               visible: { type: boolean }
 

@@ -1,4 +1,4 @@
-import { buildSiteArtifacts } from "../artifacts/build-site-artifacts";
+import { buildSiteArtifacts, inlineSectionImages } from "../artifacts/build-site-artifacts";
 import type { QualityCheck, SiteModel } from "../site-model/schema";
 
 /** 検査用iframeから親へ結果を返すときのメッセージ種別。 */
@@ -193,10 +193,14 @@ function buildRunnerScript(): string {
  */
 export function buildAuditDocument(site: SiteModel, axeScriptUrl: string): string {
   const artifacts = buildSiteArtifacts(site);
-  return artifacts.html
-    .replace('<link rel="stylesheet" href="style.css">', `<style>${artifacts.css}</style>`)
-    .replace(
-      '<script src="script.js"></script>',
-      `<script src="${axeScriptUrl}"></script>\n  <script>${buildRunnerScript()}</script>`,
-    );
+  // この文書もsrcdocで読み込むため、相対パスのままでは画像が欠けた状態を判定してしまう。
+  return inlineSectionImages(
+    artifacts.html
+      .replace('<link rel="stylesheet" href="style.css">', `<style>${artifacts.css}</style>`)
+      .replace(
+        '<script src="script.js"></script>',
+        `<script src="${axeScriptUrl}"></script>\n  <script>${buildRunnerScript()}</script>`,
+      ),
+    artifacts.images,
+  );
 }

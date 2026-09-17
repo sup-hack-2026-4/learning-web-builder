@@ -3,6 +3,7 @@ import { useBuilderStore } from "./store";
 import { createSampleSite } from "./sample";
 import { emptyDraft } from "@/features/concept/schema";
 import { maxSections, minSections } from "./sections";
+import { siteModelSchema } from "./schema";
 
 const conversation = [
   { role: "model" as const, text: "どんなものを紹介しますか" },
@@ -188,5 +189,48 @@ describe("セクションの追加と削除", () => {
     useBuilderStore.getState().removeSection("no-such-section");
 
     expect(useBuilderStore.getState().site.sections).toBe(before);
+  });
+});
+
+describe("セクションの画像", () => {
+  const image = { dataUri: "data:image/jpeg;base64,/9j/4AAQ", fileName: "about.jpg" };
+
+  it("画像を設定できる", () => {
+    useBuilderStore.getState().setSectionImage("about", image);
+    const section = useBuilderStore.getState().site.sections.find((item) => item.id === "about");
+    expect(section?.image).toEqual(image);
+  });
+
+  it("画像を差し替えられる", () => {
+    const store = useBuilderStore.getState();
+    store.setSectionImage("about", image);
+    const next = { dataUri: "data:image/jpeg;base64,/9j/4AAB", fileName: "about-2.jpg" };
+    useBuilderStore.getState().setSectionImage("about", next);
+    const section = useBuilderStore.getState().site.sections.find((item) => item.id === "about");
+    expect(section?.image).toEqual(next);
+  });
+
+  it("削除すると項目ごと消える", () => {
+    // undefinedを値として残すと「未設定」ではなく「未設定という値」になり、
+    // 保存時のスキーマ検証やHTML生成の分岐がぶれる。
+    useBuilderStore.getState().setSectionImage("about", image);
+    useBuilderStore.getState().removeSectionImage("about");
+    const section = useBuilderStore.getState().site.sections.find((item) => item.id === "about");
+    expect(section).toBeDefined();
+    expect(section && "image" in section).toBe(false);
+  });
+
+  it("基本情報のセクションには設定しない", () => {
+    // 提出物には現れず、サーバー側の検証でも弾かれるため、ここでも入れない。
+    const contact = useBuilderStore.getState().site.sections.find((item) => item.kind === "contact");
+    expect(contact).toBeDefined();
+    useBuilderStore.getState().setSectionImage(contact!.id, image);
+    const after = useBuilderStore.getState().site.sections.find((item) => item.id === contact!.id);
+    expect(after?.image).toBeUndefined();
+  });
+
+  it("画像を設定してもスキーマ検証を通る", () => {
+    useBuilderStore.getState().setSectionImage("about", image);
+    expect(() => siteModelSchema.parse(useBuilderStore.getState().site)).not.toThrow();
   });
 });
