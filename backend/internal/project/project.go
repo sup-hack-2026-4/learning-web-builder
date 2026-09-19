@@ -39,6 +39,7 @@ type Repository interface {
 	Update(context.Context, string, string, site.Model) (Record, error)
 	Get(context.Context, string, string) (Record, error)
 	List(context.Context, string) ([]Record, error)
+	Delete(context.Context, string, string) error
 	SaveQualityResults(context.Context, string, string, []QualityResultInput) ([]QualityResult, error)
 	ListQualityResults(context.Context, string, string) ([]QualityResult, error)
 }

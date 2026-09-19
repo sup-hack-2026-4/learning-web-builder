@@ -18,3 +18,7 @@ SET title = $3, topic = $4, site_model = $5, version = version + 1, updated_at =
 WHERE id = $1 AND clerk_user_id = $2
 RETURNING *;
 
+-- name: DeleteProjectForOwner :one
+DELETE FROM projects
+WHERE id = $1 AND clerk_user_id = $2
+RETURNING id;

@@ -119,6 +119,22 @@ export async function getProject(projectId: string, getToken: TokenProvider): Pr
   return projectSchema.parse(await response.json());
 }
 
+/**
+ * 保存済みプロジェクトを1件消す。
+ *
+ * 関連する学習メモ・品質チェック結果もDB側のON DELETE CASCADEで一緒に消える。
+ * 取り消せないため、呼び出す前に画面側で確認を挟む。
+ */
+export async function deleteProject(projectId: string, getToken: TokenProvider): Promise<void> {
+  const response = await requestApi(`/projects/${encodeURIComponent(projectId)}`, {
+    getToken,
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error("プロジェクトを削除できません。");
+  }
+}
+
 export async function saveProject(
   site: SiteModel,
   getToken: TokenProvider,
