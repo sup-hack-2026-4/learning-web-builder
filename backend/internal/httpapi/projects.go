@@ -120,6 +120,36 @@ func getProject(repository project.Repository) http.HandlerFunc {
 	}
 }
 
+func deleteProject(repository project.Repository) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		identity, ok := requireIdentity(writer, request)
+		if !ok {
+			return
+		}
+		if repository == nil {
+			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"error": "project persistence is unavailable"})
+			return
+		}
+
+		projectID := chi.URLParam(request, "projectId")
+		if _, err := uuid.Parse(projectID); err != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "projectId must be a UUID"})
+			return
+		}
+		err := repository.Delete(request.Context(), identity.UserID, projectID)
+		if errors.Is(err, project.ErrNotFound) {
+			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "project not found"})
+			return
+		}
+		if err != nil {
+			log.Printf("delete project failed: %v", err)
+			writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "project could not be deleted"})
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func listProjects(repository project.Repository) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		identity, ok := requireIdentity(writer, request)

@@ -73,6 +73,7 @@ func NewRouter(config Config) http.Handler {
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects", listProjects(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}", getProject(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Put("/projects/{projectId}", updateProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Delete("/projects/{projectId}", deleteProject(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Post("/projects/{projectId}/quality-results", saveQualityResults(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}/quality-results", listQualityResults(config.Projects))
 	})

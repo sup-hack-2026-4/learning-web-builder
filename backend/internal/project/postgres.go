@@ -134,6 +134,29 @@ func (repository *PostgresRepository) List(ctx context.Context, ownerID string) 
 	return records, nil
 }
 
+// Delete は所有者のプロジェクトを1件消す。
+// 学習メモ・品質チェック結果・AI利用記録は外部キーのON DELETE CASCADEで一緒に消える。
+func (repository *PostgresRepository) Delete(ctx context.Context, ownerID, projectID string) error {
+	// 消せたかどうかをRETURNINGで確かめる。他人のプロジェクトを指定したときも
+	// 該当が無いのと同じ扱いにして、存在の有無を呼び出し側へ漏らさない。
+	var deletedID string
+	err := repository.db.QueryRow(
+		ctx,
+		`DELETE FROM projects
+		 WHERE id = $1 AND clerk_user_id = $2
+		 RETURNING id`,
+		projectID,
+		ownerID,
+	).Scan(&deletedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	return nil
+}
+
 func (repository *PostgresRepository) SaveQualityResults(
 	ctx context.Context,
 	ownerID string,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
-import { getProject, getSession, listProjects, requestApi, saveProject } from "./api";
+import { deleteProject, getProject, getSession, listProjects, requestApi, saveProject } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -99,6 +99,25 @@ describe("project API", () => {
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/projects/${projectPayload.id}`);
     expect(options.method).toBe("PUT");
+  });
+
+  it("削除ではIDをURLエンコードしてDELETEを使う", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(deleteProject(projectPayload.id, async () => "session-token")).resolves.toBeUndefined();
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(`/projects/${projectPayload.id}`);
+    expect(options.method).toBe("DELETE");
+    expect(new Headers(options.headers).get("Authorization")).toBe("Bearer session-token");
+  });
+
+  it("他人のプロジェクトを削除しようとするとエラーにする", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+
+    await expect(deleteProject(projectPayload.id, async () => "session-token"))
+      .rejects.toThrow("プロジェクトを削除できません。");
   });
 
   it("取得したSiteModelが不正なら拒否する", async () => {
