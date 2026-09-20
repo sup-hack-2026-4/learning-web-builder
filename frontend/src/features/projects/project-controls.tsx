@@ -164,11 +164,14 @@ function ClerkProjectControls({
                 >
                   やめる
                 </Button>
+                {/* 保存中も押せると、同じプロジェクトへの保存と削除が並行する。削除の応答が
+                    先に返ると、あとから届く保存の成功処理が削除済みIDを選び直してしまい、
+                    次の上書き保存が404になる。保存ボタンと同じくbusyでそろえる。 */}
                 <Button
                   type="button"
                   variant="ghost"
                   className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-100"
-                  disabled={remove.isPending}
+                  disabled={busy}
                   onClick={() => remove.mutate(currentProjectId)}
                 >
                   {remove.isPending ? "削除中…" : "削除する"}
