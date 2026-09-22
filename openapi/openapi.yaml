@@ -253,6 +253,8 @@ paths:
           description: Authentication is required
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Project could not be deleted
         "503":
           description: Project persistence is not configured
   /projects/{projectId}/quality-results:

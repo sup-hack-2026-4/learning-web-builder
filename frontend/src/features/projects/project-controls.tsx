@@ -4,7 +4,7 @@ import { Cloud, LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { SiteModel } from "@/features/site-model/schema";
-import { deleteProject, getProject, listProjects, saveProject } from "@/lib/api";
+import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
 
 type ProjectControlsProps = {
   enabled: boolean;
@@ -66,9 +66,15 @@ function ClerkProjectControls({
 
   const remove = useMutation({
     mutationFn: (projectId: string) => deleteProject(projectId, getToken),
-    onSuccess: async () => {
+    onSuccess: async (_deleted, projectId) => {
       setConfirmingDelete(false);
       onProjectChange(null);
+      // 再取得を待つ前に、消したものを手元の一覧から除く。invalidateQueriesだけだと
+      // 再取得に失敗したとき削除済みが選択肢に残り、選ぶと読み込みが404になる。
+      queryClient.setQueryData<Project[]>(
+        ["projects", userId],
+        (previous) => previous?.filter((project) => project.id !== projectId),
+      );
       await queryClient.invalidateQueries({ queryKey: ["projects", userId] });
       onNotice("プロジェクトを削除しました。次回の保存は新しいプロジェクトとして作成します。");
     },
@@ -142,7 +148,21 @@ function ClerkProjectControls({
                 ? <LoaderCircle className="size-4 animate-spin" />
                 : <Trash2 className="size-4" />}
             </button>
-            {projects.isError && <span className="text-xs font-bold text-red-600">保存一覧エラー</span>}
+            {/* 一覧の取得はretry: falseなので、失敗すると古い内容が残り続ける。
+                画面から取り直せる導線を置く。 */}
+            {projects.isError && (
+              <span className="flex items-center gap-1 text-xs font-bold text-red-600">
+                保存一覧エラー
+                <button
+                  type="button"
+                  onClick={() => void projects.refetch()}
+                  disabled={projects.isFetching || busy}
+                  className="min-h-10 rounded-xl px-2 font-bold text-red-700 underline transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {projects.isFetching ? "再取得中…" : "再試行"}
+                </button>
+              </span>
+            )}
           </div>
 
           {/* 削除は取り消せないため、押した場所の近くでもう一度確かめる。
