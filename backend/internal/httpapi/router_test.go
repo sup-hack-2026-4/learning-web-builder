@@ -45,6 +45,7 @@ type stubProjectRepository struct {
 	qualityInputs []projectpkg.QualityResultInput
 	quality       []projectpkg.QualityResult
 	err           error
+	deleted       bool
 	ownerID       string
 	projectID     string
 	model         site.Model
@@ -72,6 +73,13 @@ func (repository *stubProjectRepository) Get(_ context.Context, ownerID, project
 func (repository *stubProjectRepository) List(_ context.Context, ownerID string) ([]projectpkg.Record, error) {
 	repository.ownerID = ownerID
 	return repository.records, repository.err
+}
+
+func (repository *stubProjectRepository) Delete(_ context.Context, ownerID, projectID string) error {
+	repository.ownerID = ownerID
+	repository.projectID = projectID
+	repository.deleted = true
+	return repository.err
 }
 
 func (repository *stubProjectRepository) SaveQualityResults(
@@ -412,6 +420,90 @@ func TestGetProjectReturnsNotFoundForOtherOwner(t *testing.T) {
 	}
 	if repository.ownerID != "user_456" || repository.projectID != projectID {
 		t.Fatalf("expected owner-scoped lookup, got owner=%q project=%q", repository.ownerID, repository.projectID)
+	}
+}
+
+func TestDeleteProjectRemovesOwnersProject(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	repository := &stubProjectRepository{}
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+projectID, nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", response.Code, response.Body.String())
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("expected empty body, got %s", response.Body.String())
+	}
+	if !repository.deleted || repository.ownerID != "user_123" || repository.projectID != projectID {
+		t.Fatalf("expected owner-scoped delete, got deleted=%v owner=%q project=%q", repository.deleted, repository.ownerID, repository.projectID)
+	}
+}
+
+func TestDeleteProjectReturnsNotFoundForOtherOwner(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	repository := &stubProjectRepository{err: projectpkg.ErrNotFound}
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+projectID, nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_456"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.ownerID != "user_456" || repository.projectID != projectID {
+		t.Fatalf("expected owner-scoped delete, got owner=%q project=%q", repository.ownerID, repository.projectID)
+	}
+}
+
+func TestDeleteProjectRejectsNonUUID(t *testing.T) {
+	repository := &stubProjectRepository{}
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/not-a-uuid", nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.deleted {
+		t.Fatal("expected invalid project ID not to reach repository")
+	}
+}
+
+func TestDeleteProjectRequiresAuthentication(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	repository := &stubProjectRepository{}
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+projectID, nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{Projects: repository}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.deleted {
+		t.Fatal("expected unauthenticated delete not to reach repository")
+	}
+}
+
+func TestDeleteProjectReturnsUnavailableWithoutDatabase(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+projectID, nil)
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", response.Code, response.Body.String())
 	}
 }
 

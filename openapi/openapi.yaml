@@ -230,6 +230,33 @@ paths:
           description: Project was not found for the authenticated owner
         "503":
           description: Project persistence is not configured
+    delete:
+      operationId: deleteProject
+      description: >-
+        Deletes the project and, through ON DELETE CASCADE, its learning notes,
+        quality results, and AI usage events.
+      security:
+        - clerkBearer: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Project was deleted
+        "400":
+          description: Invalid project ID
+        "401":
+          description: Authentication is required
+        "404":
+          description: Project was not found for the authenticated owner
+        "500":
+          description: Project could not be deleted
+        "503":
+          description: Project persistence is not configured
   /projects/{projectId}/quality-results:
     get:
       operationId: listQualityResults
