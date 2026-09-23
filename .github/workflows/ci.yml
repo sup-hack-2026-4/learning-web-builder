@@ -35,6 +35,12 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      # 仕様書が壊れるとコード生成やモックがすべて失敗するため、最初に検査する。
+      - name: OpenAPI仕様書をパースできるか検証する
+        working-directory: .
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 -c "import yaml, io; yaml.safe_load(io.open('openapi/openapi.yaml', encoding='utf-8'))"
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
