@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test("題材を入力し、静的フォールバックでサイトを生成できる", async ({ page }) => {
   await page.goto("/");
@@ -278,11 +278,79 @@ test("モバイルできっかけの操作が別の表示に隠れていたら�
   await page.keyboard.press("Enter");
   await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
 
-  // 生成ボタンは「題材・メモ」の中にあり、プレビューへ切り替えると見えなくなる。
+  // 戻り先の生成ボタンは開始時に記録されるが、「題材・メモ」の中にあり、プレビューへ切り替えると見えなくなる。
   await page.getByRole("tab", { name: "プレビュー" }).click();
   await page.getByRole("button", { name: "通知を閉じる" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("button", { name: "コードを隠す" })).toBeFocused();
+});
+
+// 生成の応答を止めておき、結果が遅れて届く通知でも戻り先が開始時の操作になることを確かめる。
+async function holdGeneration(page: Page) {
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/generate", async (route) => {
+    await released;
+    // APIを使えない扱いにして、静的サンプルへのフォールバックで完了させる。
+    await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+  });
+  return release;
+}
+
+test("結果が遅れて届く通知を閉じると、操作を始めた生成ボタンへフォーカスが戻る", async ({ page }) => {
+  await page.goto("/");
+  const release = await holdGeneration(page);
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  const generateButton = page.getByRole("button", { name: "たたき台を生成" });
+  await generateButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+
+  release();
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(generateButton).toBeFocused();
+});
+
+test("処理中に閉じるボタンへフォーカスを移していても、閉じると生成ボタンへ戻る", async ({ page }) => {
+  await page.goto("/");
+  const release = await holdGeneration(page);
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  const generateButton = page.getByRole("button", { name: "たたき台を生成" });
+  await generateButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+
+  // 完了の瞬間にフォーカスが最初の案内の閉じるボタンにあっても、それを戻り先にしない。
+  const closeButton = page.getByRole("button", { name: "通知を閉じる" });
+  await closeButton.focus();
+  release();
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(closeButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(generateButton).toBeFocused();
+});
+
+test("マウスで通知を閉じても、読んでいた位置からスクロールしない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  const recordButton = page.getByRole("button", { name: "デザイン変更の理由を記録" });
+  await recordButton.click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+
+  // ページの先頭へ戻って読み直し、記録ボタンが画面の下へ外れた状態で閉じる。
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(recordButton).not.toBeInViewport();
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeHidden();
+  await expect(recordButton).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
 });
 
 // 読み上げ環境は、中身が変わる前からあるライブリージョンの更新しか読み上げない。

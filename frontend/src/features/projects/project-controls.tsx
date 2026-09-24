@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cloud, LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { NoticeTone } from "@/features/notice/notice";
+import { captureFocusOrigin, type NoticeTone } from "@/features/notice/notice";
 import type { SiteModel } from "@/features/site-model/schema";
 import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
 
@@ -13,7 +13,7 @@ type ProjectControlsProps = {
   currentProjectId: string | null;
   onProjectChange: (projectId: string | null) => void;
   onLoad: (site: SiteModel) => void;
-  onNotice: (message: string, tone?: NoticeTone) => void;
+  onNotice: (message: string, tone?: NoticeTone, returnFocusTo?: HTMLElement | null) => void;
 };
 
 export function ProjectControls(props: ProjectControlsProps) {
@@ -45,29 +45,30 @@ function ClerkProjectControls({
     enabled: isSignedIn === true,
     retry: false,
   });
-  const save = useMutation({
+  // 結果は遅れて届くため、通知を閉じたときの戻り先は操作を始めた時点の要素を渡す。
+  const save = useMutation<Project, Error, HTMLElement | null>({
     mutationFn: () => saveProject(site, getToken, currentProjectId),
-    onSuccess: async (project) => {
+    onSuccess: async (project, returnFocusTo) => {
       setConfirmingDelete(false);
       onProjectChange(project.id);
       await queryClient.invalidateQueries({ queryKey: ["projects", userId] });
-      onNotice(currentProjectId ? "プロジェクトを更新しました。" : "プロジェクトを保存しました。");
+      onNotice(currentProjectId ? "プロジェクトを更新しました。" : "プロジェクトを保存しました。", "status", returnFocusTo);
     },
-    onError: (error: Error) => onNotice(error.message, "error"),
+    onError: (error: Error, returnFocusTo) => onNotice(error.message, "error", returnFocusTo),
   });
   const load = useMutation({
-    mutationFn: (projectId: string) => getProject(projectId, getToken),
-    onSuccess: (project) => {
+    mutationFn: ({ projectId }: { projectId: string; returnFocusTo: HTMLElement | null }) => getProject(projectId, getToken),
+    onSuccess: (project, { returnFocusTo }) => {
       onProjectChange(project.id);
       onLoad(project.site);
-      onNotice("保存済みプロジェクトを読み込みました。");
+      onNotice("保存済みプロジェクトを読み込みました。", "status", returnFocusTo);
     },
-    onError: (error: Error) => onNotice(error.message, "error"),
+    onError: (error: Error, { returnFocusTo }) => onNotice(error.message, "error", returnFocusTo),
   });
 
   const remove = useMutation({
-    mutationFn: (projectId: string) => deleteProject(projectId, getToken),
-    onSuccess: async (_deleted, projectId) => {
+    mutationFn: ({ projectId }: { projectId: string; returnFocusTo: HTMLElement | null }) => deleteProject(projectId, getToken),
+    onSuccess: async (_deleted, { projectId, returnFocusTo }) => {
       setConfirmingDelete(false);
       onProjectChange(null);
       // 再取得を待つ前に、消したものを手元の一覧から除く。invalidateQueriesだけだと
@@ -77,11 +78,11 @@ function ClerkProjectControls({
         (previous) => previous?.filter((project) => project.id !== projectId),
       );
       await queryClient.invalidateQueries({ queryKey: ["projects", userId] });
-      onNotice("プロジェクトを削除しました。次回の保存は新しいプロジェクトとして作成します。");
+      onNotice("プロジェクトを削除しました。次回の保存は新しいプロジェクトとして作成します。", "status", returnFocusTo);
     },
-    onError: (error: Error) => {
+    onError: (error: Error, { returnFocusTo }) => {
       setConfirmingDelete(false);
-      onNotice(error.message, "error");
+      onNotice(error.message, "error", returnFocusTo);
     },
   });
 
@@ -95,7 +96,7 @@ function ClerkProjectControls({
       onNotice("次回の保存は新しいプロジェクトとして作成します。");
       return;
     }
-    load.mutate(projectId);
+    load.mutate({ projectId, returnFocusTo: captureFocusOrigin() });
   };
 
   return (
@@ -124,7 +125,7 @@ function ClerkProjectControls({
             <Button
               variant="secondary"
               disabled={busy || projects.isError}
-              onClick={() => save.mutate()}
+              onClick={() => save.mutate(captureFocusOrigin())}
             >
               {save.isPending || load.isPending
                 ? <LoaderCircle className="mr-2 size-4 animate-spin" />
@@ -193,7 +194,7 @@ function ClerkProjectControls({
                   variant="ghost"
                   className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-100"
                   disabled={busy}
-                  onClick={() => remove.mutate(currentProjectId)}
+                  onClick={() => remove.mutate({ projectId: currentProjectId, returnFocusTo: captureFocusOrigin() })}
                 >
                   {remove.isPending ? "削除中…" : "削除する"}
                 </Button>

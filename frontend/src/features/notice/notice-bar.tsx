@@ -1,5 +1,5 @@
 import { CircleAlert, Info, X } from "lucide-react";
-import { useRef } from "react";
+import { useRef, type MouseEvent } from "react";
 import { Button } from "@/components/ui/button";
 import type { Notice } from "@/features/notice/notice";
 
@@ -9,22 +9,37 @@ const focusableSelector = [
   "input:not([disabled]):not([type='hidden'])",
   "select:not([disabled])",
   "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
+  "[tabindex]",
 ].join(",");
 
-// display:none の祖先を持つ要素（モバイルで非表示の表示など）は矩形を持たない。
-const isVisible = (element: HTMLElement) => element.getClientRects().length > 0;
+// 見えていて、実際に操作できる要素か。
+// 矩形の有無だけでは、sr-only で潰された要素（画像選択のファイル入力など）や
+// visibility:hidden・inert・aria-hidden の中の要素まで候補に入ってしまう。
+function isPerceivable(element: HTMLElement): boolean {
+  if (!element.isConnected || element.closest("[inert], [aria-hidden='true']")) return false;
+  // display:none と visibility:hidden を、祖先の指定も含めて除く。
+  if (!element.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true })) return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 1 && rect.height > 1;
+}
 
-const canReceiveFocus = (element: HTMLElement) => element.isConnected && isVisible(element) && element.matches(focusableSelector);
+// フォーカスできたかは、実際に移ったかで確かめる。無効化などで移らなければ次の候補へ進む。
+function tryFocus(element: HTMLElement, preventScroll: boolean): boolean {
+  element.focus({ preventScroll });
+  return document.activeElement === element;
+}
 
-// 通知の直後にあって、見えている最初の操作要素。Tabで次に進む先と同じになる。
-function nextFocusableAfter(container: HTMLElement): HTMLElement | null {
+// 閉じるボタンは押すと消えるため、見えていて意味のある要素へフォーカスを移す。
+// 通知のきっかけになった操作へ戻せればそこへ。戻せない（最初の案内、別の表示へ切り替えた、
+// ボタンが押せなくなった）ときは、通知の直後にあるTab順の最初の操作要素へ進める。
+// 正のtabindexは使っていないため、DOMの順序がそのままTabの順序になる。
+function focusAfterDismiss(container: HTMLElement, origin: HTMLElement | null, preventScroll: boolean) {
+  if (origin && !container.contains(origin) && isPerceivable(origin) && tryFocus(origin, preventScroll)) return;
   for (const element of document.querySelectorAll<HTMLElement>(focusableSelector)) {
-    if (container.contains(element)) continue;
+    if (element.tabIndex < 0 || container.contains(element)) continue;
     if (!(container.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-    if (isVisible(element)) return element;
+    if (isPerceivable(element) && tryFocus(element, preventScroll)) return;
   }
-  return null;
 }
 
 type NoticeBarProps = {
@@ -38,14 +53,13 @@ type NoticeBarProps = {
 export function NoticeBar({ notice, onDismiss }: NoticeBarProps) {
   const isError = notice?.tone === "error";
   const containerRef = useRef<HTMLDivElement>(null);
-  // 閉じるボタンは押すと消えるため、見えていて意味のある要素へフォーカスを移す。
-  // 通知のきっかけになった操作へ戻せればそこへ。戻せない（最初の案内、別の表示へ切り替えた、
-  // ボタンが押せなくなった）ときは、通知の直後にある最初の操作要素へ進める。
-  const dismiss = () => {
-    const origin = notice?.returnFocusTo;
+  const dismiss = (event: MouseEvent<HTMLButtonElement>) => {
     const container = containerRef.current;
-    const target = origin && canReceiveFocus(origin) ? origin : container ? nextFocusableAfter(container) : null;
-    target?.focus();
+    if (container) {
+      // マウスやタップで閉じたときは、読んでいた位置からスクロールさせない。
+      // キーボードで閉じたとき（detail が 0）は、移った先のフォーカスが見えるようにスクロールを許す。
+      focusAfterDismiss(container, notice?.returnFocusTo ?? null, event.detail > 0);
+    }
     onDismiss();
   };
   return (

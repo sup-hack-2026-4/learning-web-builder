@@ -113,17 +113,23 @@ export default function App() {
   const [reason, setReason] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [loadedProject, setLoadedProject] = useState(false);
+  // 最初の案内は操作の結果ではなく、画面の説明として最初から置いておく。
+  // 初回の描画から文言が入っているため、ライブ通知としては読み上げられない（通常の内容として読める）。
   const [notice, setNotice] = useState<Notice | null>({
     id: 0,
     message: "静的サンプルで開始しています。題材を入力して生成できます。",
     tone: "status",
     returnFocusTo: null,
   });
-  const showNotice = useCallback((message: string, tone: NoticeTone = "status") => {
-    // 更新関数の中は描画時に遅れて呼ばれることがあるため、フォーカス元は先に取っておく。
-    const returnFocusTo = captureFocusOrigin();
-    setNotice((current) => ({ id: (current?.id ?? 0) + 1, message, tone, returnFocusTo }));
-  }, []);
+  // 閉じたときの戻り先は、同期の操作ならいまのフォーカス元でよい。
+  // 生成や保存のように結果が遅れて届く操作は、完了時にはフォーカスが別の場所
+  // （通知の閉じるボタンなど）へ移っていることがあるため、開始時に取った要素を渡す。
+  const showNotice = useCallback(
+    (message: string, tone: NoticeTone = "status", returnFocusTo: HTMLElement | null = captureFocusOrigin()) => {
+      setNotice((current) => ({ id: (current?.id ?? 0) + 1, message, tone, returnFocusTo }));
+    },
+    [],
+  );
   // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
   const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
   // 右カラムは縦に積むと画面へ収まらないため、常に1パネルだけ表示する。
@@ -393,14 +399,14 @@ export default function App() {
   };
 
   const generation = useMutation({
-    mutationFn: async ({ topic: nextTopic, concept }: { topic: string; concept?: ConceptDraft }) => {
+    mutationFn: async ({ topic: nextTopic, concept }: { topic: string; concept?: ConceptDraft; returnFocusTo: HTMLElement | null }) => {
       try {
         return { ...await generateSite(nextTopic, concept), concept };
       } catch {
         return { site: createSampleSite(nextTopic), provider: "static-sample" as const, concept };
       }
     },
-    onSuccess: ({ site: generatedSite, provider, concept }) => {
+    onSuccess: ({ site: generatedSite, provider, concept }, { returnFocusTo }) => {
       const viaConcept = concept !== undefined;
       setSite(generatedSite, provider, viaConcept ? "コンセプト相談と、サイト構成・仮文章の生成" : undefined);
       // サイトが差し替わると、記録前の変更内容は新しいサイトに対して意味を持たない。
@@ -413,14 +419,18 @@ export default function App() {
       if (concept) {
         addNote("コンセプト", conceptSummary(concept));
       }
-      showNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
+      showNotice(
+        provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。",
+        "status",
+        returnFocusTo,
+      );
     },
   });
 
   const submitTopic = (event: FormEvent) => {
     event.preventDefault();
     if (!topic.trim()) return;
-    generation.mutate({ topic: topic.trim() });
+    generation.mutate({ topic: topic.trim(), returnFocusTo: captureFocusOrigin() });
   };
 
   // 相談で固めたコンセプトからたたき台を作る。
@@ -429,7 +439,7 @@ export default function App() {
     const nextTopic = draft.topic.trim();
     if (!nextTopic) return;
     setTopic(nextTopic);
-    generation.mutate({ topic: nextTopic, concept: draft });
+    generation.mutate({ topic: nextTopic, concept: draft, returnFocusTo: captureFocusOrigin() });
   };
 
   // 色・余白・フォントの変更はプレビューへ即時反映するだけで、メモは残さない。
