@@ -569,6 +569,36 @@ func TestSaveQualityResultsRejectsDuplicateCheckKeys(t *testing.T) {
 	}
 }
 
+func TestSaveQualityResultsRejectsMissingPassed(t *testing.T) {
+	projectID := "11111111-1111-1111-1111-111111111111"
+	bodies := map[string]string{
+		"omitted": `{"results":[{"checkKey":"alt","detail":"確認"}]}`,
+		"null":    `{"results":[{"checkKey":"alt","passed":null,"detail":"確認"}]}`,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			repository := &stubProjectRepository{}
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/projects/"+projectID+"/quality-results",
+				strings.NewReader(body),
+			)
+			response := httptest.NewRecorder()
+			NewRouter(Config{
+				Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+				Projects:      repository,
+			}).ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+			}
+			if len(repository.qualityInputs) != 0 {
+				t.Fatal("expected result without passed not to reach repository")
+			}
+		})
+	}
+}
+
 func TestListQualityResultsReturnsNotFoundForOtherOwner(t *testing.T) {
 	projectID := "11111111-1111-1111-1111-111111111111"
 	repository := &stubProjectRepository{err: projectpkg.ErrNotFound}
