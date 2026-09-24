@@ -236,13 +236,55 @@ test("通知を閉じても、次の操作結果はまた表示される", async
   await page.goto("/");
   await expect(page.getByText("静的サンプルで開始しています。")).toBeVisible();
 
-  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  // キーボードで閉じる。押したボタンが消えても、フォーカスが行き場を失わないこと。
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByText("静的サンプルで開始しています。")).toBeHidden();
   await expect(page.getByRole("button", { name: "通知を閉じる" })).toBeHidden();
+  await expect(page.getByTestId("notice-bar")).toBeFocused();
+
+  // 次のTabは、通知の直後にある作業エリアへ進む（ヘッダーへ戻ったり、先頭からやり直したりしない）。
+  await page.keyboard.press("Tab");
+  const focusedOutsideHeader = await page.evaluate(() => {
+    const active = document.activeElement;
+    return active !== null && active !== document.body && active.closest("header") === null;
+  });
+  expect(focusedOutsideHeader).toBe(true);
 
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
   await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+});
+
+// 読み上げ環境は、中身が変わる前からあるライブリージョンの更新しか読み上げない。
+// そのため、閉じている間も領域が残ること、同じ文言でも中身が差し替わることを確かめる。
+test("通知のライブリージョンは常に残り、同じ文言や種類の切り替えでも中身が差し替わる", async ({ page }) => {
+  await page.goto("/");
+  const statusRegion = page.getByTestId("notice-bar").getByRole("status");
+  const alertRegion = page.getByTestId("notice-bar").getByRole("alert");
+
+  // 閉じている間も、両方の領域がDOMに残る。
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(statusRegion).toBeAttached();
+  await expect(alertRegion).toBeAttached();
+  await expect(statusRegion).toHaveText("");
+  await expect(alertRegion).toHaveText("");
+
+  // 同じ失敗を2回続けても、文言の要素が差し替わる（読み上げが再び起きる）。
+  const message = "先に色・余白・フォントを変更してください。";
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(alertRegion).toHaveText(message);
+  const firstMessage = await alertRegion.locator("span").elementHandle();
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(alertRegion).toHaveText(message);
+  expect(await firstMessage?.evaluate((element) => element.isConnected)).toBe(false);
+
+  // 失敗のあとに成功すると、alert は空になり、status に文言が入る。
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(statusRegion).toContainText("デザイン変更の内容と理由を学習メモへ記録しました。");
+  await expect(alertRegion).toHaveText("");
 });
 
 test("モバイルで選択中タブを再クリックしても選択状態と表示が食い違わない", async ({ page }) => {

@@ -1,4 +1,5 @@
 import { CircleAlert, Info, X } from "lucide-react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 
 // status は成功・進行中の知らせ、error は操作が失敗した・止めたことの知らせ。
@@ -21,9 +22,21 @@ type NoticeBarProps = {
 // status と alert の2つを常に置いておき、通知の種類に応じて片方へ文言を入れる。
 export function NoticeBar({ notice, onDismiss }: NoticeBarProps) {
   const isError = notice?.tone === "error";
+  const containerRef = useRef<HTMLDivElement>(null);
+  // 閉じるボタンは押すと消えるため、そのままではフォーカスの行き先がなくなる。
+  // 閉じた後も同じ位置に残る外枠へ移し、次のTabで通知の直後の要素へ進めるようにする。
+  const dismiss = () => {
+    containerRef.current?.focus();
+    onDismiss();
+  };
   return (
     // 閉じている間は見た目を消すが、ライブリージョンは残すため sr-only にする。
-    <div className={notice ? "sticky top-0 z-20 px-3 pt-3 xl:px-4" : "sr-only"}>
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      data-testid="notice-bar"
+      className={`outline-none ${notice ? "sticky top-0 z-20 px-3 pt-3 xl:px-4" : "sr-only"}`}
+    >
       <div
         className={
           notice
@@ -39,7 +52,7 @@ export function NoticeBar({ notice, onDismiss }: NoticeBarProps) {
           <p role="alert">{notice?.tone === "error" && <span key={notice.id}>{notice.message}</span>}</p>
         </div>
         {notice && (
-          <Button variant="ghost" aria-label="通知を閉じる" className="-my-2 -mr-2 min-h-10 min-w-10 shrink-0 px-2 py-2" onClick={onDismiss}>
+          <Button variant="ghost" aria-label="通知を閉じる" className="-my-2 -mr-2 min-h-10 min-w-10 shrink-0 px-2 py-2" onClick={dismiss}>
             <X aria-hidden="true" className="size-4" />
           </Button>
         )}
