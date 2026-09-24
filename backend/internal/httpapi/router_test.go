@@ -365,48 +365,107 @@ func TestCreateProjectRejectsInvalidSite(t *testing.T) {
 func TestCreateProjectRejectsMissingRequiredSiteFields(t *testing.T) {
 	// これらの項目はゼロ値（空文字・false）も有効な値のため、site.Validateでは
 	// 省略を見分けられない。見逃すと、visibleの省略でセクションが黙って非表示になる。
-	firstSection := func(body map[string]any) map[string]any {
-		return body["site"].(map[string]any)["sections"].([]any)[0].(map[string]any)
+	siteOf := func(body map[string]any) map[string]any {
+		return body["site"].(map[string]any)
 	}
-	cases := map[string]func(body map[string]any){
-		"tagline omitted":  func(body map[string]any) { delete(body["site"].(map[string]any), "tagline") },
-		"tagline null":     func(body map[string]any) { body["site"].(map[string]any)["tagline"] = nil },
-		"body omitted":     func(body map[string]any) { delete(firstSection(body), "body") },
-		"imageAlt omitted": func(body map[string]any) { delete(firstSection(body), "imageAlt") },
-		"visible omitted":  func(body map[string]any) { delete(firstSection(body), "visible") },
-		"visible null":     func(body map[string]any) { firstSection(body)["visible"] = nil },
+	sectionOf := func(body map[string]any, last bool) map[string]any {
+		sections := siteOf(body)["sections"].([]any)
+		index := 0
+		if last {
+			index = len(sections) - 1
+		}
+		return sections[index].(map[string]any)
 	}
-	for name, mutate := range cases {
-		t.Run(name, func(t *testing.T) {
-			encoded, err := json.Marshal(map[string]any{"site": site.Sample("学校の写真部")})
-			if err != nil {
-				t.Fatalf("marshal project request: %v", err)
-			}
-			var body map[string]any
-			if err := json.Unmarshal(encoded, &body); err != nil {
-				t.Fatalf("unmarshal project request: %v", err)
-			}
-			mutate(body)
-			mutated, err := json.Marshal(body)
-			if err != nil {
-				t.Fatalf("marshal mutated request: %v", err)
-			}
+	type missingCase struct {
+		name   string
+		mutate func(body map[string]any)
+	}
+	cases := []missingCase{
+		{"tagline omitted", func(body map[string]any) { delete(siteOf(body), "tagline") }},
+		{"tagline null", func(body map[string]any) { siteOf(body)["tagline"] = nil }},
+	}
+	// 検査が先頭のセクションだけで終わっていないことも確かめるため、末尾のセクションでも試す。
+	for _, position := range []struct {
+		name string
+		last bool
+	}{{"first section", false}, {"last section", true}} {
+		for _, field := range []string{"body", "imageAlt", "visible"} {
+			cases = append(cases,
+				missingCase{position.name + " " + field + " omitted", func(body map[string]any) {
+					delete(sectionOf(body, position.last), field)
+				}},
+				missingCase{position.name + " " + field + " null", func(body map[string]any) {
+					sectionOf(body, position.last)[field] = nil
+				}},
+			)
+		}
+	}
+	// 作成と更新は同じ検証を通るが、経路ごとに守られていることを確かめる。
+	targets := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/v1/projects"},
+		{http.MethodPut, "/api/v1/projects/11111111-1111-1111-1111-111111111111"},
+	}
+	for _, target := range targets {
+		for _, testCase := range cases {
+			t.Run(target.method+" "+testCase.name, func(t *testing.T) {
+				body := projectRequestMap(t, site.Sample("学校の写真部"))
+				testCase.mutate(body)
+				mutated, err := json.Marshal(body)
+				if err != nil {
+					t.Fatalf("marshal mutated request: %v", err)
+				}
 
-			repository := &stubProjectRepository{}
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(string(mutated)))
-			response := httptest.NewRecorder()
-			NewRouter(Config{
-				Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
-				Projects:      repository,
-			}).ServeHTTP(response, request)
+				repository := &stubProjectRepository{}
+				request := httptest.NewRequest(target.method, target.path, strings.NewReader(string(mutated)))
+				response := httptest.NewRecorder()
+				NewRouter(Config{
+					Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+					Projects:      repository,
+				}).ServeHTTP(response, request)
 
-			if response.Code != http.StatusBadRequest {
-				t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
-			}
-			if repository.ownerID != "" {
-				t.Fatal("expected site with missing fields not to reach repository")
-			}
-		})
+				if response.Code != http.StatusBadRequest {
+					t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+				}
+				if repository.ownerID != "" {
+					t.Fatal("expected site with missing fields not to reach repository")
+				}
+			})
+		}
+	}
+}
+
+func TestCreateProjectAcceptsZeroValueRequiredFields(t *testing.T) {
+	// 必須項目の有無を確かめる検査が、空文字やfalseといった
+	// 有効なゼロ値まで拒否していないことを確かめる。
+	model := site.Sample("学校の写真部")
+	model.Tagline = ""
+	model.Sections[0].Body = ""
+	model.Sections[0].ImageAlt = ""
+	model.Sections[0].Visible = false
+	repository := &stubProjectRepository{
+		record: projectpkg.Record{
+			ID:      "11111111-1111-1111-1111-111111111111",
+			OwnerID: "user_123",
+			Site:    model,
+			Version: 1,
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", projectRequestBody(t, model))
+	response := httptest.NewRecorder()
+	NewRouter(Config{
+		Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+		Projects:      repository,
+	}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	saved := repository.model
+	if saved.Tagline != "" || saved.Sections[0].Body != "" || saved.Sections[0].ImageAlt != "" || saved.Sections[0].Visible {
+		t.Fatalf("expected zero values to reach repository unchanged, got %#v", saved)
 	}
 }
 
@@ -701,4 +760,18 @@ func projectRequestBody(t *testing.T, model site.Model) *strings.Reader {
 		t.Fatalf("marshal project request: %v", err)
 	}
 	return strings.NewReader(string(encoded))
+}
+
+// projectRequestMap は保存リクエストを、項目を消したりnullにしたりできる形で返す。
+func projectRequestMap(t *testing.T, model site.Model) map[string]any {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]any{"site": model})
+	if err != nil {
+		t.Fatalf("marshal project request: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatalf("unmarshal project request: %v", err)
+	}
+	return body
 }
