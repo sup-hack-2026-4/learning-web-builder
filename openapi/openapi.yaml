@@ -71,6 +71,8 @@ paths:
           description: Invalid input
         "429":
           description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
+        "500":
+          description: Site generation failed
         "503":
           description: 同時実行の上限に達した（Retry-Afterに待ち時間を返す）
   /concept/chat:
@@ -146,6 +148,8 @@ paths:
                 $ref: "#/components/schemas/ProjectList"
         "401":
           description: Authentication is required
+        "500":
+          description: Projects could not be loaded
         "503":
           description: Project persistence is not configured
     post:
@@ -169,6 +173,8 @@ paths:
           description: Invalid request or SiteModel
         "401":
           description: Authentication is required
+        "500":
+          description: Project could not be saved
         "503":
           description: Project persistence is not configured
   /projects/{projectId}:
@@ -196,6 +202,8 @@ paths:
           description: Authentication is required
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Project could not be loaded
         "503":
           description: Project persistence is not configured
     put:
@@ -228,6 +236,8 @@ paths:
           description: Authentication is required
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Project could not be saved
         "503":
           description: Project persistence is not configured
     delete:
@@ -282,6 +292,8 @@ paths:
           description: Authentication is required
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Quality results could not be loaded
         "503":
           description: Project persistence is not configured
     post:
@@ -314,6 +326,8 @@ paths:
           description: Authentication is required
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Quality results could not be saved
         "503":
           description: Project persistence is not configured
 components:
@@ -471,6 +485,6 @@ components:
                     type: string
                     pattern: "^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$"
                     maxLength: 204823
-                  fileName: { type: string, pattern: "^[a-z0-9-]{1,40}\.jpg$" }
+                  fileName: { type: string, pattern: '^[a-z0-9-]{1,40}\.jpg$' }
               visible: { type: boolean }
 
