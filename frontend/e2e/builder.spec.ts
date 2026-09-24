@@ -211,6 +211,46 @@ test("デスクトップでタブを再クリックしてもパネルは畳ま�
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
 });
 
+// 表示中の見出しの階層を文書順に返す。読み上げ用に見た目だけ隠した見出し（sr-only）も含める。
+const visibleHeadingLevels = (page: Page) =>
+  page.locator("h1, h2, h3, h4, h5, h6").evaluateAll((headings) =>
+    headings
+      .filter((heading) => heading.checkVisibility())
+      .map((heading) => Number(heading.tagName.slice(1))),
+  );
+
+const expectNoSkippedHeadingLevel = (levels: number[]) => {
+  expect(levels[0]).toBe(1);
+  levels.slice(1).forEach((level, index) => {
+    expect(level, `見出しの並び ${levels.join(" → ")}`).toBeLessThanOrEqual(levels[index] + 1);
+  });
+};
+
+test("領域はランドマークのまま、下部バーのタブが指すタブパネルを内側に持つ", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await expect(page.getByRole("main").getByRole("tabpanel", { name: "プレビュー" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "題材・メモ" }).getByRole("tabpanel", { name: "題材・メモ" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "調整と学習" }).getByRole("tabpanel", { name: "調整と学習" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "表示の切り替え" }).getByRole("tablist")).toBeVisible();
+});
+
+test("どの表示に切り替えても見出しの階層が飛ばない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  expectNoSkippedHeadingLevel(await visibleHeadingLevels(page));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const view of ["プレビュー", "題材・メモ", "調整と学習"]) {
+    await page.getByRole("tab", { name: view }).click();
+    await expect(page.getByRole("tab", { name: view })).toHaveAttribute("aria-selected", "true");
+    expectNoSkippedHeadingLevel(await visibleHeadingLevels(page));
+  }
+});
+
 test("モバイルでは3つの画面を下部バーで切り替えられる", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
