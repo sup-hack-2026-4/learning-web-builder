@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -361,6 +362,54 @@ func TestCreateProjectRejectsInvalidSite(t *testing.T) {
 	}
 }
 
+func TestCreateProjectRejectsMissingRequiredSiteFields(t *testing.T) {
+	// これらの項目はゼロ値（空文字・false）も有効な値のため、site.Validateでは
+	// 省略を見分けられない。見逃すと、visibleの省略でセクションが黙って非表示になる。
+	firstSection := func(body map[string]any) map[string]any {
+		return body["site"].(map[string]any)["sections"].([]any)[0].(map[string]any)
+	}
+	cases := map[string]func(body map[string]any){
+		"tagline omitted":  func(body map[string]any) { delete(body["site"].(map[string]any), "tagline") },
+		"tagline null":     func(body map[string]any) { body["site"].(map[string]any)["tagline"] = nil },
+		"body omitted":     func(body map[string]any) { delete(firstSection(body), "body") },
+		"imageAlt omitted": func(body map[string]any) { delete(firstSection(body), "imageAlt") },
+		"visible omitted":  func(body map[string]any) { delete(firstSection(body), "visible") },
+		"visible null":     func(body map[string]any) { firstSection(body)["visible"] = nil },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(map[string]any{"site": site.Sample("学校の写真部")})
+			if err != nil {
+				t.Fatalf("marshal project request: %v", err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(encoded, &body); err != nil {
+				t.Fatalf("unmarshal project request: %v", err)
+			}
+			mutate(body)
+			mutated, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("marshal mutated request: %v", err)
+			}
+
+			repository := &stubProjectRepository{}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(string(mutated)))
+			response := httptest.NewRecorder()
+			NewRouter(Config{
+				Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+				Projects:      repository,
+			}).ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+			}
+			if repository.ownerID != "" {
+				t.Fatal("expected site with missing fields not to reach repository")
+			}
+		})
+	}
+}
+
 func TestUpdateProjectReturnsNotFoundForOtherOwner(t *testing.T) {
 	projectID := "11111111-1111-1111-1111-111111111111"
 	repository := &stubProjectRepository{err: projectpkg.ErrNotFound}
@@ -566,6 +615,34 @@ func TestSaveQualityResultsRejectsDuplicateCheckKeys(t *testing.T) {
 	}
 	if len(repository.qualityInputs) != 0 {
 		t.Fatal("expected invalid snapshot not to reach repository")
+	}
+}
+
+func TestSaveQualityResultsKeepsPassedValue(t *testing.T) {
+	// passedを*boolで受けるようにしたため、trueとfalseのどちらも
+	// 取り違えず、falseを欠落と誤判定せずに保存先へ渡ることを確かめる。
+	projectID := "11111111-1111-1111-1111-111111111111"
+	for _, passed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("passed=%t", passed), func(t *testing.T) {
+			repository := &stubProjectRepository{}
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/projects/"+projectID+"/quality-results",
+				strings.NewReader(fmt.Sprintf(`{"results":[{"checkKey":"alt","passed":%t,"detail":"確認"}]}`, passed)),
+			)
+			response := httptest.NewRecorder()
+			NewRouter(Config{
+				Authenticator: stubAuthenticator{identity: authn.Identity{UserID: "user_123"}},
+				Projects:      repository,
+			}).ServeHTTP(response, request)
+
+			if response.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
+			}
+			if len(repository.qualityInputs) != 1 || repository.qualityInputs[0].Passed != passed {
+				t.Fatalf("expected passed=%t to reach repository, got %#v", passed, repository.qualityInputs)
+			}
+		})
 	}
 }
 

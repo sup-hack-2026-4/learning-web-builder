@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +18,33 @@ import (
 
 type saveProjectRequest struct {
 	Site site.Model `json:"site"`
+}
+
+// saveProjectPresence は、site.Modelではゼロ値と区別できない必須項目が
+// リクエストに含まれていたかだけを確かめるための型。
+// site.ModelはGeminiの出力や保存済みデータの復元でも使うため、型そのものは変えず、
+// 保存APIの入口でだけ省略とnullを拒否する。
+type saveProjectPresence struct {
+	Site struct {
+		Tagline  *string `json:"tagline"`
+		Sections []struct {
+			Body     *string `json:"body"`
+			ImageAlt *string `json:"imageAlt"`
+			Visible  *bool   `json:"visible"`
+		} `json:"sections"`
+	} `json:"site"`
+}
+
+func (presence saveProjectPresence) hasRequiredFields() bool {
+	if presence.Site.Tagline == nil {
+		return false
+	}
+	for _, section := range presence.Site.Sections {
+		if section.Body == nil || section.ImageAlt == nil || section.Visible == nil {
+			return false
+		}
+	}
+	return true
 }
 
 type projectResponse struct {
@@ -177,8 +205,14 @@ func listProjects(repository project.Repository) http.HandlerFunc {
 
 func decodeSaveProjectRequest(writer http.ResponseWriter, request *http.Request) (saveProjectRequest, bool) {
 	request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
+	// 項目の有無の検査でもう一度読むため、先に本文をまとめて読み込む。
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return saveProjectRequest{}, false
+	}
 	var input saveProjectRequest
-	decoder := json.NewDecoder(request.Body)
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -186,6 +220,11 @@ func decodeSaveProjectRequest(writer http.ResponseWriter, request *http.Request)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return saveProjectRequest{}, false
+	}
+	var presence saveProjectPresence
+	if err := json.Unmarshal(body, &presence); err != nil || !presence.hasRequiredFields() {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "site model is invalid"})
 		return saveProjectRequest{}, false
 	}
 	if err := site.Validate(input.Site); err != nil {
