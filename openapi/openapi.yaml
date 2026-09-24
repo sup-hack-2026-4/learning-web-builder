@@ -43,6 +43,9 @@ paths:
   /generate:
     post:
       operationId: generateSite
+      security:
+        - {}
+        - clerkBearer: []
       requestBody:
         required: true
         content:
@@ -69,6 +72,8 @@ paths:
                   site: { $ref: "#/components/schemas/SiteModel" }
         "400":
           description: Invalid input
+        "401":
+          description: Invalid or expired authentication token
         "429":
           description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
         "500":
@@ -82,6 +87,9 @@ paths:
       description: >-
         会話履歴はサーバーに保存しない。呼び出す側が毎回まとめて送る。
         Geminiを利用できないときは、静的な質問テンプレートを返して画面を止めない。
+      security:
+        - {}
+        - clerkBearer: []
       requestBody:
         required: true
         content:
@@ -93,6 +101,9 @@ paths:
               properties:
                 messages:
                   type: array
+                  description: >-
+                    userとmodelが交互に並び、末尾は必ずuserの発言にする。
+                    同じroleが続く履歴や、modelの発言で終わる履歴は400になる。
                   minItems: 1
                   maxItems: 24
                   items:
@@ -130,6 +141,8 @@ paths:
                   provider: { type: string, enum: [gemini, static-sample] }
         "400":
           description: Invalid input
+        "401":
+          description: Invalid or expired authentication token
         "429":
           description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
         "503":
@@ -394,6 +407,8 @@ components:
       properties:
         results:
           type: array
+          description: >-
+            checkKeyはresultsの中で重複させない。同じcheckKeyが2件以上あると400になる。
           minItems: 1
           maxItems: 4
           items:
