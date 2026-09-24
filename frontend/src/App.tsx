@@ -17,7 +17,8 @@ import { AuthControls } from "@/features/auth/auth-controls";
 import { clerkConfig } from "@/features/auth/config";
 import { explanationDictionary } from "@/features/explanations/dictionary";
 import { exportProject } from "@/features/export/export-project";
-import { NoticeBar, type Notice, type NoticeTone } from "@/features/notice/notice-bar";
+import { captureFocusOrigin, type Notice, type NoticeTone } from "@/features/notice/notice";
+import { NoticeBar } from "@/features/notice/notice-bar";
 import { ProjectControls } from "@/features/projects/project-controls";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
 import { impactLabels } from "@/features/quality/axe-audit";
@@ -116,9 +117,12 @@ export default function App() {
     id: 0,
     message: "静的サンプルで開始しています。題材を入力して生成できます。",
     tone: "status",
+    returnFocusTo: null,
   });
   const showNotice = useCallback((message: string, tone: NoticeTone = "status") => {
-    setNotice((current) => ({ id: (current?.id ?? 0) + 1, message, tone }));
+    // 更新関数の中は描画時に遅れて呼ばれることがあるため、フォーカス元は先に取っておく。
+    const returnFocusTo = captureFocusOrigin();
+    setNotice((current) => ({ id: (current?.id ?? 0) + 1, message, tone, returnFocusTo }));
   }, []);
   // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
   const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);

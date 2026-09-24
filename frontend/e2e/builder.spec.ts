@@ -236,24 +236,53 @@ test("通知を閉じても、次の操作結果はまた表示される", async
   await page.goto("/");
   await expect(page.getByText("静的サンプルで開始しています。")).toBeVisible();
 
-  // キーボードで閉じる。押したボタンが消えても、フォーカスが行き場を失わないこと。
-  await page.getByRole("button", { name: "通知を閉じる" }).focus();
-  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
   await expect(page.getByText("静的サンプルで開始しています。")).toBeHidden();
   await expect(page.getByRole("button", { name: "通知を閉じる" })).toBeHidden();
-  await expect(page.getByTestId("notice-bar")).toBeFocused();
-
-  // 次のTabは、通知の直後にある作業エリアへ進む（ヘッダーへ戻ったり、先頭からやり直したりしない）。
-  await page.keyboard.press("Tab");
-  const focusedOutsideHeader = await page.evaluate(() => {
-    const active = document.activeElement;
-    return active !== null && active !== document.body && active.closest("header") === null;
-  });
-  expect(focusedOutsideHeader).toBe(true);
 
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
   await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+});
+
+// 閉じるボタンは押すと消えるため、フォーカスを見えていて意味のある要素へ移す。
+test("通知を閉じると、通知のきっかけになった操作へフォーカスが戻る", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  const recordButton = page.getByRole("button", { name: "デザイン変更の理由を記録" });
+  await recordButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeHidden();
+  await expect(recordButton).toBeFocused();
+});
+
+test("きっかけの操作がない通知を閉じると、通知の直後の操作要素へフォーカスが移る", async ({ page }) => {
+  // 最初の案内は操作から出たものではないため、戻す先がない。
+  await page.goto("/");
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  // デスクトップ幅では、通知の直後にある左カラムの折りたたみボタンが最初の操作要素になる。
+  await expect(page.getByRole("button", { name: "題材・メモを畳んでプレビューを広げる" })).toBeFocused();
+});
+
+test("モバイルできっかけの操作が別の表示に隠れていたら、今の表示の操作要素へフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+
+  // 生成ボタンは「題材・メモ」の中にあり、プレビューへ切り替えると見えなくなる。
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "コードを隠す" })).toBeFocused();
 });
 
 // 読み上げ環境は、中身が変わる前からあるライブリージョンの更新しか読み上げない。
@@ -270,7 +299,8 @@ test("通知のライブリージョンは常に残り、同じ文言や種類�
   await expect(statusRegion).toHaveText("");
   await expect(alertRegion).toHaveText("");
 
-  // 同じ失敗を2回続けても、文言の要素が差し替わる（読み上げが再び起きる）。
+  // 同じ失敗を2回続けても、文言の要素が差し替わる。
+  // ここで確かめられるのはDOMの差し替えまでで、実際に読み上げられるかは支援技術での確認が要る。
   const message = "先に色・余白・フォントを変更してください。";
   await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();

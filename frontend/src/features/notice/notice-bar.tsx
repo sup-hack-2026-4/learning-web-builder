@@ -1,16 +1,31 @@
 import { CircleAlert, Info, X } from "lucide-react";
 import { useRef } from "react";
 import { Button } from "@/components/ui/button";
+import type { Notice } from "@/features/notice/notice";
 
-// status は成功・進行中の知らせ、error は操作が失敗した・止めたことの知らせ。
-export type NoticeTone = "status" | "error";
+const focusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled]):not([type='hidden'])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
 
-export type Notice = {
-  // 同じ文言が続いても、読み上げと表示の更新が起きるように毎回変える。
-  id: number;
-  message: string;
-  tone: NoticeTone;
-};
+// display:none の祖先を持つ要素（モバイルで非表示の表示など）は矩形を持たない。
+const isVisible = (element: HTMLElement) => element.getClientRects().length > 0;
+
+const canReceiveFocus = (element: HTMLElement) => element.isConnected && isVisible(element) && element.matches(focusableSelector);
+
+// 通知の直後にあって、見えている最初の操作要素。Tabで次に進む先と同じになる。
+function nextFocusableAfter(container: HTMLElement): HTMLElement | null {
+  for (const element of document.querySelectorAll<HTMLElement>(focusableSelector)) {
+    if (container.contains(element)) continue;
+    if (!(container.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+    if (isVisible(element)) return element;
+  }
+  return null;
+}
 
 type NoticeBarProps = {
   notice: Notice | null;
@@ -23,20 +38,19 @@ type NoticeBarProps = {
 export function NoticeBar({ notice, onDismiss }: NoticeBarProps) {
   const isError = notice?.tone === "error";
   const containerRef = useRef<HTMLDivElement>(null);
-  // 閉じるボタンは押すと消えるため、そのままではフォーカスの行き先がなくなる。
-  // 閉じた後も同じ位置に残る外枠へ移し、次のTabで通知の直後の要素へ進めるようにする。
+  // 閉じるボタンは押すと消えるため、見えていて意味のある要素へフォーカスを移す。
+  // 通知のきっかけになった操作へ戻せればそこへ。戻せない（最初の案内、別の表示へ切り替えた、
+  // ボタンが押せなくなった）ときは、通知の直後にある最初の操作要素へ進める。
   const dismiss = () => {
-    containerRef.current?.focus();
+    const origin = notice?.returnFocusTo;
+    const container = containerRef.current;
+    const target = origin && canReceiveFocus(origin) ? origin : container ? nextFocusableAfter(container) : null;
+    target?.focus();
     onDismiss();
   };
   return (
     // 閉じている間は見た目を消すが、ライブリージョンは残すため sr-only にする。
-    <div
-      ref={containerRef}
-      tabIndex={-1}
-      data-testid="notice-bar"
-      className={`outline-none ${notice ? "sticky top-0 z-20 px-3 pt-3 xl:px-4" : "sr-only"}`}
-    >
+    <div ref={containerRef} data-testid="notice-bar" className={notice ? "sticky top-0 z-20 px-3 pt-3 xl:px-4" : "sr-only"}>
       <div
         className={
           notice

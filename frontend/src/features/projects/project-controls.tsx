@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cloud, LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { NoticeTone } from "@/features/notice/notice-bar";
+import type { NoticeTone } from "@/features/notice/notice";
 import type { SiteModel } from "@/features/site-model/schema";
 import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
 
