@@ -211,6 +211,40 @@ test("モバイルでは3つの画面を下部バーで切り替えられる", a
   await expect(page.getByLabel("紹介サイトの題材")).toBeHidden();
 });
 
+// 通知がプレビューの中にしかないと、モバイルで他の表示を見ている間は結果を確かめられなかった。
+test("モバイルでプレビュー以外を表示していても操作結果の通知が見える", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  const status = page.getByRole("status").filter({ hasText: "静的サンプルを生成しました。" });
+  await expect(status).toBeVisible();
+  await expect(status).toBeInViewport();
+
+  // 操作を止めた知らせは、読み上げ環境でもすぐ伝わるよう alert で出す。
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  const alert = page.getByRole("alert").filter({ hasText: "先に色・余白・フォントを変更してください。" });
+  await expect(alert).toBeVisible();
+  await expect(alert).toBeInViewport();
+});
+
+test("通知を閉じても、次の操作結果はまた表示される", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("静的サンプルで開始しています。")).toBeVisible();
+
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(page.getByText("静的サンプルで開始しています。")).toBeHidden();
+  await expect(page.getByRole("button", { name: "通知を閉じる" })).toBeHidden();
+
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+});
+
 test("モバイルで選択中タブを再クリックしても選択状態と表示が食い違わない", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
@@ -842,7 +876,8 @@ test("扱えない形式の画像は理由を示して受け付けない", async
     buffer: Buffer.from("これは画像ではありません"),
   });
 
-  await expect(page.getByRole("alert")).toContainText("JPEG・PNG・WebPの画像を選んでください。");
+  // 操作結果の通知も読み上げ用の alert 領域を常に持つため、文言で絞り込む。
+  await expect(page.getByRole("alert").filter({ hasText: "JPEG・PNG・WebPの画像を選んでください。" })).toBeVisible();
   await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
 });
 

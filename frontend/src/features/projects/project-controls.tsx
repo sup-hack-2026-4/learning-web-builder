@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cloud, LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import type { NoticeTone } from "@/features/notice/notice-bar";
 import type { SiteModel } from "@/features/site-model/schema";
 import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
 
@@ -12,7 +13,7 @@ type ProjectControlsProps = {
   currentProjectId: string | null;
   onProjectChange: (projectId: string | null) => void;
   onLoad: (site: SiteModel) => void;
-  onNotice: (notice: string) => void;
+  onNotice: (message: string, tone?: NoticeTone) => void;
 };
 
 export function ProjectControls(props: ProjectControlsProps) {
@@ -52,7 +53,7 @@ function ClerkProjectControls({
       await queryClient.invalidateQueries({ queryKey: ["projects", userId] });
       onNotice(currentProjectId ? "プロジェクトを更新しました。" : "プロジェクトを保存しました。");
     },
-    onError: (error: Error) => onNotice(error.message),
+    onError: (error: Error) => onNotice(error.message, "error"),
   });
   const load = useMutation({
     mutationFn: (projectId: string) => getProject(projectId, getToken),
@@ -61,7 +62,7 @@ function ClerkProjectControls({
       onLoad(project.site);
       onNotice("保存済みプロジェクトを読み込みました。");
     },
-    onError: (error: Error) => onNotice(error.message),
+    onError: (error: Error) => onNotice(error.message, "error"),
   });
 
   const remove = useMutation({
@@ -80,7 +81,7 @@ function ClerkProjectControls({
     },
     onError: (error: Error) => {
       setConfirmingDelete(false);
-      onNotice(error.message);
+      onNotice(error.message, "error");
     },
   });
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Info, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { AuthControls } from "@/features/auth/auth-controls";
 import { clerkConfig } from "@/features/auth/config";
 import { explanationDictionary } from "@/features/explanations/dictionary";
 import { exportProject } from "@/features/export/export-project";
+import { NoticeBar, type Notice, type NoticeTone } from "@/features/notice/notice-bar";
 import { ProjectControls } from "@/features/projects/project-controls";
 import { evaluateQuality } from "@/features/quality/evaluate-quality";
 import { impactLabels } from "@/features/quality/axe-audit";
@@ -111,7 +112,14 @@ export default function App() {
   const [reason, setReason] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [loadedProject, setLoadedProject] = useState(false);
-  const [notice, setNotice] = useState("静的サンプルで開始しています。題材を入力して生成できます。");
+  const [notice, setNotice] = useState<Notice | null>({
+    id: 0,
+    message: "静的サンプルで開始しています。題材を入力して生成できます。",
+    tone: "status",
+  });
+  const showNotice = useCallback((message: string, tone: NoticeTone = "status") => {
+    setNotice((current) => ({ id: (current?.id ?? 0) + 1, message, tone }));
+  }, []);
   // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
   const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
   // 右カラムは縦に積むと画面へ収まらないため、常に1パネルだけ表示する。
@@ -345,7 +353,7 @@ export default function App() {
         { id: `add-${added.id}`, label: `セクション追加（${added.title}）` },
       ];
     });
-    setNotice(`「${added.title}」を末尾に追加しました。なぜ足すのかを書いて記録してください。`);
+    showNotice(`「${added.title}」を末尾に追加しました。なぜ足すのかを書いて記録してください。`);
   };
 
   // セクションの削除。確認を通ってから呼ぶ。
@@ -369,7 +377,7 @@ export default function App() {
       if (changes.some((change) => change.id === `remove-${section.id}`)) return changes;
       return [...changes, { id: `remove-${section.id}`, label: `セクション削除（${section.title}）` }];
     });
-    setNotice(`「${section.title}」を削除しました。なぜ削るのかを書いて記録してください。`);
+    showNotice(`「${section.title}」を削除しました。なぜ削るのかを書いて記録してください。`);
   };
 
   // 記録は止めないが、書けていない観点があれば次に何を書けばよいかを添える。
@@ -401,7 +409,7 @@ export default function App() {
       if (concept) {
         addNote("コンセプト", conceptSummary(concept));
       }
-      setNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
+      showNotice(provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。");
     },
   });
 
@@ -446,16 +454,16 @@ export default function App() {
   // まだ説明していない変更をまとめて1件にし、そのとき書かれている理由を付ける。
   const recordThemeReason = () => {
     if (!reason.trim()) {
-      setNotice("先に『なぜ変えるか』を入力してください。");
+      showNotice("先に『なぜ変えるか』を入力してください。", "error");
       return;
     }
     if (touchedThemeKeys.length === 0) {
-      setNotice("先に色・余白・フォントを変更してください。");
+      showNotice("先に色・余白・フォントを変更してください。", "error");
       return;
     }
     const summary = touchedThemeKeys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
     addNote(`デザイン変更（${summary}）`, reason.trim(), cssChangesForThemeKeys(touchedThemeKeys));
-    setNotice(noticeForRecordedReason("デザイン変更の内容と理由を学習メモへ記録しました。"));
+    showNotice(noticeForRecordedReason("デザイン変更の内容と理由を学習メモへ記録しました。"));
     setThemeBaseline(site.theme);
     setTouchedThemeKeys([]);
     setReason("");
@@ -468,7 +476,7 @@ export default function App() {
       reason.trim(),
       htmlChangesForSection(selectedSection.id, selectedSection),
     );
-    setNotice(noticeForRecordedReason("内容変更の理由を学習メモへ記録しました。"));
+    showNotice(noticeForRecordedReason("内容変更の理由を学習メモへ記録しました。"));
     // 基準を進めるのは記録したセクションだけ。他のセクションの未記録の変更は残す。
     setSectionBaselines((baselines) => ({ ...baselines, [selectedSection.id]: selectedSection }));
     setReason("");
@@ -478,11 +486,11 @@ export default function App() {
   // 複数の判断が続くことがあり、1つずつ理由を書かせると同じ説明が並んでしまう。
   const recordStructureReason = () => {
     if (!reason.trim()) {
-      setNotice("先に『なぜ変えるか』を入力してください。");
+      showNotice("先に『なぜ変えるか』を入力してください。", "error");
       return;
     }
     if (pendingStructure.length === 0) {
-      setNotice("先にセクションを追加または削除してください。");
+      showNotice("先にセクションを追加または削除してください。", "error");
       return;
     }
     addNote(
@@ -490,7 +498,7 @@ export default function App() {
       reason.trim(),
       htmlChangesForStructure(),
     );
-    setNotice(noticeForRecordedReason("セクション構成の変更と理由を学習メモへ記録しました。"));
+    showNotice(noticeForRecordedReason("セクション構成の変更と理由を学習メモへ記録しました。"));
     setStructureBaseline(site.sections);
     setPendingStructure([]);
     setReason("");
@@ -501,7 +509,7 @@ export default function App() {
     discardUnrecordedChanges();
     setLoadedProject(false);
     setCurrentProjectId(null);
-    setNotice("初期サンプルへ戻しました。");
+    showNotice("初期サンプルへ戻しました。");
   };
 
   // 上限・下限に達したら押せなくする。押せない理由は文言でも示す。
@@ -531,7 +539,7 @@ export default function App() {
             currentProjectId={currentProjectId}
             onProjectChange={setCurrentProjectId}
             onLoad={loadProject}
-            onNotice={setNotice}
+            onNotice={showNotice}
           />
           <Button variant="ghost" onClick={resetBuilder}><RotateCcw className="mr-2 size-4" />リセット</Button>
           {/* 提出の手前で、何件記録できていて何件未説明かが分かるようにする。
@@ -545,6 +553,8 @@ export default function App() {
           <Button onClick={() => void exportProject(site, notes, aiUsage, axeAudit.status === "ready" ? [axeAudit.check] : [])}><Download className="mr-2 size-4" />提出物ZIP</Button>
         </div>
       </header>
+
+      <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
       <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[340px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
@@ -686,7 +696,6 @@ export default function App() {
           aria-labelledby="view-tab-preview"
           className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
         >
-          <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"><Info className="size-4 shrink-0" />{notice}</div>
           <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
             <div>
               <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
