@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -104,6 +105,11 @@ function effectiveThemeValue(theme: SiteModel["theme"], key: ThemeKey): string |
 // 打ち消し（追加してすぐ削除）を扱えるようidを持たせる。
 type StructureChange = { id: string; label: string };
 
+// セクション一覧の行にある操作要素のid。行が消えたり確認を閉じたりしたあと、
+// フォーカスを移す先をセクションのidから引けるようにする。
+const sectionToggleId = (sectionId: string) => `section-visible-${sectionId}`;
+const sectionRemoveButtonId = (sectionId: string) => `section-remove-${sectionId}`;
+
 // プレビューとコードの高さ配分。どちらも読めなくならない範囲に収める。
 const minCodeHeight = 120;
 const minPreviewHeight = 240;
@@ -136,6 +142,9 @@ export default function App() {
   const [activePanel, setActivePanel] = useState<PanelKey>("design");
   // 畳むとプレビューがPC幅まで広がり、出力時に近い見た目を確認できる。
   const [panelOpen, setPanelOpen] = useState(true);
+  // 畳む・開くボタンは押すと自身が隠れるため、もう一方のボタンへフォーカスを渡す。
+  const panelOpenButtonRef = useRef<HTMLButtonElement>(null);
+  const panelCollapseButtonRef = useRef<HTMLButtonElement>(null);
   const [setupOpen, setSetupOpen] = useState(true);
   // 狭い画面用。xl以上では使わず、3カラムを同時に表示する。
   const [mobileView, setMobileView] = useState<MobileView>("preview");
@@ -191,6 +200,10 @@ export default function App() {
   const [pendingStructure, setPendingStructure] = useState<StructureChange[]>([]);
   // 削除の確認を出している行。取り消せない操作なので、押した行の中で一度確かめる。
   const [removalTargetId, setRemovalTargetId] = useState<string | null>(null);
+  // 確認を開いたらフォーカスを入れる先。取り消せない操作なので、引き返す側のボタンに置く。
+  const removalCancelRef = useRef<HTMLButtonElement>(null);
+  // 行がすべて消えたときのフォーカスの受け皿。
+  const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   // 追加するセクションの種類。生成結果には入りにくく、かつ足す判断をしやすい
   // 「写真・作品」を初期値にする。ヒーローを初期値にすると、h1が2つある構造を
   // 何気なく作ってしまいやすい（品質チェックには出るが、最初の一歩としては遠回り）。
@@ -366,28 +379,44 @@ export default function App() {
     showNotice(`「${added.title}」を末尾に追加しました。なぜ足すのかを書いて記録してください。`);
   };
 
+  // 削除せずに確認を閉じる。押したボタンは確認ごと消えるため、確認を開いた削除ボタンへ戻す。
+  const closeRemovalConfirm = (sectionId: string) => {
+    setRemovalTargetId(null);
+    document.getElementById(sectionRemoveButtonId(sectionId))?.focus();
+  };
+
   // セクションの削除。確認を通ってから呼ぶ。
   const handleRemoveSection = (section: SiteSection) => {
     if (removeSectionBlockReason(site.sections.length)) return;
-    removeSection(section.id);
-    setRemovalTargetId(null);
-    // 消したセクションの内容の基準は残さない。残すと、もう画面に無い変更を
-    // 未説明として数え続けてしまう。
-    setSectionBaselines((baselines) => {
-      const rest = { ...baselines };
-      delete rest[section.id];
-      return rest;
+    // 押した「削除する」は行ごと消えるため、隣の行（末尾なら前の行）へフォーカスを移す。
+    // 移す先は表示切り替えのチェックボックス。削除ボタンは下限に達すると無効になり、受け取れない。
+    const index = site.sections.findIndex((item) => item.id === section.id);
+    const neighbor = site.sections[index + 1] ?? site.sections[index - 1];
+    // 行が消えた後の画面へフォーカスを移すため、ここでの更新は先に描画まで済ませる。
+    flushSync(() => {
+      removeSection(section.id);
+      setRemovalTargetId(null);
+      // 消したセクションの内容の基準は残さない。残すと、もう画面に無い変更を
+      // 未説明として数え続けてしまう。
+      setSectionBaselines((baselines) => {
+        const rest = { ...baselines };
+        delete rest[section.id];
+        return rest;
+      });
+      setPendingStructure((changes) => {
+        // 追加したばかりのものを消したなら、構成は元に戻っている。説明する変更も無い。
+        const addedId = `add-${section.id}`;
+        if (changes.some((change) => change.id === addedId)) {
+          return changes.filter((change) => change.id !== addedId);
+        }
+        if (changes.some((change) => change.id === `remove-${section.id}`)) return changes;
+        return [...changes, { id: `remove-${section.id}`, label: `セクション削除（${section.title}）` }];
+      });
     });
-    setPendingStructure((changes) => {
-      // 追加したばかりのものを消したなら、構成は元に戻っている。説明する変更も無い。
-      const addedId = `add-${section.id}`;
-      if (changes.some((change) => change.id === addedId)) {
-        return changes.filter((change) => change.id !== addedId);
-      }
-      if (changes.some((change) => change.id === `remove-${section.id}`)) return changes;
-      return [...changes, { id: `remove-${section.id}`, label: `セクション削除（${section.title}）` }];
-    });
-    showNotice(`「${section.title}」を削除しました。なぜ削るのかを書いて記録してください。`);
+    const focusTarget = (neighbor && document.getElementById(sectionToggleId(neighbor.id))) ?? sectionHeadingRef.current;
+    focusTarget?.focus();
+    // 通知を閉じたときの戻り先も、消えた「削除する」ではなく移した先にする。
+    showNotice(`「${section.title}」を削除しました。なぜ削るのかを書いて記録してください。`, "status", focusTarget);
   };
 
   // 記録は止めないが、書けていない観点があれば次に何を書けばよいかを添える。
@@ -613,7 +642,7 @@ export default function App() {
             <strong>AI生成文は仮テキストです。</strong><br />事実情報は必ず自分で調べて入力してください。
           </div>
 
-          <h2 className="mb-1 text-sm font-black">
+          <h2 ref={sectionHeadingRef} tabIndex={-1} className="mb-1 text-sm font-black">
             セクション <span className="font-normal text-slate-400">{site.sections.length} / {maxSections}</span>
           </h2>
           <p className="mb-2 text-[11px] leading-4 text-slate-500">
@@ -625,11 +654,17 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2">
                     <span className="truncate">{section.title}</span>
-                    <input type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
+                    <input id={sectionToggleId(section.id)} type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
                   </label>
                   <button
                     type="button"
-                    onClick={() => setRemovalTargetId(section.id)}
+                    id={sectionRemoveButtonId(section.id)}
+                    onClick={() => {
+                      // 確認は押したボタンの下に出るだけなので、そのままでは読み上げもTabの位置も
+                      // 確認を素通りする。描画を済ませてから確認の中へフォーカスを入れる。
+                      flushSync(() => setRemovalTargetId(section.id));
+                      removalCancelRef.current?.focus();
+                    }}
                     disabled={removeBlockReason !== null}
                     aria-label={`${section.title}を削除`}
                     title={removeBlockReason ?? `${section.title}を削除`}
@@ -650,11 +685,11 @@ export default function App() {
                         type="button"
                         variant="secondary"
                         className="min-h-8 px-2 text-xs"
-                        onClick={() => { toggleSection(section.id, false); setRemovalTargetId(null); }}
+                        onClick={() => { toggleSection(section.id, false); closeRemovalConfirm(section.id); }}
                       >
                         まず非表示にする
                       </Button>
-                      <Button type="button" variant="ghost" className="min-h-8 px-2 text-xs" onClick={() => setRemovalTargetId(null)}>やめる</Button>
+                      <Button ref={removalCancelRef} type="button" variant="ghost" className="min-h-8 px-2 text-xs" onClick={() => closeRemovalConfirm(section.id)}>やめる</Button>
                       <Button type="button" variant="ghost" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-100" onClick={() => handleRemoveSection(section)}>削除する</Button>
                     </div>
                   </div>
@@ -750,8 +785,13 @@ export default function App() {
           {/* 畳んだときのつまみ。デスクトップで畳んでいる間はここだけが残る。 */}
           <div className={`hidden w-10 shrink-0 flex-col items-center py-3 ${panelOpen ? "xl:hidden" : "xl:flex"}`}>
             <button
+              ref={panelOpenButtonRef}
               type="button"
-              onClick={() => setPanelOpen(true)}
+              onClick={() => {
+                // このボタンは開くと隠れる。描画を済ませてから、畳むボタンへフォーカスを渡す。
+                flushSync(() => setPanelOpen(true));
+                panelCollapseButtonRef.current?.focus();
+              }}
               aria-expanded={false}
               title="パネルを開く"
               className="w-10 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
@@ -801,8 +841,13 @@ export default function App() {
             })}
             </div>
             <button
+              ref={panelCollapseButtonRef}
               type="button"
-              onClick={() => setPanelOpen(false)}
+              onClick={() => {
+                // このボタンは畳むとタブ列ごと隠れる。描画を済ませてから、開くボタンへフォーカスを渡す。
+                flushSync(() => setPanelOpen(false));
+                panelOpenButtonRef.current?.focus();
+              }}
               aria-expanded={panelOpen}
               title="パネルを畳んでプレビューを広げる"
               className="ml-auto hidden rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 xl:block"
