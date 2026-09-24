@@ -29,8 +29,10 @@ var validQualityCheckKeys = map[string]struct{}{
 
 type qualityResultInput struct {
 	CheckKey string `json:"checkKey"`
-	Passed   bool   `json:"passed"`
-	Detail   string `json:"detail"`
+	// 省略とfalseを区別するためポインタで受ける。boolのままだと、
+	// passedが抜けたリクエストが「不合格」として黙って保存されてしまう。
+	Passed *bool  `json:"passed"`
+	Detail string `json:"detail"`
 }
 
 type saveQualityResultsRequest struct {
@@ -151,6 +153,10 @@ func decodeQualityResultsRequest(writer http.ResponseWriter, request *http.Reque
 			return nil, false
 		}
 		seen[result.CheckKey] = struct{}{}
+		if result.Passed == nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "passed is required"})
+			return nil, false
+		}
 		result.Detail = strings.TrimSpace(result.Detail)
 		if result.Detail == "" || utf8.RuneCountInString(result.Detail) > maxQualityDetailLength {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "detail must be between 1 and 1000 characters"})
@@ -158,7 +164,7 @@ func decodeQualityResultsRequest(writer http.ResponseWriter, request *http.Reque
 		}
 		results = append(results, project.QualityResultInput{
 			CheckKey: result.CheckKey,
-			Passed:   result.Passed,
+			Passed:   *result.Passed,
 			Detail:   result.Detail,
 		})
 	}
