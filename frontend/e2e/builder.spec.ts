@@ -170,6 +170,23 @@ test("デスクトップでは左右カラムを畳んでプレビューを広�
   expect(await widthOf()).toBeCloseTo(initial, 0);
 });
 
+test("右パネルを畳む・開くと、隠れたボタンの代わりにもう一方のボタンへフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const collapseButton = page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" });
+  const openButton = page.getByRole("button", { name: "パネルを開く" });
+
+  await collapseButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(collapseButton).toBeHidden();
+  await expect(openButton).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(openButton).toBeHidden();
+  await expect(collapseButton).toBeFocused();
+});
+
 test("デスクトップでタブを再クリックしてもパネルは畳まれない", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -891,6 +908,56 @@ test("削除は確認を挟み、まず非表示にする道を示す", async ({
   const note = page.getByTestId("learning-note").filter({ hasText: "セクション削除（3つの魅力）" }).last();
   await expect(note).toContainText("読み手が迷わなくなる");
   await expect(note).toContainText("- <h2>3つの魅力</h2>");
+});
+
+test("削除の確認を開くと確認の中へ、閉じると削除ボタンへフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const removeButton = page.getByRole("button", { name: "3つの魅力を削除" });
+
+  // 開いたら、引き返す側の「やめる」に入る。
+  await removeButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "やめる" })).toBeFocused();
+
+  // やめたら、確認を開いた削除ボタンへ戻る。
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("削除すると元に戻せません。")).toBeHidden();
+  await expect(removeButton).toBeFocused();
+
+  // 非表示にして閉じた場合も同じ。
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "まず非表示にする" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).not.toBeChecked();
+  await expect(removeButton).toBeFocused();
+});
+
+test("セクションを削除すると、次の行（末尾なら前の行）へフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 途中の行を消すと、次の行へ。
+  await page.getByRole("button", { name: "3つの魅力を削除" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "削除する" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).toBeHidden();
+  const nextRow = page.getByRole("checkbox", { name: "基本情報" });
+  await expect(nextRow).toBeFocused();
+
+  // 通知を閉じても、消えた「削除する」ではなく移した先へ戻る。
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(nextRow).toBeFocused();
+
+  // 末尾の行を消すと、前の行へ。
+  await page.getByRole("button", { name: "基本情報を削除" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "削除する" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("checkbox", { name: "基本情報" })).toBeHidden();
+  await expect(page.getByRole("checkbox", { name: "私たちについて" })).toBeFocused();
 });
 
 test("上限と下限に達すると、追加も削除もできなくなる", async ({ page }) => {

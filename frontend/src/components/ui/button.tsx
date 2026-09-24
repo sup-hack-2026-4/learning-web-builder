@@ -1,7 +1,8 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+// React 19ではrefも通常のpropsとして渡るため、refを含む型にしてbuttonへそのまま流す。
+type ButtonProps = ComponentProps<"button"> & {
   variant?: "primary" | "secondary" | "ghost";
 };
 

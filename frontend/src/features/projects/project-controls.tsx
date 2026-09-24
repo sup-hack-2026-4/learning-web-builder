@@ -1,7 +1,8 @@
 import { SignedIn, SignedOut, useAuth } from "@clerk/clerk-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cloud, LoaderCircle, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { captureFocusOrigin, type NoticeTone } from "@/features/notice/notice";
 import type { SiteModel } from "@/features/site-model/schema";
@@ -34,6 +35,12 @@ function ClerkProjectControls({
   const queryClient = useQueryClient();
   // 削除の確認中かどうか。対象は選択中のプロジェクトに限るため、真偽値で足りる。
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const deleteButtonRef = useRef<HTMLButtonElement>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  // 削除の結果が届いたあとに移すフォーカス先。移す先は処理中は無効になっていて
+  // フォーカスを受け取れないため、処理が終わってから移す。
+  const focusAfterRemoveRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     onProjectChange(null);
@@ -67,8 +74,12 @@ function ClerkProjectControls({
   });
 
   const remove = useMutation({
-    mutationFn: ({ projectId }: { projectId: string; returnFocusTo: HTMLElement | null }) => deleteProject(projectId, getToken),
-    onSuccess: async (_deleted, { projectId, returnFocusTo }) => {
+    mutationFn: ({ projectId }: { projectId: string }) => deleteProject(projectId, getToken),
+    // 押した「削除する」は確認ごと消える。成功したら選択中のものが無くなり削除ボタンも
+    // 押せなくなるため選択欄へ、失敗したら同じものをまた消せるよう削除ボタンへ移す。
+    // 通知を閉じたときの戻り先もそろえる。
+    onSuccess: async (_deleted, { projectId }) => {
+      focusAfterRemoveRef.current = selectRef.current;
       setConfirmingDelete(false);
       onProjectChange(null);
       // 再取得を待つ前に、消したものを手元の一覧から除く。invalidateQueriesだけだと
@@ -78,16 +89,34 @@ function ClerkProjectControls({
         (previous) => previous?.filter((project) => project.id !== projectId),
       );
       await queryClient.invalidateQueries({ queryKey: ["projects", userId] });
-      onNotice("プロジェクトを削除しました。次回の保存は新しいプロジェクトとして作成します。", "status", returnFocusTo);
+      onNotice("プロジェクトを削除しました。次回の保存は新しいプロジェクトとして作成します。", "status", selectRef.current);
     },
-    onError: (error: Error, { returnFocusTo }) => {
+    onError: (error: Error) => {
+      focusAfterRemoveRef.current = deleteButtonRef.current;
       setConfirmingDelete(false);
-      onNotice(error.message, "error", returnFocusTo);
+      onNotice(error.message, "error", deleteButtonRef.current);
     },
   });
 
   const selectedProject = projects.data?.find((project) => project.id === currentProjectId);
   const busy = save.isPending || load.isPending || remove.isPending;
+
+  useEffect(() => {
+    if (busy || !focusAfterRemoveRef.current) return;
+    const target = focusAfterRemoveRef.current;
+    focusAfterRemoveRef.current = null;
+    // 待っている間に利用者が別の場所へ移っていたら、そこから引き戻さない。
+    // 確認が消えてフォーカスの行き場が無くなったときだけ移す。
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    target.focus();
+  }, [busy]);
+
+  // 確認を閉じる。削除ボタンは確認中は無効なので、描画を済ませて押せる状態に戻してから移す。
+  const cancelDelete = () => {
+    flushSync(() => setConfirmingDelete(false));
+    deleteButtonRef.current?.focus();
+  };
 
   const handleProjectSelection = (projectId: string) => {
     setConfirmingDelete(false);
@@ -109,6 +138,7 @@ function ClerkProjectControls({
           <div className="flex flex-wrap items-center gap-2">
             <label className="sr-only" htmlFor="saved-project">保存済みプロジェクト</label>
             <select
+              ref={selectRef}
               id="saved-project"
               className="min-h-10 max-w-52 rounded-xl border border-slate-300 bg-white px-3 text-xs"
               value={currentProjectId ?? ""}
@@ -135,8 +165,13 @@ function ClerkProjectControls({
             {/* 削除できるのは選択中のプロジェクトだけ。「新しいプロジェクト」には
                 消す対象が無いため、選ぶまで押せないようにする。 */}
             <button
+              ref={deleteButtonRef}
               type="button"
-              onClick={() => setConfirmingDelete(true)}
+              onClick={() => {
+                // 押すとこのボタンは無効になり、フォーカスが外れる。確認の中の引き返す側へ移す。
+                flushSync(() => setConfirmingDelete(true));
+                deleteCancelRef.current?.focus();
+              }}
               disabled={!currentProjectId || busy || confirmingDelete}
               aria-label={selectedProject
                 ? `${selectedProject.site.siteTitle}を削除`
@@ -178,11 +213,12 @@ function ClerkProjectControls({
               </p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <Button
+                  ref={deleteCancelRef}
                   type="button"
                   variant="ghost"
                   className="min-h-8 px-2 text-xs"
                   disabled={remove.isPending}
-                  onClick={() => setConfirmingDelete(false)}
+                  onClick={cancelDelete}
                 >
                   やめる
                 </Button>
@@ -194,7 +230,7 @@ function ClerkProjectControls({
                   variant="ghost"
                   className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-100"
                   disabled={busy}
-                  onClick={() => remove.mutate({ projectId: currentProjectId, returnFocusTo: captureFocusOrigin() })}
+                  onClick={() => remove.mutate({ projectId: currentProjectId })}
                 >
                   {remove.isPending ? "削除中…" : "削除する"}
                 </Button>
