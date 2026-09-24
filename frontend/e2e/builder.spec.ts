@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test("題材を入力し、静的フォールバックでサイトを生成できる", async ({ page }) => {
   await page.goto("/");
@@ -209,6 +209,180 @@ test("モバイルでは3つの画面を下部バーで切り替えられる", a
   await page.getByRole("tab", { name: "調整と学習" }).click();
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
   await expect(page.getByLabel("紹介サイトの題材")).toBeHidden();
+});
+
+// 通知がプレビューの中にしかないと、モバイルで他の表示を見ている間は結果を確かめられなかった。
+test("モバイルでプレビュー以外を表示していても操作結果の通知が見える", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  const status = page.getByRole("status").filter({ hasText: "静的サンプルを生成しました。" });
+  await expect(status).toBeVisible();
+  await expect(status).toBeInViewport();
+
+  // 操作を止めた知らせは、読み上げ環境でもすぐ伝わるよう alert で出す。
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  const alert = page.getByRole("alert").filter({ hasText: "先に色・余白・フォントを変更してください。" });
+  await expect(alert).toBeVisible();
+  await expect(alert).toBeInViewport();
+});
+
+test("通知を閉じても、次の操作結果はまた表示される", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("静的サンプルで開始しています。")).toBeVisible();
+
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(page.getByText("静的サンプルで開始しています。")).toBeHidden();
+  await expect(page.getByRole("button", { name: "通知を閉じる" })).toBeHidden();
+
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+});
+
+// 閉じるボタンは押すと消えるため、フォーカスを見えていて意味のある要素へ移す。
+test("通知を閉じると、通知のきっかけになった操作へフォーカスが戻る", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  const recordButton = page.getByRole("button", { name: "デザイン変更の理由を記録" });
+  await recordButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeHidden();
+  await expect(recordButton).toBeFocused();
+});
+
+test("きっかけの操作がない通知を閉じると、通知の直後の操作要素へフォーカスが移る", async ({ page }) => {
+  // 最初の案内は操作から出たものではないため、戻す先がない。
+  await page.goto("/");
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  // デスクトップ幅では、通知の直後にある左カラムの折りたたみボタンが最初の操作要素になる。
+  await expect(page.getByRole("button", { name: "題材・メモを畳んでプレビューを広げる" })).toBeFocused();
+});
+
+test("モバイルできっかけの操作が別の表示に隠れていたら、今の表示の操作要素へフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+
+  // 戻り先の生成ボタンは開始時に記録されるが、「題材・メモ」の中にあり、プレビューへ切り替えると見えなくなる。
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "コードを隠す" })).toBeFocused();
+});
+
+// 生成の応答を止めておき、結果が遅れて届く通知でも戻り先が開始時の操作になることを確かめる。
+async function holdGeneration(page: Page) {
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/generate", async (route) => {
+    await released;
+    // APIを使えない扱いにして、静的サンプルへのフォールバックで完了させる。
+    await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+  });
+  return release;
+}
+
+test("結果が遅れて届く通知を閉じると、操作を始めた生成ボタンへフォーカスが戻る", async ({ page }) => {
+  await page.goto("/");
+  const release = await holdGeneration(page);
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  const generateButton = page.getByRole("button", { name: "たたき台を生成" });
+  await generateButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+
+  release();
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(generateButton).toBeFocused();
+});
+
+test("処理中に閉じるボタンへフォーカスを移していても、閉じると生成ボタンへ戻る", async ({ page }) => {
+  await page.goto("/");
+  const release = await holdGeneration(page);
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  const generateButton = page.getByRole("button", { name: "たたき台を生成" });
+  await generateButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+
+  // 完了の瞬間にフォーカスが最初の案内の閉じるボタンにあっても、それを戻り先にしない。
+  const closeButton = page.getByRole("button", { name: "通知を閉じる" });
+  await closeButton.focus();
+  release();
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(closeButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(generateButton).toBeFocused();
+});
+
+test("マウスで通知を閉じても、読んでいた位置からスクロールしない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  const recordButton = page.getByRole("button", { name: "デザイン変更の理由を記録" });
+  await recordButton.click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+
+  // ページの先頭へ戻って読み直し、記録ボタンが画面の下へ外れた状態で閉じる。
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(recordButton).not.toBeInViewport();
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeHidden();
+  await expect(recordButton).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+});
+
+// 読み上げ環境は、中身が変わる前からあるライブリージョンの更新しか読み上げない。
+// そのため、閉じている間も領域が残ること、同じ文言でも中身が差し替わることを確かめる。
+test("通知のライブリージョンは常に残り、同じ文言や種類の切り替えでも中身が差し替わる", async ({ page }) => {
+  await page.goto("/");
+  const statusRegion = page.getByTestId("notice-bar").getByRole("status");
+  const alertRegion = page.getByTestId("notice-bar").getByRole("alert");
+
+  // 閉じている間も、両方の領域がDOMに残る。
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(statusRegion).toBeAttached();
+  await expect(alertRegion).toBeAttached();
+  await expect(statusRegion).toHaveText("");
+  await expect(alertRegion).toHaveText("");
+
+  // 同じ失敗を2回続けても、文言の要素が差し替わる。
+  // ここで確かめられるのはDOMの差し替えまでで、実際に読み上げられるかは支援技術での確認が要る。
+  const message = "先に色・余白・フォントを変更してください。";
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(alertRegion).toHaveText(message);
+  const firstMessage = await alertRegion.locator("span").elementHandle();
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(alertRegion).toHaveText(message);
+  expect(await firstMessage?.evaluate((element) => element.isConnected)).toBe(false);
+
+  // 失敗のあとに成功すると、alert は空になり、status に文言が入る。
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(statusRegion).toContainText("デザイン変更の内容と理由を学習メモへ記録しました。");
+  await expect(alertRegion).toHaveText("");
 });
 
 test("モバイルで選択中タブを再クリックしても選択状態と表示が食い違わない", async ({ page }) => {
@@ -842,7 +1016,8 @@ test("扱えない形式の画像は理由を示して受け付けない", async
     buffer: Buffer.from("これは画像ではありません"),
   });
 
-  await expect(page.getByRole("alert")).toContainText("JPEG・PNG・WebPの画像を選んでください。");
+  // 操作結果の通知も読み上げ用の alert 領域を常に持つため、文言で絞り込む。
+  await expect(page.getByRole("alert").filter({ hasText: "JPEG・PNG・WebPの画像を選んでください。" })).toBeVisible();
   await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
 });
 
