@@ -20,6 +20,8 @@ paths:
                   service: { type: string }
                   status: { type: string, const: ok }
                   version: { type: string }
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
   /session:
     get:
       operationId: getSession
@@ -40,6 +42,8 @@ paths:
                   userId: { type: string, minLength: 1 }
         "401":
           description: Invalid or expired authentication token
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
   /generate:
     post:
       operationId: generateSite
@@ -48,6 +52,7 @@ paths:
         - clerkBearer: []
       requestBody:
         required: true
+        description: 本文は16 KiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -55,7 +60,13 @@ paths:
               additionalProperties: false
               required: [topic]
               properties:
-                topic: { type: string, minLength: 1, maxLength: 100 }
+                topic:
+                  type: string
+                  description: >-
+                    前後の空白を除いてから文字数を数える。
+                    空白だけの文字列は400になる。
+                  minLength: 1
+                  maxLength: 100
                 concept:
                   # topicはリクエスト直下の値が正となり、ここに書いた値は上書きされる。
                   $ref: "#/components/schemas/ConceptDraft"
@@ -74,6 +85,8 @@ paths:
           description: Invalid input
         "401":
           description: Invalid or expired authentication token
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "429":
           description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
         "500":
@@ -92,6 +105,7 @@ paths:
         - clerkBearer: []
       requestBody:
         required: true
+        description: 本文は64 KiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -112,7 +126,11 @@ paths:
                     required: [role, text]
                     properties:
                       role: { type: string, enum: [user, model] }
-                      text: { type: string, minLength: 1, maxLength: 500 }
+                      text:
+                        type: string
+                        description: 空白だけの文字列は400になる。
+                        minLength: 1
+                        maxLength: 500
                 draft:
                   $ref: "#/components/schemas/ConceptDraft"
       responses:
@@ -143,6 +161,8 @@ paths:
           description: Invalid input
         "401":
           description: Invalid or expired authentication token
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "429":
           description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
         "503":
@@ -161,6 +181,8 @@ paths:
                 $ref: "#/components/schemas/ProjectList"
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "500":
           description: Projects could not be loaded
         "503":
@@ -171,6 +193,7 @@ paths:
         - clerkBearer: []
       requestBody:
         required: true
+        description: 本文は1 MiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -186,6 +209,8 @@ paths:
           description: Invalid request or SiteModel
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "500":
           description: Project could not be saved
         "503":
@@ -213,6 +238,8 @@ paths:
           description: Invalid project ID
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
         "500":
@@ -232,6 +259,7 @@ paths:
             format: uuid
       requestBody:
         required: true
+        description: 本文は1 MiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -247,6 +275,8 @@ paths:
           description: Invalid request, project ID, or SiteModel
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
         "500":
@@ -274,6 +304,8 @@ paths:
           description: Invalid project ID
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
         "500":
@@ -303,6 +335,8 @@ paths:
           description: Invalid project ID
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
         "500":
@@ -322,6 +356,7 @@ paths:
             format: uuid
       requestBody:
         required: true
+        description: 本文は64 KiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -337,6 +372,8 @@ paths:
           description: Invalid project ID or quality results
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
         "500":
@@ -344,6 +381,13 @@ paths:
         "503":
           description: Project persistence is not configured
 components:
+  responses:
+    OriginNotAllowed:
+      description: >-
+        Originヘッダの形式が不正、または許可リストにない。
+        全エンドポイント共通のCORS検証で、認証・利用制限・入力検証より先に判定するため、
+        不正なトークンや不正な入力を送っていても403が優先される。
+        Originヘッダがないリクエスト（ブラウザ以外からの呼び出しなど）は検証されない。
   securitySchemes:
     clerkBearer:
       type: http
@@ -423,6 +467,9 @@ components:
                 type: boolean
               detail:
                 type: string
+                description: >-
+                  前後の空白を除いてから文字数を数え、除いた値を保存する。
+                  空白だけの文字列は400になる。
                 minLength: 1
                 maxLength: 1000
     QualityResult:
