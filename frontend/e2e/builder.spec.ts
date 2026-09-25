@@ -1135,3 +1135,55 @@ test("提出物ZIPへ画像を同梱し、HTMLは相対パスで参照する", a
   expect(archive).toContain("images/about.jpg");
   expect(archive).toContain('src="images/about.jpg"');
 });
+
+// 空白を含まない長い文字列。はみ出すかどうかは、URLのように途中で折り返す位置がない文字列で決まる。
+const longUrl = (length: number) => `https://example.com/${"a".repeat(length - "https://example.com/".length)}`;
+
+// 横にはみ出していれば、中身の幅（scrollWidth）が枠の幅（clientWidth）を超える。
+const overflowsHorizontally = (element: Element) => element.scrollWidth > element.clientWidth;
+
+test("相談の吹き出し・選択肢・決定事項に長いURLが入っても、枠の中で折り返す", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/concept/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        reply: `参考にしたいページは ${longUrl(120)} ですね。誰に読んでほしいですか？`,
+        choices: [longUrl(40)],
+        draft: { topic: longUrl(100), audience: "", goal: "", tone: "", mustInclude: [] },
+        missing: ["audience", "goal"],
+        ready: false,
+        provider: "static-sample",
+      }),
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+
+  await page.getByRole("button", { name: "相談をはじめる" }).click();
+  await page.getByLabel("返事を書く").fill(longUrl(200));
+  await page.getByRole("button", { name: "送信" }).click();
+
+  const draft = page.getByTestId("concept-draft");
+  await expect(draft).toContainText(longUrl(100));
+  expect(await draft.evaluate(overflowsHorizontally)).toBe(false);
+  expect(await draft.locator("dd").first().evaluate(overflowsHorizontally)).toBe(false);
+  for (const message of await page.getByTestId("concept-chat-log").locator("li").all()) {
+    expect(await message.evaluate(overflowsHorizontally)).toBe(false);
+  }
+  expect(await page.getByRole("button", { name: longUrl(40) }).evaluate(overflowsHorizontally)).toBe(false);
+  expect(await page.locator("section[aria-labelledby='concept-chat-heading']").evaluate(overflowsHorizontally)).toBe(false);
+});
+
+test("生成サイトの見出しに長いURLを入れても、プレビューが横にはみ出さない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("見出し", { exact: true }).fill(longUrl(80));
+  await expect(frame.locator("[data-builder-id='hero'] h1")).toHaveText(longUrl(80));
+
+  expect(await frame.locator("html").evaluate(overflowsHorizontally)).toBe(false);
+});
