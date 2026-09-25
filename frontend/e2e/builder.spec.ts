@@ -1088,6 +1088,24 @@ test("扱えない形式の画像は理由を示して受け付けない", async
   await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
 });
 
+test("画像のファイル入力は名前を持ち、Tabでは隣のボタンだけにフォーカスが当たる", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+
+  const fileInput = page.getByLabel("画像ファイル", { exact: true });
+  await expect(fileInput).toHaveAttribute("type", "file");
+  await expect(fileInput).toHaveAttribute("tabindex", "-1");
+
+  // inputはボタンの直前にあるため、Tab順に残っているとShift+Tabで空振りする。
+  const chooseButton = page.getByRole("button", { name: "画像を選ぶ" });
+  await chooseButton.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(fileInput).not.toBeFocused();
+  await expect(chooseButton).not.toBeFocused();
+});
+
 test("基本情報のセクションには画像欄を出さない", async ({ page }) => {
   await generateSite(page, "スミレ即売会");
 
