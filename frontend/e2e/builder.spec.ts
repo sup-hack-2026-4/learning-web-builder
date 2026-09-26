@@ -138,6 +138,49 @@ test("提出物ZIPをダウンロードできる", async ({ page }) => {
   const download = await downloadPromise;
 
   expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+  // 出力できたことが通知で伝わり、ボタンは次の出力のために元へ戻る。
+  await expect(page.getByTestId("notice-bar").getByRole("status")).toContainText("提出物ZIPを作成しました。");
+  await expect(page.getByRole("button", { name: "提出物ZIP" })).toBeEnabled();
+});
+
+test("オフラインでも提出物ZIPを作成できる", async ({ page }) => {
+  await page.goto("/");
+  // ZIPはブラウザの中だけで作るため、通信が切れていても「作成中」のまま止まらない。
+  await page.context().setOffline(true);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "提出物ZIP" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+  await expect(page.getByRole("button", { name: "提出物ZIP" })).toBeEnabled();
+});
+
+test("提出物ZIPの作成に失敗すると理由を伝え、そのまま再試行できる", async ({ page }) => {
+  await page.goto("/");
+  // ZIPのダウンロード用URLの作成を、1回目だけ失敗させる。2回目からは本来の処理に戻す。
+  // 画面のほかの処理もこの関数を使うため、ZIPのときに限る。
+  await page.evaluate(() => {
+    const original = URL.createObjectURL.bind(URL);
+    let failed = false;
+    URL.createObjectURL = (object: Blob | MediaSource) => {
+      if (!failed && object instanceof Blob && object.type === "application/zip") {
+        failed = true;
+        throw new Error("テスト用の失敗");
+      }
+      return original(object);
+    };
+  });
+
+  const exportButton = page.getByRole("button", { name: "提出物ZIP" });
+  await exportButton.click();
+  await expect(page.getByTestId("notice-bar").getByRole("alert")).toContainText("提出物ZIPを作成できませんでした。");
+  await expect(exportButton).toBeEnabled();
+
+  const downloadPromise = page.waitForEvent("download");
+  await exportButton.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+  await expect(page.getByTestId("notice-bar").getByRole("status")).toContainText("提出物ZIPを作成しました。");
 });
 
 test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
