@@ -204,6 +204,17 @@ export default function App() {
   const removalCancelRef = useRef<HTMLButtonElement>(null);
   // 行がすべて消えたときのフォーカスの受け皿。
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const axeHeadingRef = useRef<HTMLHeadingElement>(null);
+  const hasVisibleSection = site.sections.some((section) => section.visible);
+  // 一覧は左カラム（モバイルでは「題材・メモ」の表示）にある。畳んでいれば開き、
+  // 描画を済ませてから一覧の見出しへフォーカスを移す。次のTabで最初のチェックボックスへ進める。
+  const showSectionList = () => {
+    flushSync(() => {
+      setSetupOpen(true);
+      setMobileView("setup");
+    });
+    sectionHeadingRef.current?.focus();
+  };
   // 追加するセクションの種類。生成結果には入りにくく、かつ足す判断をしやすい
   // 「写真・作品」を初期値にする。ヒーローを初期値にすると、h1が2つある構造を
   // 何気なく作ってしまいやすい（品質チェックには出るが、最初の一歩としては遠回り）。
@@ -270,7 +281,7 @@ export default function App() {
 
   const quality = useMemo(() => evaluateQuality(site), [site]);
   // axeの自動チェックはiframeでの実測が要るため非同期。終わるまでは静的な3項目だけで判断する。
-  const axeAudit = useAxeAudit(site);
+  const { state: axeAudit, retry: retryAxeAudit } = useAxeAudit(site);
   const allChecks = useMemo(
     () => (axeAudit.status === "ready" ? [...quality, axeAudit.check] : quality),
     [quality, axeAudit],
@@ -757,6 +768,20 @@ export default function App() {
 
           {/* プレビューと生成コードを同時に見せる。理由を書く場面で、対象のコードを探しに行かせないため。 */}
           <div ref={previewAreaRef} className="flex min-h-0 flex-1 flex-col">
+            {/* 表示中のセクションが無いと、プレビューにはヘッダーとフッターしか残らない。
+                何が起きたかと戻し方を、プレビューの手前（編集画面の側）で伝える。
+                生成するHTMLには入れない。提出物に編集ツールの案内が混ざるため。 */}
+            {!hasVisibleSection && (
+              <div className="mb-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900" data-testid="preview-all-hidden">
+                <p>
+                  <strong>すべてのセクションが非表示です。</strong><br />
+                  左の「セクション」一覧でチェックを入れると、プレビューに戻ります。
+                </p>
+                <Button type="button" variant="secondary" className="mt-2 min-h-9 px-3 text-xs" onClick={showSectionList}>
+                  セクション一覧へ
+                </Button>
+              </div>
+            )}
             <SitePreview site={site} onElementSelect={selectElement} />
             {codeOpen && (
               <>
@@ -952,17 +977,32 @@ export default function App() {
 
             {/* axeの自動チェック。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
             <section aria-labelledby="axe-heading" className="mt-4 border-t border-slate-200 pt-3">
-              <h4 id="axe-heading" className="text-xs font-black">アクセシビリティ（axe）</h4>
+              <h4 ref={axeHeadingRef} id="axe-heading" tabIndex={-1} className="text-xs font-black">アクセシビリティ（axe）</h4>
 
               {axeAudit.status === "loading" && (
                 <p className="mt-2 text-xs text-slate-500" data-testid="axe-loading">自動チェックを実行しています…</p>
               )}
 
               {axeAudit.status === "error" && (
-                <p className="mt-2 flex gap-2 text-xs text-red-700" data-testid="axe-error">
-                  <X className="size-5 shrink-0" />
-                  <span className="leading-5">{axeAudit.message}</span>
-                </p>
+                <div className="mt-2 text-xs text-red-700" data-testid="axe-error">
+                  <p className="flex gap-2">
+                    <X className="size-5 shrink-0" />
+                    <span className="leading-5">{axeAudit.message}</span>
+                  </p>
+                  {/* 検査はサイトが変わったときにしか走らないため、同じサイトのまま再実行できる導線を置く。
+                      押すとこのボタンは消えるため、実行中の表示が続く見出しへフォーカスを移す。 */}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="mt-2 min-h-9 px-3 text-xs"
+                    onClick={() => {
+                      retryAxeAudit();
+                      axeHeadingRef.current?.focus();
+                    }}
+                  >
+                    もう一度チェックする
+                  </Button>
+                </div>
               )}
 
               {axeAudit.status === "ready" && axeAudit.findings.length === 0 && (

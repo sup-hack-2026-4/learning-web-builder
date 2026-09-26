@@ -1135,3 +1135,65 @@ test("提出物ZIPへ画像を同梱し、HTMLは相対パスで参照する", a
   expect(archive).toContain("images/about.jpg");
   expect(archive).toContain('src="images/about.jpg"');
 });
+
+test("セクションをすべて非表示にすると、プレビューに戻し方の案内が出る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const guidance = page.getByTestId("preview-all-hidden");
+  const toggles = page.locator("input[id^='section-visible-']");
+  const count = await toggles.count();
+  for (let index = 0; index < count; index += 1) {
+    await toggles.nth(index).uncheck();
+  }
+  await expect(guidance).toContainText("すべてのセクションが非表示です。");
+
+  // 左カラムを畳んでいても、案内のボタンから一覧を開いて見出しへ移れる。
+  await page.getByTitle("題材・メモを畳んでプレビューを広げる").click();
+  await guidance.getByRole("button", { name: "セクション一覧へ" }).click();
+  await expect(page.getByRole("heading", { name: /^セクション/ })).toBeFocused();
+
+  // 1つでも表示に戻すと、案内は消える。
+  await toggles.first().check();
+  await expect(guidance).toHaveCount(0);
+});
+
+test("モバイルでも、案内のボタンから一覧のある表示へ切り替わる", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  const toggles = page.locator("input[id^='section-visible-']");
+  const count = await toggles.count();
+  for (let index = 0; index < count; index += 1) {
+    await toggles.nth(index).uncheck();
+  }
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+
+  await page.getByTestId("preview-all-hidden").getByRole("button", { name: "セクション一覧へ" }).click();
+  await expect(page.getByRole("tab", { name: "題材・メモ" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: /^セクション/ })).toBeFocused();
+});
+
+test("axeの自動チェックに失敗しても、同じサイトのまま再実行できる", async ({ page }) => {
+  // 1回目だけaxe本体の読み込みを止め、検査を失敗させる。
+  let blocked = false;
+  await page.route(/axe\.min.*\.js/, async (route) => {
+    if (!blocked) {
+      blocked = true;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "品質" }).click();
+
+  const error = page.getByTestId("axe-error");
+  await expect(error).toContainText("「もう一度チェックする」を押すと再実行します。", { timeout: 20000 });
+
+  await error.getByRole("button", { name: "もう一度チェックする" }).click();
+  await expect(page.getByRole("heading", { name: "アクセシビリティ（axe）" })).toBeFocused();
+  await expect(page.getByTestId("axe-findings")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("axe-error")).toHaveCount(0);
+});
