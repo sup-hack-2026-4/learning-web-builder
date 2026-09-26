@@ -161,12 +161,13 @@ function ClerkProjectControls({
             </select>
             {/* 一覧が空のままだと、読み込み中なのか、保存したものが無いのかが区別できない。
                 セレクトの横に状態を書き、読み上げでもセレクトの説明として伝える。 */}
-            {listStatus && (
-              <span id="saved-project-status" className="flex items-center gap-1 text-xs text-slate-500">
-                {projects.isPending && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
-                {listStatus}
-              </span>
-            )}
+            {/* 状態が変わったことは describedby だけでは伝わらない。ライブリージョンは中身が変わる前から
+                DOMにあり、表示されていないと読み上げられないため、空のときも隠さずに置いておく。
+                空のときに並びの隙間（gap-2）だけが残らないよう、左の余白で打ち消す。 */}
+            <span id="saved-project-status" role="status" className="flex items-center gap-1 text-xs text-slate-500 empty:-ml-2">
+              {projects.isPending && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
+              {listStatus}
+            </span>
             <Button
               variant="secondary"
               disabled={busy || projects.isError}
@@ -221,8 +222,8 @@ function ClerkProjectControls({
               セクション削除と同じくブラウザのconfirmは使わない。操作が止まるうえ、
               何が巻き添えで消えるのかを画面に書けない。 */}
           {confirmingDelete && currentProjectId && (
-            <div className="rounded-xl bg-red-50 p-2 text-xs text-red-900">
-              <p className="leading-4">
+            <div className="max-w-full rounded-xl bg-red-50 p-2 text-xs text-red-900">
+              <p className="leading-4 wrap-anywhere">
                 「{selectedProject?.site.siteTitle ?? "選択中のプロジェクト"}」を削除しますか？<br />
                 このプロジェクトと、関連する学習メモ・品質チェック結果も削除されます。元に戻せません。
               </p>

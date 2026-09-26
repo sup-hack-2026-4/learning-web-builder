@@ -1,5 +1,5 @@
 import { ImagePlus, LoaderCircle, Trash2 } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { SectionImage, SiteSection } from "@/features/site-model/schema";
 import {
@@ -24,7 +24,6 @@ type SectionImageFieldProps = {
  * 処理中・失敗・未選択の3つを画面に出し分け、何が起きているかが分かるようにする。
  */
 export function SectionImageField({ section, sections, onSelect, onRemove }: SectionImageFieldProps) {
-  const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [processing, setProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -76,12 +75,15 @@ export function SectionImageField({ section, sections, onSelect, onRemove }: Sec
       )}
 
       <div className="mt-2 flex flex-wrap gap-2">
-        {/* ファイル選択はinputでしか開けないため、見た目はボタンに寄せてlabelで結ぶ。 */}
+        {/* ファイル選択はinputでしか開けないため、隣のボタンから開く。inputは見た目だけでなく
+            Tab順からも外し、ボタンと二重にフォーカスが当たらないようにする。
+            それでも読み上げの一覧には出るため、名前は付けておく。 */}
         <input
           ref={inputRef}
-          id={inputId}
           type="file"
           accept={acceptedImageTypes.join(",")}
+          aria-label="画像ファイル"
+          tabIndex={-1}
           className="sr-only"
           disabled={processing || blockReason !== null}
           onChange={handleChange}

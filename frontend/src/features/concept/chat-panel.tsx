@@ -126,7 +126,8 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
 
       {started && (
         <>
-          <ol className="mt-3 space-y-2" data-testid="concept-chat-log">
+          {/* 自由入力とAIの出力は、空白のない長いURLなどを含みうる。枠の中で折り返させる。 */}
+          <ol className="mt-3 space-y-2 wrap-anywhere" data-testid="concept-chat-log">
             {chatMessages.map((message, index) => (
               <li
                 key={`${message.role}-${index}`}
@@ -163,8 +164,8 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
           {!chat.isPending && conceptChoices.length > 0 && (
             <ul className="mt-2 flex flex-wrap gap-2">
               {conceptChoices.map((choice) => (
-                <li key={choice}>
-                  <Button variant="secondary" className="text-xs" onClick={() => send(choice)}>
+                <li key={choice} className="max-w-full">
+                  <Button variant="secondary" className="max-w-full text-xs wrap-anywhere" onClick={() => send(choice)}>
                     {choice}
                   </Button>
                 </li>
@@ -199,7 +200,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
               {decided.map((item) => (
                 <div key={item.label} className="flex gap-2">
                   <dt className="shrink-0 font-bold text-slate-500">{item.label}</dt>
-                  <dd className="text-slate-800">{item.value}</dd>
+                  <dd className="min-w-0 text-slate-800 wrap-anywhere">{item.value}</dd>
                 </div>
               ))}
             </dl>

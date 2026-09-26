@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,7 +33,7 @@ import {
   sectionKinds,
   type SectionKind,
 } from "@/features/site-model/sections";
-import type { SiteModel, SiteSection } from "@/features/site-model/schema";
+import type { AiUsage, LearningNote, QualityCheck, SiteModel, SiteSection } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 import { ConceptChatPanel } from "@/features/concept/chat-panel";
@@ -204,6 +204,8 @@ export default function App() {
   const removalCancelRef = useRef<HTMLButtonElement>(null);
   // 行がすべて消えたときのフォーカスの受け皿。
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
+  // 一覧から編集を始めたときのフォーカス先。選んだ結果が読み上げで伝わるよう、編集欄の見出しに置く。
+  const selectedSectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const axeHeadingRef = useRef<HTMLHeadingElement>(null);
   const hasVisibleSection = site.sections.some((section) => section.visible);
   // 一覧は左カラム（モバイルでは「題材・メモ」の表示）にある。畳んでいれば開き、
@@ -282,6 +284,32 @@ export default function App() {
   const quality = useMemo(() => evaluateQuality(site), [site]);
   // axeの自動チェックはiframeでの実測が要るため非同期。終わるまでは静的な3項目だけで判断する。
   const { state: axeAudit, retry: retryAxeAudit } = useAxeAudit(site);
+  // 再検査を押したあとは、開始と結果を通知で伝える。押したボタンは消え、結果は離れた場所に出るため。
+  // 編集のたびに走る通常の検査では通知しない。毎回読み上げられると操作の邪魔になる。
+  const axeRetryAnnouncementRef = useRef<HTMLElement | null | undefined>(undefined);
+  const retryAxeAuditWithNotice = () => {
+    const returnFocusTo = axeHeadingRef.current;
+    axeRetryAnnouncementRef.current = returnFocusTo;
+    retryAxeAudit();
+    showNotice("アクセシビリティの自動チェックをやり直しています…", "status", returnFocusTo);
+  };
+  useEffect(() => {
+    const returnFocusTo = axeRetryAnnouncementRef.current;
+    if (returnFocusTo === undefined || axeAudit.status === "loading") return;
+    axeRetryAnnouncementRef.current = undefined;
+    if (axeAudit.status === "error") {
+      showNotice("アクセシビリティの自動チェックを、もう一度実行できませんでした。時間をおいて「もう一度チェックする」を押してください。", "error", returnFocusTo);
+      return;
+    }
+    const count = axeAudit.findings.length;
+    showNotice(
+      count === 0
+        ? "アクセシビリティの自動チェックが終わりました。見つかる問題はありませんでした。"
+        : `アクセシビリティの自動チェックが終わりました。指摘が${count}件あります。「品質」タブで確認してください。`,
+      "status",
+      returnFocusTo,
+    );
+  }, [axeAudit, showNotice]);
   const allChecks = useMemo(
     () => (axeAudit.status === "ready" ? [...quality, axeAudit.check] : quality),
     [quality, axeAudit],
@@ -359,6 +387,11 @@ export default function App() {
     if (trimmedReason && nextSection) {
       setSectionBaselines((baselines) => ({ ...baselines, [id]: nextSection }));
     }
+    // 最後の1つを隠すと、プレビューにはヘッダーとフッターしか残らない。案内はプレビュー側に出るが、
+    // チェックボックスを操作している位置からは見えない（モバイルでは別の表示）ため、通知でも伝える。
+    if (!visible && site.sections.every((section) => section.id === id || !section.visible)) {
+      showNotice("すべてのセクションが非表示になりました。「セクション」一覧でチェックを入れると、プレビューに戻ります。");
+    }
   };
 
   // セクションの追加。末尾へ入る。どこへ入るか分からないと、押したあとで画面を探すことになる。
@@ -394,6 +427,20 @@ export default function App() {
   const closeRemovalConfirm = (sectionId: string) => {
     setRemovalTargetId(null);
     document.getElementById(sectionRemoveButtonId(sectionId))?.focus();
+  };
+
+  // 一覧からセクションを選んで編集を始める。プレビュー内のセクションはクリックでしか選べないため、
+  // キーボードや読み上げで使う人の選び方はこちらになる。
+  // 選んでも編集欄が見えていなければ意味がないので、右パネルのデザインタブを開き、
+  // 描画を済ませてから編集欄の見出しへフォーカスを移す。
+  const editSection = (sectionId: string) => {
+    flushSync(() => {
+      selectElement(sectionId);
+      setActivePanel("design");
+      setPanelOpen(true);
+      setMobileView("panel");
+    });
+    selectedSectionHeadingRef.current?.focus();
   };
 
   // セクションの削除。確認を通ってから呼ぶ。
@@ -462,6 +509,38 @@ export default function App() {
       showNotice(
         provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。",
         "status",
+        returnFocusTo,
+      );
+    },
+  });
+
+  // 画像を含むZIPは作るのに時間がかかる。処理中はボタンを止めて連打による重複出力を防ぎ、
+  // 開始と成否は他の操作と同じ通知で伝える（読み上げにも届く）。失敗してもボタンは戻るため、そのまま再試行できる。
+  const exportZip = useMutation({
+    // ZIPはブラウザの中だけで作るため、オフラインでも止めない。
+    // 既定のままだと、オフライン時に処理が一時停止し「ZIP作成中…」から戻らなくなる。
+    networkMode: "always",
+    // 出力する内容はクリックした時点の値を引数で受け取る。関数の外の値を読むと、
+    // 実行までの間に編集された内容が混ざるおそれがある。
+    mutationFn: (input: {
+      site: SiteModel;
+      notes: LearningNote[];
+      aiUsage: AiUsage[];
+      extraChecks: QualityCheck[];
+      returnFocusTo: HTMLElement | null;
+    }) => exportProject(input.site, input.notes, input.aiUsage, input.extraChecks),
+    onMutate: ({ returnFocusTo }) => {
+      showNotice("提出物ZIPを作成しています…", "status", returnFocusTo);
+    },
+    // 分かるのはZIPを作ってダウンロードを始めたところまで。保存できたかはブラウザ側でしか分からない。
+    onSuccess: (_, { returnFocusTo }) => {
+      showNotice("提出物ZIPを作成しました。ブラウザのダウンロード状況を確認してください。", "status", returnFocusTo);
+    },
+    // 手元の処理なので、待てば直る失敗ではない。起きやすい原因と、自分でできる対処を示す。
+    onError: (_, { returnFocusTo }) => {
+      showNotice(
+        "提出物ZIPを作成できませんでした。画像が大きい・多いとブラウザで処理しきれないことがあります。画像を減らすか、ページを再読み込みしてから、もう一度「提出物ZIP」を押してください。",
+        "error",
         returnFocusTo,
       );
     },
@@ -604,7 +683,20 @@ export default function App() {
               <strong className="ml-2 text-amber-700">未説明{flowState.unexplainedCount}件</strong>
             )}
           </span>
-          <Button onClick={() => void exportProject(site, notes, aiUsage, axeAudit.status === "ready" ? [axeAudit.check] : [])}><Download className="mr-2 size-4" />提出物ZIP</Button>
+          <Button
+            disabled={exportZip.isPending}
+            onClick={() =>
+              exportZip.mutate({
+                site,
+                notes,
+                aiUsage,
+                extraChecks: axeAudit.status === "ready" ? [axeAudit.check] : [],
+                returnFocusTo: captureFocusOrigin(),
+              })
+            }
+          >
+            <Download className="mr-2 size-4" />{exportZip.isPending ? "ZIP作成中…" : "提出物ZIP"}
+          </Button>
         </div>
       </header>
 
@@ -612,14 +704,15 @@ export default function App() {
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
       <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[340px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
-        {/* 下部バーのタブから参照されるパネル。xl以上では3カラム同時表示になるが、
+        {/* 3つの領域は、それぞれランドマーク（aside・main）の内側に、下部バーのタブから参照される
+            tabpanelを置く。要素へ直接role="tabpanel"を付けると、ランドマークの意味が上書きされて
+            支援技術から領域へ移動できなくなる。xl以上では3カラム同時表示になるが、
             タブ列自体がxl:hiddenで消えるため、関連付けが残っていても支障はない。 */}
         <aside
-          id="view-setup"
-          role="tabpanel"
-          aria-labelledby="view-tab-setup"
+          aria-label="題材・メモ"
           className={`min-h-0 overflow-hidden border-r border-slate-200 bg-slate-100 xl:flex ${mobileView === "setup" ? "flex" : "hidden"}`}
         >
+          <div id="view-setup" role="tabpanel" aria-labelledby="view-tab-setup" className="flex min-h-0 min-w-0 flex-1">
           {/* 畳んだときに残るつまみ。xl未満では下部バーで切り替えるため出さない。 */}
           <div className="order-2 hidden w-10 shrink-0 flex-col items-center bg-slate-100 py-3 xl:flex">
             <button
@@ -661,12 +754,23 @@ export default function App() {
           </p>
           <ul className="space-y-2">
             {site.sections.map((section) => (
-              <li key={section.id} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
+              <li key={section.id} className={`rounded-xl border px-3 py-2 text-sm ${section.id === selectedElementId ? "border-blue-300 bg-blue-50" : "border-slate-200"}`}>
                 <div className="flex items-center gap-2">
                   <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2">
                     <span className="truncate">{section.title}</span>
                     <input id={sectionToggleId(section.id)} type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
                   </label>
+                  {/* プレビュー内のクリックに代わる選び方。どれを選んでいるかはaria-currentで伝える。 */}
+                  <button
+                    type="button"
+                    onClick={() => editSection(section.id)}
+                    aria-label={`${section.title}を編集`}
+                    aria-current={section.id === selectedElementId ? "true" : undefined}
+                    title={`${section.title}を編集`}
+                    className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-blue-50 hover:text-blue-700 aria-[current=true]:text-blue-700"
+                  >
+                    <Pencil className="size-4" />
+                  </button>
                   <button
                     type="button"
                     id={sectionRemoveButtonId(section.id)}
@@ -732,7 +836,7 @@ export default function App() {
           {/* 内側でスクロールさせない。列のスクロールと二重になり、どちらを動かせばよいか分からなくなる。 */}
           <div className="space-y-2">
             {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
-              <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs">
+              <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs wrap-anywhere">
                 <strong>{note.target}</strong>
                 <p className="mt-1 text-slate-600">{note.reason}</p>
                 {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
@@ -748,16 +852,16 @@ export default function App() {
             ))}
           </div>
           </div>
+          </div>
         </aside>
 
         <main
-          id="view-preview"
-          role="tabpanel"
-          aria-labelledby="view-tab-preview"
           className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
         >
+          <div id="view-preview" role="tabpanel" aria-labelledby="view-tab-preview" className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
-            <div>
+            {/* サイト名は自由入力。空白のない長い文字列でも、隣のボタンを押し出さずに折り返す。 */}
+            <div className="min-w-0 flex-1 wrap-anywhere">
               <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
               <h2 className="font-black">{site.siteTitle}</h2>
             </div>
@@ -799,14 +903,14 @@ export default function App() {
               </>
             )}
           </div>
+          </div>
         </main>
 
         <aside
-          id="view-panel"
-          role="tabpanel"
-          aria-labelledby="view-tab-panel"
+          aria-label="調整と学習"
           className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}
         >
+          <div id="view-panel" role="tabpanel" aria-labelledby="view-tab-panel" className="flex min-h-0 min-w-0 flex-1">
           {/* 畳んだときのつまみ。デスクトップで畳んでいる間はここだけが残る。 */}
           <div className={`hidden w-10 shrink-0 flex-col items-center py-3 ${panelOpen ? "xl:hidden" : "xl:flex"}`}>
             <button
@@ -827,6 +931,10 @@ export default function App() {
 
           {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
           <div className={`flex min-w-0 flex-1 flex-col bg-white ${panelOpen ? "flex" : "flex xl:hidden"}`}>
+          {/* 中の見出しはh3から始まるため、領域の見出しとしてh2を置く。無いとモバイルでこの領域だけを
+              表示したときにh1からh3へ飛び、デスクトップではプレビューのh2の下に入ってしまう。
+              見た目ではタブと下部バーが同じ役割を担うので、読み上げ用だけにする。 */}
+          <h2 className="sr-only">調整と学習</h2>
           {/* タブは横書き。縦書きだと1文字ずつ縦に並び、主要ナビゲーションとして読みにくい。
               role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
           <div className="flex shrink-0 items-center border-b border-slate-200 px-2 pt-2">
@@ -943,7 +1051,7 @@ export default function App() {
           </Card>}
 
           {selectedSection && <Card className="mt-4 space-y-3 p-4">
-            <h3 className="text-sm font-black">選択中: {selectedSection.title}</h3>
+            <h3 ref={selectedSectionHeadingRef} tabIndex={-1} className="text-sm font-black wrap-anywhere">選択中: {selectedSection.title}</h3>
             <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
             <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} /></label>
             {selectedSection.kind !== "contact" && (
@@ -973,7 +1081,7 @@ export default function App() {
 
           {activePanel === "quality" && <Card className="mt-4 p-4">
             <h3 className="text-sm font-black">品質チェック</h3>
-            <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
+            <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div className="min-w-0 wrap-anywhere"><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
 
             {/* axeの自動チェック。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
             <section aria-labelledby="axe-heading" className="mt-4 border-t border-slate-200 pt-3">
@@ -996,7 +1104,7 @@ export default function App() {
                     variant="secondary"
                     className="mt-2 min-h-9 px-3 text-xs"
                     onClick={() => {
-                      retryAxeAudit();
+                      retryAxeAuditWithNotice();
                       axeHeadingRef.current?.focus();
                     }}
                   >
@@ -1039,11 +1147,14 @@ export default function App() {
           </Card>}
           </div>
           </div>
+          </div>
         </aside>
       </div>
 
       {/* 狭い画面用の切替バー。3カラムを縦積みすると見づらいため、1つずつ表示する。 */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" role="tablist" aria-label="表示の切り替え">
+      {/* navへ直接role="tablist"を付けるとナビゲーションのランドマークが上書きされるため、内側に置く。 */}
+      <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" aria-label="表示の切り替え">
+        <div className="flex" role="tablist" aria-label="表示の切り替え">
         {(Object.keys(mobileViewLabels) as MobileView[]).map((key) => (
           <button
             key={key}
@@ -1066,6 +1177,7 @@ export default function App() {
             {mobileView === key && <span className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-blue-700" />}
           </button>
         ))}
+        </div>
       </nav>
     </div>
   );
