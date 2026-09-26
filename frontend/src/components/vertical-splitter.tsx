@@ -42,7 +42,10 @@ export function VerticalSplitter({ onResize, label, value, min, max }: Props) {
         event.preventDefault();
         onResize(step);
       }}
-      className="group flex h-4 shrink-0 cursor-row-resize touch-none items-center justify-center"
+      // 見た目の線は細いまま、つかめる範囲だけを広げる。指で操作できる端末では44px、マウスだけでも24pxを確保する。
+      // 見えない領域を上下へはみ出させると、隣のプレビューやコードのクリックを奪うため、バー自体の高さで取る。
+      // タッチ対応のノートPCのように主な入力がマウスの端末でも指で触れるため、any-pointerで判定する。
+      className="group flex h-6 shrink-0 cursor-row-resize touch-none items-center justify-center any-pointer-coarse:h-11"
     >
       <span className="h-1 w-16 rounded-full bg-slate-300 transition group-hover:bg-slate-400" />
     </div>

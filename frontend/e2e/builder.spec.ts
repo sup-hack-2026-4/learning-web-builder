@@ -1472,3 +1472,72 @@ test("axeの自動チェックに失敗しても、同じサイトのまま再�
   await expect(page.getByTestId("axe-error")).toHaveCount(0);
   await expect(noticeStatus).toContainText(/自動チェックが終わりました。指摘が\d+件あります。/);
 });
+
+test("マウスの環境でも、分割バーは24px以上の高さでつかめて、ドラッグでコードの高さが変わる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+  const box = await splitter.boundingBox();
+  expect(box?.height).toBeGreaterThanOrEqual(24);
+
+  // 上へ動かすとコードが広がる。
+  const before = Number(await splitter.getAttribute("aria-valuenow"));
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 - 60, { steps: 5 });
+  await page.mouse.up();
+  expect(Number(await splitter.getAttribute("aria-valuenow"))).toBeGreaterThan(before);
+
+  // コードを上限まで広げても、プレビューは最小の高さ（240px）を保つ。上限の計算で分割バーの高さを差し引いているため。
+  await splitter.focus();
+  for (let index = 0; index < 40; index += 1) await page.keyboard.press("ArrowUp");
+  await expect(splitter).toHaveAttribute("aria-valuenow", await splitter.getAttribute("aria-valuemax") ?? "");
+  const previewBox = await page.locator("iframe[title='生成サイトのプレビュー']").boundingBox();
+  expect(previewBox?.height).toBeGreaterThanOrEqual(240);
+});
+
+test.describe("タッチ操作の環境", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test("分割バーとセクションの編集・削除ボタンは、指で押せる大きさがある", async ({ page }) => {
+    await page.goto("/");
+    // このテストの前提。指で操作できる端末として扱われていること。
+    expect(await page.evaluate(() => window.matchMedia("(any-pointer: coarse)").matches)).toBe(true);
+
+    const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+    expect((await splitter.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+
+    await page.getByRole("tab", { name: "題材・メモ" }).click();
+    for (const name of [/を編集$/, /を削除$/]) {
+      const box = await page.getByRole("button", { name }).first().boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(40);
+      expect(box?.height).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  test("分割バーは指でドラッグでき、すぐ上のプレビューとすぐ下のコードの操作を奪わない", async ({ page }) => {
+    await page.goto("/");
+    const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+    const box = (await splitter.boundingBox())!;
+    const x = box.x + box.width / 2;
+
+    // バーのつかめる範囲は自分の枠の中だけ。すぐ外側は、隣のプレビューとコードのまま。
+    const hitsSplitter = (y: number) =>
+      page.evaluate(([px, py]) => document.elementFromPoint(px, py)?.closest("[role='separator']") !== null, [x, y]);
+    expect(await hitsSplitter(box.y + box.height / 2)).toBe(true);
+    expect(await hitsSplitter(box.y - 2)).toBe(false);
+    expect(await hitsSplitter(box.y + box.height + 2)).toBe(false);
+
+    // 指のドラッグは、Chromiumの操作用の仕組み（CDP）でタッチを送って再現する。上へ動かすとコードが広がる。
+    const before = Number(await splitter.getAttribute("aria-valuenow"));
+    const cdp = await page.context().newCDPSession(page);
+    const startY = box.y + box.height / 2;
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: startY }] });
+    for (let step = 1; step <= 5; step += 1) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: startY - step * 12 }] });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect.poll(async () => Number(await splitter.getAttribute("aria-valuenow"))).toBeGreaterThan(before);
+  });
+});
