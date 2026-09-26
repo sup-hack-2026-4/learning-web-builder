@@ -33,7 +33,7 @@ import {
   sectionKinds,
   type SectionKind,
 } from "@/features/site-model/sections";
-import type { SiteModel, SiteSection } from "@/features/site-model/schema";
+import type { QualityCheck, SiteModel, SiteSection } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { generateSite } from "@/lib/api";
 import { ConceptChatPanel } from "@/features/concept/chat-panel";
@@ -456,6 +456,19 @@ export default function App() {
     },
   });
 
+  // 画像を含むZIPは作るのに時間がかかる。処理中はボタンを止めて連打による重複出力を防ぎ、
+  // 成否は他の操作と同じ通知で伝える。失敗してもボタンは戻るため、そのまま再試行できる。
+  const exportZip = useMutation({
+    mutationFn: ({ extraChecks }: { extraChecks: QualityCheck[]; returnFocusTo: HTMLElement | null }) =>
+      exportProject(site, notes, aiUsage, extraChecks),
+    onSuccess: (_, { returnFocusTo }) => {
+      showNotice("提出物ZIPを出力しました。ダウンロードしたファイルを確認してください。", "status", returnFocusTo);
+    },
+    onError: (_, { returnFocusTo }) => {
+      showNotice("提出物ZIPを作成できませんでした。時間をおいて、もう一度「提出物ZIP」を押してください。", "error", returnFocusTo);
+    },
+  });
+
   const submitTopic = (event: FormEvent) => {
     event.preventDefault();
     if (!topic.trim()) return;
@@ -593,7 +606,17 @@ export default function App() {
               <strong className="ml-2 text-amber-700">未説明{flowState.unexplainedCount}件</strong>
             )}
           </span>
-          <Button onClick={() => void exportProject(site, notes, aiUsage, axeAudit.status === "ready" ? [axeAudit.check] : [])}><Download className="mr-2 size-4" />提出物ZIP</Button>
+          <Button
+            disabled={exportZip.isPending}
+            onClick={() =>
+              exportZip.mutate({
+                extraChecks: axeAudit.status === "ready" ? [axeAudit.check] : [],
+                returnFocusTo: captureFocusOrigin(),
+              })
+            }
+          >
+            <Download className="mr-2 size-4" />{exportZip.isPending ? "ZIP作成中…" : "提出物ZIP"}
+          </Button>
         </div>
       </header>
 

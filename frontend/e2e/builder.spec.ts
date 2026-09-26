@@ -138,6 +138,9 @@ test("提出物ZIPをダウンロードできる", async ({ page }) => {
   const download = await downloadPromise;
 
   expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+  // 出力できたことが通知で伝わり、ボタンは次の出力のために元へ戻る。
+  await expect(page.getByTestId("notice-bar").getByRole("status")).toContainText("提出物ZIPを出力しました。");
+  await expect(page.getByRole("button", { name: "提出物ZIP" })).toBeEnabled();
 });
 
 test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
