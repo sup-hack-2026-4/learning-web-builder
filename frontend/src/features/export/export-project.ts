@@ -40,7 +40,9 @@ export async function exportProject(
   anchor.href = url;
   anchor.download = `${toSafeFileName(site.topic)}-site.zip`;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // click直後に解放すると、ダウンロードが始まる前にURLが無効になり失敗するブラウザがある。
+  // 保存の開始を待ってから解放する。
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 // データURIからbase64部分だけを取り出す。JSZipへはこの部分を渡す。

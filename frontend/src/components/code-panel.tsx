@@ -142,9 +142,10 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
         {/* いまコードのどこを見ればよいかを、色の意味とあわせて示す。 */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600">
           {selectedLabel && (
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-3 w-1 rounded-sm bg-blue-500" />
-              選んだ要素: <strong className="font-bold text-slate-800">{selectedLabel}</strong>
+            // セクション名は自由入力。長い文字列でも欠けずに読めるよう、枠の中で折り返す。
+            <span className="flex min-w-0 max-w-full items-center gap-1 wrap-anywhere">
+              <span className="inline-block h-3 w-1 shrink-0 rounded-sm bg-blue-500" />
+              選んだ要素: <strong className="min-w-0 font-bold text-slate-800">{selectedLabel}</strong>
               {selectedLineCount === 0 && <span className="text-slate-500">（このファイルには出てきません）</span>}
             </span>
           )}
