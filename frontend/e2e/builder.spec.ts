@@ -1135,3 +1135,37 @@ test("提出物ZIPへ画像を同梱し、HTMLは相対パスで参照する", a
   expect(archive).toContain("images/about.jpg");
   expect(archive).toContain('src="images/about.jpg"');
 });
+
+test("マウスの環境でも、分割バーは24px以上の高さでつかめて、ドラッグでコードの高さが変わる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+  const box = await splitter.boundingBox();
+  expect(box?.height).toBeGreaterThanOrEqual(24);
+
+  // 上へ動かすとコードが広がる。
+  const before = Number(await splitter.getAttribute("aria-valuenow"));
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 - 60, { steps: 5 });
+  await page.mouse.up();
+  expect(Number(await splitter.getAttribute("aria-valuenow"))).toBeGreaterThan(before);
+});
+
+test.describe("タッチ操作の環境", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test("分割バーとセクションの削除ボタンは、指で押せる大きさがある", async ({ page }) => {
+    await page.goto("/");
+
+    const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+    expect((await splitter.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+
+    await page.getByRole("tab", { name: "題材・メモ" }).click();
+    const removeButton = page.getByRole("button", { name: /を削除$/ }).first();
+    const box = await removeButton.boundingBox();
+    expect(box?.width).toBeGreaterThanOrEqual(40);
+    expect(box?.height).toBeGreaterThanOrEqual(40);
+  });
+});

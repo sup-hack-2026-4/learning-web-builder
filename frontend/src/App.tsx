@@ -668,7 +668,9 @@ export default function App() {
                     disabled={removeBlockReason !== null}
                     aria-label={`${section.title}を削除`}
                     title={removeBlockReason ?? `${section.title}を削除`}
-                    className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                    // アイコンは小さいまま、指で押せる40px四方を確保する。
+                    // 行の上下と右の余白へ重ねて、行の高さとアイコンの位置をほぼ変えない。
+                    className="-my-2 -mr-2 inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
                   >
                     <Trash2 className="size-4" />
                   </button>
