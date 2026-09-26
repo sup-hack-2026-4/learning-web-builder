@@ -601,14 +601,15 @@ export default function App() {
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
       <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[340px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
-        {/* 下部バーのタブから参照されるパネル。xl以上では3カラム同時表示になるが、
+        {/* 3つの領域は、それぞれランドマーク（aside・main）の内側に、下部バーのタブから参照される
+            tabpanelを置く。要素へ直接role="tabpanel"を付けると、ランドマークの意味が上書きされて
+            支援技術から領域へ移動できなくなる。xl以上では3カラム同時表示になるが、
             タブ列自体がxl:hiddenで消えるため、関連付けが残っていても支障はない。 */}
         <aside
-          id="view-setup"
-          role="tabpanel"
-          aria-labelledby="view-tab-setup"
+          aria-label="題材・メモ"
           className={`min-h-0 overflow-hidden border-r border-slate-200 bg-slate-100 xl:flex ${mobileView === "setup" ? "flex" : "hidden"}`}
         >
+          <div id="view-setup" role="tabpanel" aria-labelledby="view-tab-setup" className="flex min-h-0 min-w-0 flex-1">
           {/* 畳んだときに残るつまみ。xl未満では下部バーで切り替えるため出さない。 */}
           <div className="order-2 hidden w-10 shrink-0 flex-col items-center bg-slate-100 py-3 xl:flex">
             <button
@@ -737,14 +738,13 @@ export default function App() {
             ))}
           </div>
           </div>
+          </div>
         </aside>
 
         <main
-          id="view-preview"
-          role="tabpanel"
-          aria-labelledby="view-tab-preview"
           className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
         >
+          <div id="view-preview" role="tabpanel" aria-labelledby="view-tab-preview" className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
             <div>
               <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
@@ -774,14 +774,14 @@ export default function App() {
               </>
             )}
           </div>
+          </div>
         </main>
 
         <aside
-          id="view-panel"
-          role="tabpanel"
-          aria-labelledby="view-tab-panel"
+          aria-label="調整と学習"
           className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}
         >
+          <div id="view-panel" role="tabpanel" aria-labelledby="view-tab-panel" className="flex min-h-0 min-w-0 flex-1">
           {/* 畳んだときのつまみ。デスクトップで畳んでいる間はここだけが残る。 */}
           <div className={`hidden w-10 shrink-0 flex-col items-center py-3 ${panelOpen ? "xl:hidden" : "xl:flex"}`}>
             <button
@@ -802,6 +802,10 @@ export default function App() {
 
           {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
           <div className={`flex min-w-0 flex-1 flex-col bg-white ${panelOpen ? "flex" : "flex xl:hidden"}`}>
+          {/* 中の見出しはh3から始まるため、領域の見出しとしてh2を置く。無いとモバイルでこの領域だけを
+              表示したときにh1からh3へ飛び、デスクトップではプレビューのh2の下に入ってしまう。
+              見た目ではタブと下部バーが同じ役割を担うので、読み上げ用だけにする。 */}
+          <h2 className="sr-only">調整と学習</h2>
           {/* タブは横書き。縦書きだと1文字ずつ縦に並び、主要ナビゲーションとして読みにくい。
               role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
           <div className="flex shrink-0 items-center border-b border-slate-200 px-2 pt-2">
@@ -999,11 +1003,14 @@ export default function App() {
           </Card>}
           </div>
           </div>
+          </div>
         </aside>
       </div>
 
       {/* 狭い画面用の切替バー。3カラムを縦積みすると見づらいため、1つずつ表示する。 */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" role="tablist" aria-label="表示の切り替え">
+      {/* navへ直接role="tablist"を付けるとナビゲーションのランドマークが上書きされるため、内側に置く。 */}
+      <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" aria-label="表示の切り替え">
+        <div className="flex" role="tablist" aria-label="表示の切り替え">
         {(Object.keys(mobileViewLabels) as MobileView[]).map((key) => (
           <button
             key={key}
@@ -1026,6 +1033,7 @@ export default function App() {
             {mobileView === key && <span className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-blue-700" />}
           </button>
         ))}
+        </div>
       </nav>
     </div>
   );
