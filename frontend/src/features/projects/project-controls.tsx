@@ -206,8 +206,8 @@ function ClerkProjectControls({
               セクション削除と同じくブラウザのconfirmは使わない。操作が止まるうえ、
               何が巻き添えで消えるのかを画面に書けない。 */}
           {confirmingDelete && currentProjectId && (
-            <div className="rounded-xl bg-red-50 p-2 text-xs text-red-900">
-              <p className="leading-4">
+            <div className="max-w-full rounded-xl bg-red-50 p-2 text-xs text-red-900">
+              <p className="leading-4 wrap-anywhere">
                 「{selectedProject?.site.siteTitle ?? "選択中のプロジェクト"}」を削除しますか？<br />
                 このプロジェクトと、関連する学習メモ・品質チェック結果も削除されます。元に戻せません。
               </p>

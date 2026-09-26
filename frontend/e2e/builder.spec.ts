@@ -1240,3 +1240,117 @@ test("提出物ZIPへ画像を同梱し、HTMLは相対パスで参照する", a
   expect(archive).toContain("images/about.jpg");
   expect(archive).toContain('src="images/about.jpg"');
 });
+
+// 空白を含まない長い文字列。はみ出すかどうかは、URLのように途中で折り返す位置がない文字列で決まる。
+const longUrl = (length: number) => `https://example.com/${"a".repeat(length - "https://example.com/".length)}`;
+
+// 横にはみ出していれば、中身の幅（scrollWidth）が枠の幅（clientWidth）を超える。
+const overflowsHorizontally = (element: Element) => element.scrollWidth > element.clientWidth;
+
+test("相談の吹き出し・選択肢・決定事項に長いURLが入っても、枠の中で折り返す", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/concept/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        reply: `参考にしたいページは ${longUrl(120)} ですね。誰に読んでほしいですか？`,
+        choices: [longUrl(40)],
+        draft: { topic: longUrl(100), audience: "", goal: "", tone: "", mustInclude: [] },
+        missing: ["audience", "goal"],
+        ready: false,
+        provider: "static-sample",
+      }),
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+
+  await page.getByRole("button", { name: "相談をはじめる" }).click();
+  await page.getByLabel("返事を書く").fill(longUrl(200));
+  await page.getByRole("button", { name: "送信" }).click();
+
+  const draft = page.getByTestId("concept-draft");
+  await expect(draft).toContainText(longUrl(100));
+  expect(await draft.evaluate(overflowsHorizontally)).toBe(false);
+  expect(await draft.locator("dd").first().evaluate(overflowsHorizontally)).toBe(false);
+  for (const message of await page.getByTestId("concept-chat-log").locator("li").all()) {
+    expect(await message.evaluate(overflowsHorizontally)).toBe(false);
+  }
+  expect(await page.getByRole("button", { name: longUrl(40) }).evaluate(overflowsHorizontally)).toBe(false);
+  expect(await page.locator("section[aria-labelledby='concept-chat-heading']").evaluate(overflowsHorizontally)).toBe(false);
+});
+
+test("生成サイトの見出しに長いURLを入れても、プレビューが横にはみ出さない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("見出し", { exact: true }).fill(longUrl(80));
+  await expect(frame.locator("[data-builder-id='hero'] h1")).toHaveText(longUrl(80));
+
+  expect(await frame.locator("html").evaluate(overflowsHorizontally)).toBe(false);
+});
+
+// 要素自身の中身がはみ出さず、親の枠からも画面の右端からも出ていないか。
+// 親ごと広がって外側のoverflow:hiddenで隠れる場合は、自身と親の比較だけでは気づけないため、画面の幅とも比べる。
+const fitsInParent = (element: Element) => {
+  const parent = element.parentElement;
+  const right = element.getBoundingClientRect().right;
+  return (
+    element.scrollWidth <= element.clientWidth &&
+    (!parent || right <= parent.getBoundingClientRect().right + 1) &&
+    right <= document.documentElement.clientWidth + 1
+  );
+};
+
+test("編集画面のサイト名・選択中の見出し・学習メモ・品質チェック・コードのラベルも、長いURLを枠の中で折り返す", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  // サイト名とヒーローの見出しは、題材から作られる。
+  const topic = longUrl(60);
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill(topic);
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+
+  // プレビュー上部のサイト名と、コードパネルの「選んだ要素」。
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+  const siteName = page.locator("#view-preview").getByRole("heading", { level: 2, name: topic });
+  await expect(siteName).toBeVisible();
+  expect(await siteName.locator("..").evaluate(fitsInParent)).toBe(true);
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+  const selectedLabel = page.locator("#view-preview").getByText("選んだ要素:");
+  await expect(selectedLabel).toBeVisible();
+  expect(await selectedLabel.evaluate(fitsInParent)).toBe(true);
+
+  // 編集パネルの「選択中」の見出しと、学習メモ。
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  const selectedHeading = page.getByRole("heading", { name: `選択中: ${topic}` });
+  await expect(selectedHeading).toBeVisible();
+  expect(await selectedHeading.evaluate(fitsInParent)).toBe(true);
+  await page.getByRole("textbox", { name: "本文", exact: true }).fill("入口で鉢の選び方を案内します。");
+  await page.getByLabel("なぜこの変更をしますか？").fill(`参考にしたページ ${longUrl(150)} に合わせたいから`);
+  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  const note = page.getByTestId("learning-note").first();
+  await expect(note).toContainText(longUrl(150));
+  expect(await note.evaluate(fitsInParent)).toBe(true);
+
+  // 品質チェックの詳細には、画像説明が空のセクション名がそのまま入る。
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByRole("tab", { name: "品質" }).click();
+  const detail = page.locator("#view-panel").getByText(/の画像説明が空です。/);
+  await expect(detail).toContainText(topic);
+  expect(await detail.locator("..").evaluate(fitsInParent)).toBe(true);
+
+  // 最後に、どの表示でもページ全体が横にスクロールしないこと。
+  for (const view of ["プレビュー", "題材・メモ", "調整と学習"]) {
+    await page.getByRole("tab", { name: view }).click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+});
