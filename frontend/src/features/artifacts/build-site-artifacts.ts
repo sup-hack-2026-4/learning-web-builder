@@ -171,7 +171,8 @@ export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; color: var(--text); background: var(--background); line-height: 1.75; }
+/* 見出しや本文には、空白のない長いURLなども入りうる。狭い画面で横にはみ出さないよう、必要なときだけ単語の途中でも折り返す。 */
+body { margin: 0; color: var(--text); background: var(--background); line-height: 1.75; overflow-wrap: anywhere; }
 .site-header { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: calc(var(--space) * 0.9) clamp(20px, 6vw, 80px); color: var(--text); background: var(--surface); border-bottom: 1px solid var(--border); }
 .logo { color: var(--primary); font-weight: 800; text-decoration: none; }
 .site-header span { color: var(--text-muted); font-size: 13px; }
