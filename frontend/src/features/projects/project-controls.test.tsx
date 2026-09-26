@@ -73,6 +73,34 @@ describe("ProjectControls", () => {
     vi.mocked(deleteProject).mockReset();
   });
 
+  it("一覧の取得中は読み込み中であることを、セレクトの説明と読み上げの両方で伝える", async () => {
+    vi.mocked(listProjects).mockReturnValue(new Promise(() => {}));
+    renderControls();
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("保存一覧を読み込み中…");
+    expect(screen.getByLabelText("保存済みプロジェクト")).toHaveAccessibleDescription("保存一覧を読み込み中…");
+  });
+
+  it("保存済みのプロジェクトが0件なら、そのことを伝える", async () => {
+    vi.mocked(listProjects).mockResolvedValue([]);
+    renderControls();
+
+    // 状態の変化が読み上げられるよう、取得の前からある同じライブリージョンの中身が変わる。
+    const status = screen.getByRole("status");
+    expect(await within(status).findByText("保存済みのプロジェクトはまだありません")).toBeInTheDocument();
+    expect(screen.getByLabelText("保存済みプロジェクト")).toHaveAccessibleDescription("保存済みのプロジェクトはまだありません");
+  });
+
+  it("保存済みのプロジェクトがあれば、状態の文言は出さない", async () => {
+    renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(select).not.toHaveAttribute("aria-describedby");
+  });
+
   it("削除の確認中に保存を始めると、保存が終わるまで削除できない", async () => {
     // 保存の応答を止めておき、保存中の状態を作る。
     vi.mocked(saveProject).mockReturnValue(new Promise(() => {}));

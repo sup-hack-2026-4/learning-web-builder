@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { summarizeAxeFindings, type AxeFinding } from "./axe-audit";
 import { runAxeAudit } from "./run-axe-audit";
 import type { QualityCheck, SiteModel } from "../site-model/schema";
@@ -17,14 +17,19 @@ const LOADING: AxeAuditState = { status: "loading" };
 
 const ERROR: AxeAuditState = {
   status: "error",
-  message: "自動チェックを実行できませんでした。しばらくしてからもう一度開いてください。",
+  message: "自動チェックを実行できませんでした。「もう一度チェックする」を押すと再実行します。",
 };
 
-/** 生成中のサイトに対してaxeの自動チェックを走らせ、実行中・結果・失敗を返す。 */
-export function useAxeAudit(site: SiteModel): AxeAuditState {
-  // どのサイトを検査した結果かを一緒に持つ。
+/**
+ * 生成中のサイトに対してaxeの自動チェックを走らせ、実行中・結果・失敗を返す。
+ * 検査はサイトが変わったときに走る。失敗したときはサイトを変えずに retry で再実行できる。
+ */
+export function useAxeAudit(site: SiteModel): { state: AxeAuditState; retry: () => void } {
+  // 再実行の回数。サイトが同じでも、これが変われば検査をやり直す。
+  const [attempt, setAttempt] = useState(0);
+  // どのサイトの、何回目の検査結果かを一緒に持つ。
   // 検査には時間がかかるため、古い結果を今のサイトの結果として出さないようにする。
-  const [audited, setAudited] = useState<{ site: SiteModel; state: AxeAuditState } | null>(null);
+  const [audited, setAudited] = useState<{ site: SiteModel; attempt: number; state: AxeAuditState } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,11 +38,11 @@ export function useAxeAudit(site: SiteModel): AxeAuditState {
       runAxeAudit(site)
         .then((findings) => {
           if (cancelled) return;
-          setAudited({ site, state: { status: "ready", findings, check: summarizeAxeFindings(findings) } });
+          setAudited({ site, attempt, state: { status: "ready", findings, check: summarizeAxeFindings(findings) } });
         })
         .catch(() => {
           if (cancelled) return;
-          setAudited({ site, state: ERROR });
+          setAudited({ site, attempt, state: ERROR });
         });
     }, AUDIT_DEBOUNCE_MS);
 
@@ -45,7 +50,9 @@ export function useAxeAudit(site: SiteModel): AxeAuditState {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [site]);
+  }, [site, attempt]);
 
-  return audited?.site === site ? audited.state : LOADING;
+  const retry = useCallback(() => setAttempt((current) => current + 1), []);
+  const state = audited?.site === site && audited.attempt === attempt ? audited.state : LOADING;
+  return { state, retry };
 }
