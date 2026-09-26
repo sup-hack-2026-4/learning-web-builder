@@ -1354,3 +1354,53 @@ test("編集画面のサイト名・選択中の見出し・学習メモ・品�
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   }
 });
+
+test("キーボードだけで、一覧からセクションを選んで編集を始められる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await generateSite(page, "スミレ即売会");
+
+  // .focus()で直接当てるとTab順から外れていても通ってしまうため、
+  // 同じ行の表示チェックボックスからTabで移れることを確かめる。
+  const editButton = page.getByRole("button", { name: "私たちについてを編集" });
+  await page.getByRole("checkbox", { name: "私たちについて", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(editButton).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  // 選んだ結果が読み上げで伝わるよう、編集欄の見出しへフォーカスが移る。
+  const heading = page.getByRole("heading", { name: "選択中: 私たちについて" });
+  await expect(heading).toBeFocused();
+  await expect(editButton).toHaveAttribute("aria-current", "true");
+  await expect(page.getByLabel("見出し", { exact: true })).toHaveValue("私たちについて");
+
+  // Spaceでも選べる。
+  const heroButton = page.getByRole("button", { name: /を編集$/ }).first();
+  await heroButton.focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("heading", { name: /^選択中: / })).toBeFocused();
+  await expect(heroButton).toHaveAttribute("aria-current", "true");
+  await expect(editButton).not.toHaveAttribute("aria-current");
+});
+
+test("モバイルで一覧から編集を始めると、調整と学習の表示へ切り替わる", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+
+  await page.getByRole("button", { name: "私たちについてを編集" }).click();
+
+  await expect(page.getByRole("tab", { name: "調整と学習" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "選択中: 私たちについて" })).toBeFocused();
+});
+
+test("右パネルを畳んだり別のタブを開いたりしていても、一覧から選ぶと編集欄が開く", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await generateSite(page, "スミレ即売会");
+  await page.getByRole("tab", { name: "品質" }).click();
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+
+  await page.getByRole("button", { name: "私たちについてを編集" }).click();
+
+  await expect(page.getByRole("tab", { name: "調整" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "選択中: 私たちについて" })).toBeFocused();
+});

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -204,6 +204,8 @@ export default function App() {
   const removalCancelRef = useRef<HTMLButtonElement>(null);
   // 行がすべて消えたときのフォーカスの受け皿。
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
+  // 一覧から編集を始めたときのフォーカス先。選んだ結果が読み上げで伝わるよう、編集欄の見出しに置く。
+  const selectedSectionHeadingRef = useRef<HTMLHeadingElement>(null);
   // 追加するセクションの種類。生成結果には入りにくく、かつ足す判断をしやすい
   // 「写真・作品」を初期値にする。ヒーローを初期値にすると、h1が2つある構造を
   // 何気なく作ってしまいやすい（品質チェックには出るが、最初の一歩としては遠回り）。
@@ -383,6 +385,20 @@ export default function App() {
   const closeRemovalConfirm = (sectionId: string) => {
     setRemovalTargetId(null);
     document.getElementById(sectionRemoveButtonId(sectionId))?.focus();
+  };
+
+  // 一覧からセクションを選んで編集を始める。プレビュー内のセクションはクリックでしか選べないため、
+  // キーボードや読み上げで使う人の選び方はこちらになる。
+  // 選んでも編集欄が見えていなければ意味がないので、右パネルのデザインタブを開き、
+  // 描画を済ませてから編集欄の見出しへフォーカスを移す。
+  const editSection = (sectionId: string) => {
+    flushSync(() => {
+      selectElement(sectionId);
+      setActivePanel("design");
+      setPanelOpen(true);
+      setMobileView("panel");
+    });
+    selectedSectionHeadingRef.current?.focus();
   };
 
   // セクションの削除。確認を通ってから呼ぶ。
@@ -696,12 +712,23 @@ export default function App() {
           </p>
           <ul className="space-y-2">
             {site.sections.map((section) => (
-              <li key={section.id} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
+              <li key={section.id} className={`rounded-xl border px-3 py-2 text-sm ${section.id === selectedElementId ? "border-blue-300 bg-blue-50" : "border-slate-200"}`}>
                 <div className="flex items-center gap-2">
                   <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2">
                     <span className="truncate">{section.title}</span>
                     <input id={sectionToggleId(section.id)} type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
                   </label>
+                  {/* プレビュー内のクリックに代わる選び方。どれを選んでいるかはaria-currentで伝える。 */}
+                  <button
+                    type="button"
+                    onClick={() => editSection(section.id)}
+                    aria-label={`${section.title}を編集`}
+                    aria-current={section.id === selectedElementId ? "true" : undefined}
+                    title={`${section.title}を編集`}
+                    className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-blue-50 hover:text-blue-700 aria-[current=true]:text-blue-700"
+                  >
+                    <Pencil className="size-4" />
+                  </button>
                   <button
                     type="button"
                     id={sectionRemoveButtonId(section.id)}
@@ -968,7 +995,7 @@ export default function App() {
           </Card>}
 
           {selectedSection && <Card className="mt-4 space-y-3 p-4">
-            <h3 className="text-sm font-black wrap-anywhere">選択中: {selectedSection.title}</h3>
+            <h3 ref={selectedSectionHeadingRef} tabIndex={-1} className="text-sm font-black wrap-anywhere">選択中: {selectedSection.title}</h3>
             <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
             <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} /></label>
             {selectedSection.kind !== "contact" && (
