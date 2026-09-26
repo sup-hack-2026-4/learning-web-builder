@@ -1103,7 +1103,11 @@ test("画像のファイル入力は名前を持ち、Tabでは隣のボタン�
   await chooseButton.focus();
   await page.keyboard.press("Shift+Tab");
   await expect(fileInput).not.toBeFocused();
-  await expect(chooseButton).not.toBeFocused();
+  // 否定だけでは想定外の場所へ飛んでも通るため、1つ前の操作要素（本文の欄）へ移ったことを確かめる。
+  await expect(page.getByRole("textbox", { name: "本文", exact: true })).toBeFocused();
+  // 通常のTab操作でも、入力を飛ばしてボタンへ戻れる。
+  await page.keyboard.press("Tab");
+  await expect(chooseButton).toBeFocused();
 });
 
 test("基本情報のセクションには画像欄を出さない", async ({ page }) => {
