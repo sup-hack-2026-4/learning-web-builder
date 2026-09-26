@@ -721,7 +721,7 @@ export default function App() {
           {/* 内側でスクロールさせない。列のスクロールと二重になり、どちらを動かせばよいか分からなくなる。 */}
           <div className="space-y-2">
             {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
-              <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs">
+              <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs wrap-anywhere">
                 <strong>{note.target}</strong>
                 <p className="mt-1 text-slate-600">{note.reason}</p>
                 {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
@@ -746,7 +746,8 @@ export default function App() {
           className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
         >
           <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
-            <div>
+            {/* サイト名は自由入力。空白のない長い文字列でも、隣のボタンを押し出さずに折り返す。 */}
+            <div className="min-w-0 flex-1 wrap-anywhere">
               <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
               <h2 className="font-black">{site.siteTitle}</h2>
             </div>
@@ -918,7 +919,7 @@ export default function App() {
           </Card>}
 
           {selectedSection && <Card className="mt-4 space-y-3 p-4">
-            <h3 className="text-sm font-black">選択中: {selectedSection.title}</h3>
+            <h3 className="text-sm font-black wrap-anywhere">選択中: {selectedSection.title}</h3>
             <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
             <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} /></label>
             {selectedSection.kind !== "contact" && (
@@ -948,7 +949,7 @@ export default function App() {
 
           {activePanel === "quality" && <Card className="mt-4 p-4">
             <h3 className="text-sm font-black">品質チェック</h3>
-            <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
+            <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div className="min-w-0 wrap-anywhere"><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
 
             {/* axeの自動チェック。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
             <section aria-labelledby="axe-heading" className="mt-4 border-t border-slate-200 pt-3">
