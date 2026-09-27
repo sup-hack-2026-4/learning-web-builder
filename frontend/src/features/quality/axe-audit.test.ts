@@ -15,12 +15,14 @@ describe("toAxeFindings", () => {
     expect(findings[0].count).toBe(1);
   });
 
-  it("辞書に無いルールでもaxeの原文を使って表示できる", () => {
+  it("辞書に無いルールでも英語の原文は出さず、日本語とルールIDで示す", () => {
     const findings = toAxeFindings([
       { id: "unknown-rule", impact: "serious", help: "Something must be fixed", nodes: [{ target: [".x"] }] },
     ]);
 
-    expect(findings[0].summary).toBe("Something must be fixed");
+    expect(findings[0].summary).toBe("自動チェックで問題が見つかりました（ルールID: unknown-rule）。");
+    expect(findings[0].summary).not.toContain("Something must be fixed");
+    expect(findings[0].why).toContain("ルールIDで検索");
     expect(findings[0].ruleId).toBe("unknown-rule");
   });
 
@@ -61,6 +63,17 @@ describe("summarizeAxeFindings", () => {
 
     expect(check.id).toBe("axe");
     expect(check.passed).toBe(true);
+  });
+
+  it("品質レポートに出る見出しと説明に、検査ツールの名前を出さない", () => {
+    const passed = summarizeAxeFindings([]);
+    const failed = summarizeAxeFindings(toAxeFindings([{ id: "image-alt", impact: "critical", nodes: [{ target: ["img"] }] }]));
+
+    for (const check of [passed, failed]) {
+      expect(check.label).toBe("アクセシビリティの自動チェック");
+      expect(check.label).not.toMatch(/axe/i);
+      expect(check.detail).not.toMatch(/axe/i);
+    }
   });
 
   it("指摘があるときは件数と内容をまとめる", () => {

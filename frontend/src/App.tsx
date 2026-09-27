@@ -123,7 +123,7 @@ export default function App() {
   // 初回の描画から文言が入っているため、ライブ通知としては読み上げられない（通常の内容として読める）。
   const [notice, setNotice] = useState<Notice | null>({
     id: 0,
-    message: "静的サンプルで開始しています。題材を入力して生成できます。",
+    message: "見本のサイトで開始しています。題材を入力すると、たたき台を生成できます。",
     tone: "status",
     returnFocusTo: null,
   });
@@ -526,7 +526,7 @@ export default function App() {
         addNote("コンセプト", conceptSummary(concept));
       }
       showNotice(
-        provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "APIを利用できないため、静的サンプルを生成しました。",
+        provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。",
         "status",
         returnFocusTo,
       );
@@ -1105,9 +1105,9 @@ export default function App() {
             <h3 className="text-sm font-black">品質チェック</h3>
             <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div className="min-w-0 wrap-anywhere"><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
 
-            {/* axeの自動チェック。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
+            {/* アクセシビリティの自動チェック（axe）。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
             <section aria-labelledby="axe-heading" className="mt-4 border-t border-slate-200 pt-3">
-              <h4 ref={axeHeadingRef} id="axe-heading" tabIndex={-1} className="text-xs font-black">アクセシビリティ（axe）</h4>
+              <h4 ref={axeHeadingRef} id="axe-heading" tabIndex={-1} className="text-xs font-black">アクセシビリティの自動チェック</h4>
 
               {axeAudit.status === "loading" && (
                 <p className="mt-2 text-xs text-slate-500" data-testid="axe-loading">自動チェックを実行しています…</p>
