@@ -5,7 +5,11 @@ test("題材を入力し、静的フォールバックでサイトを生成で�
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
   await expect(page.getByRole("heading", { name: "学校の写真部", exact: true })).toBeVisible();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+  // プレビューの見出しも、プレビュー内の画像の仮表示も日本語で出す。
+  await expect(page.locator("#view-preview").getByText("プレビュー", { exact: true })).toBeVisible();
+  await expect(page.frameLocator("iframe").first().getByText("画像", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("LIVE PREVIEW")).toHaveCount(0);
 });
 
 test("リセットすると未記録のテーマ変更と理由を破棄する", async ({ page }) => {
@@ -82,7 +86,7 @@ test("サイトを再生成すると未記録のテーマ変更と理由を破�
 
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
 
   await expect(page.getByLabel("なぜこの変更をしますか？")).toHaveValue("");
   // 生成後のサイトに対しては未変更なので、初期値が変更として記録されることはない。
@@ -186,7 +190,7 @@ test("提出物ZIPの作成に失敗すると理由を伝え、そのまま再�
 test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
+  await expect(page.getByText("ゲストモードではアカウントに保存できません。作品は提出物ZIPで書き出せます")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
 });
 
@@ -319,7 +323,7 @@ test("モバイルでプレビュー以外を表示していても操作結果�
   await page.getByRole("tab", { name: "題材・メモ" }).click();
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
-  const status = page.getByRole("status").filter({ hasText: "静的サンプルを生成しました。" });
+  const status = page.getByRole("status").filter({ hasText: "見本のたたき台を用意しました。" });
   await expect(status).toBeVisible();
   await expect(status).toBeInViewport();
 
@@ -334,15 +338,15 @@ test("モバイルでプレビュー以外を表示していても操作結果�
 
 test("通知を閉じても、次の操作結果はまた表示される", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("静的サンプルで開始しています。")).toBeVisible();
+  await expect(page.getByText("見本のサイトで開始しています。")).toBeVisible();
 
   await page.getByRole("button", { name: "通知を閉じる" }).click();
-  await expect(page.getByText("静的サンプルで開始しています。")).toBeHidden();
+  await expect(page.getByText("見本のサイトで開始しています。")).toBeHidden();
   await expect(page.getByRole("button", { name: "通知を閉じる" })).toBeHidden();
 
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
 });
 
 // 閉じるボタンは押すと消えるため、フォーカスを見えていて意味のある要素へ移す。
@@ -376,7 +380,7 @@ test("モバイルできっかけの操作が別の表示に隠れていたら�
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
 
   // 戻り先の生成ボタンは開始時に記録されるが、「題材・メモ」の中にあり、プレビューへ切り替えると見えなくなる。
   await page.getByRole("tab", { name: "プレビュー" }).click();
@@ -409,7 +413,7 @@ test("結果が遅れて届く通知を閉じると、操作を始めた生成�
   await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
 
   release();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
   await page.getByRole("button", { name: "通知を閉じる" }).focus();
   await page.keyboard.press("Enter");
   await expect(generateButton).toBeFocused();
@@ -428,7 +432,7 @@ test("処理中に閉じるボタンへフォーカスを移していても、�
   const closeButton = page.getByRole("button", { name: "通知を閉じる" });
   await closeButton.focus();
   release();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
   await expect(closeButton).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(generateButton).toBeFocused();
@@ -1314,7 +1318,7 @@ test("編集画面のサイト名・選択中の見出し・学習メモ・品�
   await page.getByRole("tab", { name: "題材・メモ" }).click();
   await page.getByLabel("紹介サイトの題材").fill(topic);
   await page.getByRole("button", { name: "たたき台を生成" }).click();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
 
   // プレビュー上部のサイト名と、コードパネルの「選んだ要素」。
   await page.getByRole("tab", { name: "プレビュー" }).click();
@@ -1464,7 +1468,7 @@ test("axeの自動チェックに失敗しても、同じサイトのまま再�
   await expect(error).toContainText("「もう一度チェックする」を押すと再実行します。", { timeout: 20000 });
 
   await error.getByRole("button", { name: "もう一度チェックする" }).click();
-  await expect(page.getByRole("heading", { name: "アクセシビリティ（axe）" })).toBeFocused();
+  await expect(page.getByRole("heading", { name: "アクセシビリティの自動チェック" })).toBeFocused();
   // 開始と結果は、ボタンが消えたあとも通知で伝わる。
   const noticeStatus = page.getByTestId("notice-bar").getByRole("status");
   await expect(noticeStatus).toContainText("自動チェックをやり直しています");

@@ -103,7 +103,7 @@ function buildSectionImageHtml(section: SiteSection): string {
   if (section.image) {
     return `<img class="section-image" src="${escapeHtml(sectionImagePath(section.image))}" alt="${escapeHtml(section.imageAlt)}">`;
   }
-  return `<div class="image-placeholder" role="img" aria-label="${escapeHtml(section.imageAlt)}"><span>IMAGE</span></div>`;
+  return `<div class="image-placeholder" role="img" aria-label="${escapeHtml(section.imageAlt)}"><span>画像</span></div>`;
 }
 
 export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {

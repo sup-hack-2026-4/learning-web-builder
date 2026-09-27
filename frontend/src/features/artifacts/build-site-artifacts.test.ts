@@ -53,6 +53,12 @@ describe("セクションの画像", () => {
     expect(artifacts.images).toHaveLength(0);
   });
 
+  it("画像のプレースホルダーは日本語で表示する", () => {
+    const artifacts = buildSiteArtifacts(createSampleSite());
+    expect(artifacts.html).toContain("<span>画像</span>");
+    expect(artifacts.html).not.toContain("IMAGE");
+  });
+
   it("提出用のHTMLは画像を相対パスで参照する", () => {
     const artifacts = buildSiteArtifacts(siteWithImage());
     expect(artifacts.html).toContain('<img class="section-image" src="images/about.jpg" alt="活動の写真">');

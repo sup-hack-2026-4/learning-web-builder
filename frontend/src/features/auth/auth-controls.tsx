@@ -22,7 +22,8 @@ function BackendSessionStatus() {
     return <span className="text-xs text-slate-500">認証確認中…</span>;
   }
   if (session.isError || !session.data?.authenticated) {
-    return <span className="text-xs font-bold text-red-600">API認証エラー</span>;
+    // 通信失敗とログイン切れを区別できないため、どちらでも効く再読み込みを案内する。
+    return <span className="text-xs font-bold text-red-600">ログインを確認できません。再読み込みしてください</span>;
   }
   return <span className="text-xs font-bold text-emerald-700">ログイン中</span>;
 }

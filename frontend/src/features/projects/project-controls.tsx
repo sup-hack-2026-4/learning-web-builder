@@ -19,7 +19,8 @@ type ProjectControlsProps = {
 
 export function ProjectControls(props: ProjectControlsProps) {
   if (!props.enabled) {
-    return <span className="text-xs text-slate-500">保存にはClerk設定が必要です</span>;
+    // ログイン機能のない環境。作業中の内容はブラウザに残るが、アカウントへは保存できないため、持ち出す手段としてZIPを案内する。
+    return <span className="text-xs text-slate-500">ゲストモードではアカウントに保存できません。作品は提出物ZIPで書き出せます</span>;
   }
   return <ClerkProjectControls {...props} />;
 }
