@@ -157,9 +157,18 @@ export default function App() {
   const [maxCodeHeight, setMaxCodeHeight] = useState(minCodeHeight);
 
   const measureMaxCodeHeight = useCallback(() => {
-    const available = previewAreaRef.current?.clientHeight ?? 0;
-    if (available === 0) return null;
-    return Math.max(minCodeHeight, available - minPreviewHeight);
+    const area = previewAreaRef.current;
+    const available = area?.clientHeight ?? 0;
+    if (!area || available === 0) return null;
+    // 同じ領域には、プレビューとコードのほかに分割バーと（出ていれば）全非表示の案内も並ぶ。
+    // その分を差し引かないと、コードを最大にしたときプレビューが最小の高さを割り込む。
+    const others = [area.querySelector<HTMLElement>("[role='separator']"), area.querySelector<HTMLElement>("[data-testid='preview-all-hidden']")];
+    const reserved = others.reduce((sum, element) => {
+      if (!element) return sum;
+      const style = window.getComputedStyle(element);
+      return sum + element.offsetHeight + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+    }, 0);
+    return Math.max(minCodeHeight, available - reserved - minPreviewHeight);
   }, []);
 
   // 高さの上限は画面の広さで変わるため、コードの高さはその都度この範囲へ収める。
@@ -208,6 +217,16 @@ export default function App() {
   const selectedSectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const axeHeadingRef = useRef<HTMLHeadingElement>(null);
   const hasVisibleSection = site.sections.some((section) => section.visible);
+  // 全非表示の案内が出たり消えたりすると、プレビューとコードに使える高さが変わるため収め直す。
+  useEffect(() => {
+    const fit = () => {
+      const maxHeight = measureMaxCodeHeight();
+      if (maxHeight === null) return;
+      setMaxCodeHeight(maxHeight);
+      setCodeHeight(limitCodeHeight);
+    };
+    fit();
+  }, [hasVisibleSection, limitCodeHeight, measureMaxCodeHeight]);
   // 一覧は左カラム（モバイルでは「題材・メモ」の表示）にある。畳んでいれば開き、
   // 描画を済ませてから一覧の見出しへフォーカスを移す。次のTabで最初のチェックボックスへ進める。
   const showSectionList = () => {
@@ -767,7 +786,8 @@ export default function App() {
                     aria-label={`${section.title}を編集`}
                     aria-current={section.id === selectedElementId ? "true" : undefined}
                     title={`${section.title}を編集`}
-                    className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-blue-50 hover:text-blue-700 aria-[current=true]:text-blue-700"
+                    // 削除ボタンとそろえて、アイコンは小さいまま指で押せる40px四方を確保する。
+                    className="-my-2 inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-blue-50 hover:text-blue-700 aria-[current=true]:text-blue-700"
                   >
                     <Pencil className="size-4" />
                   </button>
@@ -783,7 +803,9 @@ export default function App() {
                     disabled={removeBlockReason !== null}
                     aria-label={`${section.title}を削除`}
                     title={removeBlockReason ?? `${section.title}を削除`}
-                    className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                    // アイコンは小さいまま、指で押せる40px四方を確保する。
+                    // 行の上下と右の余白へ重ねて、行の高さとアイコンの位置をほぼ変えない。
+                    className="-my-2 -mr-2 inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
                   >
                     <Trash2 className="size-4" />
                   </button>
