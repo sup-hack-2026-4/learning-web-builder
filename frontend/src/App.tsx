@@ -884,7 +884,7 @@ export default function App() {
           <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
             {/* サイト名は自由入力。空白のない長い文字列でも、隣のボタンを押し出さずに折り返す。 */}
             <div className="min-w-0 flex-1 wrap-anywhere">
-              <span className="text-xs font-bold text-slate-600">LIVE PREVIEW</span>
+              <span className="text-xs font-bold text-slate-600">プレビュー</span>
               <h2 className="font-black">{site.siteTitle}</h2>
             </div>
             <Button variant="secondary" className="min-h-9 px-3 text-xs" onClick={() => setCodeOpen((open) => !open)} aria-expanded={codeOpen} aria-controls="code-panel-content">

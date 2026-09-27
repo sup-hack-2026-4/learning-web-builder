@@ -186,7 +186,7 @@ test("提出物ZIPの作成に失敗すると理由を伝え、そのまま再�
 test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
+  await expect(page.getByText("ゲストモードでは保存できません。作品は提出物ZIPで書き出せます")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
 });
 
