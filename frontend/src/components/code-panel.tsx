@@ -90,7 +90,7 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
       <li key={`removed-${afterLine}-${index}`} className="flex border-l-[3px] border-rose-400 bg-rose-50">
         <span aria-hidden className="w-10 shrink-0 select-none pr-2 text-right text-rose-400">-</span>
         <code className="whitespace-pre pr-4 text-rose-700 line-through decoration-rose-300">
-          <span className="sr-only">削除された行: </span>
+          <span className="sr-only select-none">削除された行: </span>
           {removed.text.trim() || " "}
         </code>
       </li>
@@ -188,7 +188,8 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
                 >
                   <span aria-hidden className="w-10 shrink-0 select-none pr-2 text-right text-slate-400">{line.number}</span>
                   <code className="whitespace-pre pr-4">
-                    {stateLabel && <span className="sr-only">{stateLabel}の行: </span>}
+                    {/* コードを範囲コピーしたときに混ざらないよう、行番号と同じく選択の対象から外す。 */}
+                    {stateLabel && <span className="sr-only select-none">{stateLabel}の行: </span>}
                     {line.tokens.length === 0
                       ? " "
                       : line.tokens.map((token, index) => (

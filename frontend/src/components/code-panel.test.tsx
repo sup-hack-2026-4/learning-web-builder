@@ -25,4 +25,22 @@ describe("CodePanel", () => {
     expect(selectedRow).toHaveTextContent(/^\d*選んだ要素の行: /);
     expect(plainRow?.textContent).not.toMatch(/未記録の変更|選んだ要素/);
   });
+
+  it("変更した行が選んだ要素の行でもあるときは、両方の状態を伝える", () => {
+    const baselineSite = createSampleSite();
+    const site = {
+      ...baselineSite,
+      sections: baselineSite.sections.map((section) =>
+        section.id === "hero" ? { ...section, title: "書き換えた見出し" } : section,
+      ),
+    };
+    render(<CodePanel site={site} baselineSite={baselineSite} selectedElementId="hero" />);
+
+    const rows = within(screen.getByRole("tabpanel")).getAllByRole("listitem");
+    const bothRow = rows.find((row) => row.textContent?.includes("書き換えた見出し"));
+
+    expect(bothRow).toHaveAttribute("data-changed", "true");
+    expect(bothRow).toHaveAttribute("data-selected", "true");
+    expect(bothRow).toHaveTextContent(/^\d*未記録の変更・選んだ要素の行: /);
+  });
 });

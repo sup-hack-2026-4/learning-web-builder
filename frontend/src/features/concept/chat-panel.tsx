@@ -149,8 +149,10 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
 
       {started && (
         <>
-          {/* ローディング状態。送信のたびに出入りするので、領域は置いたまま中身だけ切り替える。 */}
-          <p role="status" className="mt-2 text-xs text-slate-500 empty:hidden" data-testid="concept-chat-loading">
+          {/* ローディング状態。送信のたびに出入りするので、領域は置いたまま中身だけ切り替える。
+              空の間も非表示（display:none）にはしない。読み上げの対象から外れ、追加を検知できなくなるため。
+              空のpは高さ0なので、余白だけを待機中に付ける。 */}
+          <p role="status" className={`text-xs text-slate-500 ${chat.isPending ? "mt-2" : ""}`} data-testid="concept-chat-loading">
             {chat.isPending && "考えています…"}
           </p>
 
