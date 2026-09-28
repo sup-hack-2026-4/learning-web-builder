@@ -15,3 +15,7 @@ export function captureFocusOrigin(): HTMLElement | null {
   const active = document.activeElement;
   return active instanceof HTMLElement && active !== document.body ? active : null;
 }
+
+// 通知を出す関数。戻り先を省くと、呼んだ時点のフォーカス元へ戻す。
+// 結果が遅れて届く操作は、完了時にはフォーカスが別の場所へ移っていることがあるため、開始時に取った要素を渡す。
+export type ShowNotice = (message: string, tone?: NoticeTone, returnFocusTo?: HTMLElement | null) => void;

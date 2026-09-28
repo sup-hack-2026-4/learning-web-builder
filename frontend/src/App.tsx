@@ -1,58 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
-import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Callout } from "@/components/ui/callout";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Tabs } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import { CodePanel } from "@/components/code-panel";
-import { SitePreview } from "@/components/site-preview";
-import { VerticalSplitter } from "@/components/vertical-splitter";
-import { SectionImageField } from "@/features/images/section-image-field";
-import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
-import { collectChangedLineTexts } from "@/features/code-view/annotate-code";
-import { countPassedAspects, evaluateReason } from "@/features/reasoning/evaluate-reason";
+import { StepNav } from "@/components/step-nav";
 import { AuthControls } from "@/features/auth/auth-controls";
 import { clerkConfig } from "@/features/auth/config";
-import { explanationDictionary } from "@/features/explanations/dictionary";
-import { exportProject } from "@/features/export/export-project";
+import { useChangeTracking } from "@/features/change-tracking/use-change-tracking";
+import { ConceptChatPanel } from "@/features/concept/chat-panel";
+import { useExportZip } from "@/features/export/use-export-zip";
+import { TopicForm } from "@/features/generation/topic-form";
+import { useSiteGeneration } from "@/features/generation/use-site-generation";
+import { nextAction, stepViews, type FlowState } from "@/features/learning-flow/steps";
 import { captureFocusOrigin, type Notice, type NoticeTone } from "@/features/notice/notice";
 import { NoticeBar } from "@/features/notice/notice-bar";
+import { DesignPanel } from "@/features/panels/design-panel";
+import { ExplanationPanel } from "@/features/panels/explanation-panel";
+import { QualityPanel } from "@/features/panels/quality-panel";
+import { SidePanel, type PanelKey } from "@/features/panels/side-panel";
+import { PreviewArea } from "@/features/preview/preview-area";
 import { ProjectControls } from "@/features/projects/project-controls";
-import { evaluateQuality } from "@/features/quality/evaluate-quality";
-import { impactLabels } from "@/features/quality/axe-audit";
-import { useAxeAudit } from "@/features/quality/use-axe-audit";
-import { createSampleSite } from "@/features/site-model/sample";
-import {
-  addSectionBlockReason,
-  maxSections,
-  removeSectionBlockReason,
-  sectionKindLabels,
-  sectionKinds,
-  type SectionKind,
-} from "@/features/site-model/sections";
-import type { AiUsage, LearningNote, QualityCheck, SiteModel, SiteSection } from "@/features/site-model/schema";
+import { useQualityChecks } from "@/features/quality/use-quality-checks";
+import { LearningNotes } from "@/features/sections/learning-notes";
+import { SectionList } from "@/features/sections/section-list";
 import { useBuilderStore } from "@/features/site-model/store";
-import { generateSite } from "@/lib/api";
-import { ConceptChatPanel } from "@/features/concept/chat-panel";
-import { conceptSummary, type ConceptDraft } from "@/features/concept/schema";
-import { StepNav } from "@/components/step-nav";
-import { nextAction, stepViews, type FlowState } from "@/features/learning-flow/steps";
-
-type ThemeKey = "primary" | "background" | "text" | "heading" | "fontFamily" | "spacing";
-
-// 右カラムのパネル。縦積みだと画面に収まらないため、タブで1つずつ表示する。
-type PanelKey = "design" | "explanation" | "quality";
-
-const panelLabels: Record<PanelKey, string> = {
-  design: "調整",
-  explanation: "解説",
-  quality: "品質",
-};
 
 // 狭い画面では3カラムを縦に積むと極端に見づらいため、
 // プレビューを主役に据え、他はここで切り替える。
@@ -64,61 +36,10 @@ const mobileViewLabels: Record<MobileView, string> = {
   panel: "調整と学習",
 };
 
-// 学習メモ・ZIP出力に載る、テーマ項目の日本語ラベル。
-const themeKeyLabels: Record<ThemeKey, string> = {
-  primary: "メインカラー",
-  background: "背景色",
-  text: "テキストカラー",
-  heading: "見出しの色",
-  fontFamily: "フォント",
-  spacing: "余白",
-};
-
-// フォントの内部値を、画面のセレクトと同じ日本語表記へ変換する。
-const fontLabels: Record<string, string> = {
-  sans: "ゴシック",
-  serif: "明朝",
-  rounded: "丸ゴシック",
-};
-
-// テーマ項目の現在値を「メインカラーを #e11d48 に」のような読める文へ整形する。
-function describeThemeChange(key: ThemeKey, theme: SiteModel["theme"]): string {
-  const label = themeKeyLabels[key];
-  if (key === "fontFamily") return `${label}を ${fontLabels[theme.fontFamily] ?? theme.fontFamily} に`;
-  if (key === "spacing") return `${label}を ${theme.spacing} に`;
-  // 見出しの色は未指定ならメインカラーを引き継ぐため、その場合は実際に適用される色を書く。
-  if (key === "heading") return `${label}を ${theme.heading ?? theme.primary} に`;
-  return `${label}を ${theme[key]} に`;
-}
-
-// 実際にCSSへ出る値。見出しの色は未指定ならメインカラーを引き継ぐため、
-// 単純に theme.heading と比べると「未指定」と「メインカラーと同じ色」を
-// 別物と見なしてしまい、元の色へ戻したのに変更が残ってしまう。
-function effectiveThemeValue(theme: SiteModel["theme"], key: ThemeKey): string | number {
-  if (key === "heading") return theme.heading ?? theme.primary;
-  return theme[key];
-}
-
-// まだ説明を書いていないデザイン変更の項目。
-// 先に変えてから説明を書くため、理由は記録するときに1つだけ受け取る。
-
-// まだ説明を書いていない構成の変更1件。
-// 「セクション追加（〜）」のように同じ文言が並ぶことがあるため、
-// 打ち消し（追加してすぐ削除）を扱えるようidを持たせる。
-type StructureChange = { id: string; label: string };
-
-// セクション一覧の行にある操作要素のid。行が消えたり確認を閉じたりしたあと、
-// フォーカスを移す先をセクションのidから引けるようにする。
-const sectionToggleId = (sectionId: string) => `section-visible-${sectionId}`;
-const sectionRemoveButtonId = (sectionId: string) => `section-remove-${sectionId}`;
-
-// プレビューとコードの高さ配分。どちらも読めなくならない範囲に収める。
-const minCodeHeight = 120;
-const minPreviewHeight = 240;
-
+// 画面の配置と、各機能のつなぎ込みだけを受け持つ。
+// 変更と理由の記録、生成、品質チェックなどの中身は、それぞれのフックと部品に置く。
 export default function App() {
-  const [topic, setTopic] = useState("");
-  const [reason, setReason] = useState("");
+  const { site, notes, aiUsage, loadSite, selectElement, reset } = useBuilderStore();
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [loadedProject, setLoadedProject] = useState(false);
   // 最初の案内は操作の結果ではなく、画面の説明として最初から置いておく。
@@ -138,97 +59,45 @@ export default function App() {
     },
     [],
   );
-  // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
-  const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
   // 右カラムは縦に積むと画面へ収まらないため、常に1パネルだけ表示する。
   const [activePanel, setActivePanel] = useState<PanelKey>("design");
   // 畳むとプレビューがPC幅まで広がり、出力時に近い見た目を確認できる。
   const [panelOpen, setPanelOpen] = useState(true);
-  // 畳む・開くボタンは押すと自身が隠れるため、もう一方のボタンへフォーカスを渡す。
-  const panelOpenButtonRef = useRef<HTMLButtonElement>(null);
-  const panelCollapseButtonRef = useRef<HTMLButtonElement>(null);
   const [setupOpen, setSetupOpen] = useState(true);
   // 狭い画面用。xl以上では使わず、3カラムを同時に表示する。
   const [mobileView, setMobileView] = useState<MobileView>("preview");
-  // プレビューの下に生成コードを出す。理由を書くときに、対象のコードが目の前にある状態を作る。
-  const [codeOpen, setCodeOpen] = useState(true);
-  const [codeHeight, setCodeHeight] = useState(240);
-  const previewAreaRef = useRef<HTMLDivElement>(null);
-
-  // 上限は画面の広さで変わる。支援技術へ調整範囲を伝えるため、値としても持っておく。
-  const [maxCodeHeight, setMaxCodeHeight] = useState(minCodeHeight);
-
-  const measureMaxCodeHeight = useCallback(() => {
-    const area = previewAreaRef.current;
-    const available = area?.clientHeight ?? 0;
-    if (!area || available === 0) return null;
-    // 同じ領域には、プレビューとコードのほかに分割バーと（出ていれば）全非表示の案内も並ぶ。
-    // その分を差し引かないと、コードを最大にしたときプレビューが最小の高さを割り込む。
-    const others = [area.querySelector<HTMLElement>("[role='separator']"), area.querySelector<HTMLElement>("[data-testid='preview-all-hidden']")];
-    const reserved = others.reduce((sum, element) => {
-      if (!element) return sum;
-      const style = window.getComputedStyle(element);
-      return sum + element.offsetHeight + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
-    }, 0);
-    return Math.max(minCodeHeight, available - reserved - minPreviewHeight);
-  }, []);
-
-  // 高さの上限は画面の広さで変わるため、コードの高さはその都度この範囲へ収める。
-  const limitCodeHeight = useCallback(
-    (height: number) => {
-      const maxHeight = measureMaxCodeHeight();
-      if (maxHeight === null) return height;
-      return Math.min(Math.max(height, minCodeHeight), maxHeight);
-    },
-    [measureMaxCodeHeight],
-  );
-
-  // 画面が狭いとプレビューが潰れてしまうため、表示時とウィンドウ変更時に収め直す。
-  useEffect(() => {
-    const fit = () => {
-      setCodeHeight(limitCodeHeight);
-      const maxHeight = measureMaxCodeHeight();
-      if (maxHeight !== null) setMaxCodeHeight(maxHeight);
-    };
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [codeOpen, limitCodeHeight, measureMaxCodeHeight]);
-  const { site, selectedElementId, notes, aiUsage, setSite, loadSite, selectElement, previewTheme, updateSection, addSection, removeSection, setSectionImage, removeSectionImage, addNote, reset } = useBuilderStore();
-
-  // 「まだ理由を書いていない変更」をコード上で示すための基準。
-  // デザインと内容は別々に記録するため、基準も分けて持つ。
-  const [themeBaseline, setThemeBaseline] = useState(site.theme);
-  // 内容の基準はセクションごとに持つ。ひとまとめにすると、あるセクションを
-  // 未記録のまま別のセクションを記録したときに、変更コードが別の理由へ混ざってしまう。
-  const [sectionBaselines, setSectionBaselines] = useState<Record<string, SiteSection>>(() =>
-    Object.fromEntries(site.sections.map((section) => [section.id, section])),
-  );
-  // 構成（どのセクションが何番目にあるか）の基準。内容の基準とは別に持つ。
-  // 内容の基準はid単位なので、セクションが増えた・減ったこと自体は表せない。
-  const [structureBaseline, setStructureBaseline] = useState<SiteSection[]>(() => site.sections);
-  // まだ説明を書いていない構成の変更。押した順に並べ、まとめて1件として記録する。
-  const [pendingStructure, setPendingStructure] = useState<StructureChange[]>([]);
-  // 削除の確認を出している行。取り消せない操作なので、押した行の中で一度確かめる。
-  const [removalTargetId, setRemovalTargetId] = useState<string | null>(null);
-  // 確認を開いたらフォーカスを入れる先。取り消せない操作なので、引き返す側のボタンに置く。
-  const removalCancelRef = useRef<HTMLButtonElement>(null);
-  // 行がすべて消えたときのフォーカスの受け皿。
+  // 領域をまたいでフォーカスを移す先。一覧の見出しと、編集欄の見出し。
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
-  // 一覧から編集を始めたときのフォーカス先。選んだ結果が読み上げで伝わるよう、編集欄の見出しに置く。
   const selectedSectionHeadingRef = useRef<HTMLHeadingElement>(null);
-  const axeHeadingRef = useRef<HTMLHeadingElement>(null);
-  const hasVisibleSection = site.sections.some((section) => section.visible);
-  // 全非表示の案内が出たり消えたりすると、プレビューとコードに使える高さが変わるため収め直す。
-  useEffect(() => {
-    const fit = () => {
-      const maxHeight = measureMaxCodeHeight();
-      if (maxHeight === null) return;
-      setMaxCodeHeight(maxHeight);
-      setCodeHeight(limitCodeHeight);
-    };
-    fit();
-  }, [hasVisibleSection, limitCodeHeight, measureMaxCodeHeight]);
+
+  const tracking = useChangeTracking(showNotice);
+  // サイトが差し替わる操作（生成・リセット・読み込み）のあとに共通して行う後始末。
+  const afterSiteReplaced = (fromProject: boolean) => {
+    tracking.discard();
+    setLoadedProject(fromProject);
+    if (!fromProject) setCurrentProjectId(null);
+  };
+  const generation = useSiteGeneration({ showNotice, onSiteReplaced: () => afterSiteReplaced(false) });
+  const exportZip = useExportZip(showNotice);
+  const qualityChecks = useQualityChecks(site, showNotice);
+  const { axeAudit, hasQualityIssue } = qualityChecks;
+
+  // 学習の工程を、いまの画面の状態から導く。
+  const flowState: FlowState = useMemo(
+    () => ({
+      topicReady: generation.topic.trim().length > 0,
+      // 生成したかどうかは、AIの利用記録が「初期サンプル」以外を含むかで見る。
+      generated: loadedProject || aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
+      unexplainedCount: tracking.unexplainedCount,
+      // コンセプトの記録だけでは、調整とその理由説明を終えたことにはならない。
+      explainedCount: notes.filter((note) => note.target !== "コンセプト").length,
+      noteCount: notes.length,
+    }),
+    [generation.topic, loadedProject, aiUsage, tracking.unexplainedCount, notes],
+  );
+  const steps = useMemo(() => stepViews(flowState), [flowState]);
+  const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
+
   // 一覧は左カラム（モバイルでは「題材・メモ」の表示）にある。畳んでいれば開き、
   // 描画を済ませてから一覧の見出しへフォーカスを移す。次のTabで最初のチェックボックスへ進める。
   const showSectionList = () => {
@@ -237,217 +106,6 @@ export default function App() {
       setMobileView("setup");
     });
     sectionHeadingRef.current?.focus();
-  };
-  // 追加するセクションの種類。生成結果には入りにくく、かつ足す判断をしやすい
-  // 「写真・作品」を初期値にする。ヒーローを初期値にすると、h1が2つある構造を
-  // 何気なく作ってしまいやすい（品質チェックには出るが、最初の一歩としては遠回り）。
-  const [newSectionKind, setNewSectionKind] = useState<SectionKind>("gallery");
-
-  // 内容の基準。顔ぶれと並びは「いまの構成」に合わせ、中身だけ基準値へ戻す。
-  // 内容の差分を取るときに、構成の変更が混ざらないようにするため。
-  // 生成やプロジェクト読み込みで増えたセクションは、その時点の内容を基準として扱う。
-  const contentBaselineSections = useMemo(
-    () => site.sections.map((section) => sectionBaselines[section.id] ?? section),
-    [site.sections, sectionBaselines],
-  );
-  // 構成の基準。顔ぶれも中身も、最後に記録した時点のまま。
-  const structureBaselineSections = useMemo(
-    () => structureBaseline.map((section) => sectionBaselines[section.id] ?? section),
-    [structureBaseline, sectionBaselines],
-  );
-  // コード上の「未記録の変更」には、内容の書き換えと構成の増減の両方を含める。
-  const baselineSite = useMemo(
-    () => ({ ...site, theme: themeBaseline, sections: structureBaselineSections }),
-    [site, themeBaseline, structureBaselineSections],
-  );
-
-  // 学習の工程を、いまの画面の状態から導く。
-  // 説明していない変更は、デザインと内容の両方を数える。
-  const unexplainedSectionCount = useMemo(
-    () =>
-      site.sections.filter((section) => {
-        const baseline = sectionBaselines[section.id];
-        if (!baseline) return false;
-        return (
-          baseline.title !== section.title ||
-          baseline.body !== section.body ||
-          baseline.imageAlt !== section.imageAlt ||
-          // 画像の差し替えと削除も、理由を書く対象の変更として数える。
-          baseline.image?.dataUri !== section.image?.dataUri ||
-          baseline.visible !== section.visible
-        );
-      }).length,
-    [site.sections, sectionBaselines],
-  );
-  const flowState: FlowState = useMemo(
-    () => ({
-      topicReady: topic.trim().length > 0,
-      // 生成したかどうかは、AIの利用記録が「初期サンプル」以外を含むかで見る。
-      generated: loadedProject || aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
-      unexplainedCount: touchedThemeKeys.length + unexplainedSectionCount + pendingStructure.length,
-      // コンセプトの記録だけでは、調整とその理由説明を終えたことにはならない。
-      explainedCount: notes.filter((note) => note.target !== "コンセプト").length,
-      noteCount: notes.length,
-    }),
-    [
-      topic,
-      loadedProject,
-      aiUsage,
-      touchedThemeKeys.length,
-      unexplainedSectionCount,
-      pendingStructure.length,
-      notes,
-    ],
-  );
-  const steps = useMemo(() => stepViews(flowState), [flowState]);
-  const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
-
-  const quality = useMemo(() => evaluateQuality(site), [site]);
-  // axeの自動チェックはiframeでの実測が要るため非同期。終わるまでは静的な3項目だけで判断する。
-  const { state: axeAudit, retry: retryAxeAudit } = useAxeAudit(site);
-  // 再検査を押したあとは、開始と結果を通知で伝える。押したボタンは消え、結果は離れた場所に出るため。
-  // 編集のたびに走る通常の検査では通知しない。毎回読み上げられると操作の邪魔になる。
-  const axeRetryAnnouncementRef = useRef<HTMLElement | null | undefined>(undefined);
-  const retryAxeAuditWithNotice = () => {
-    const returnFocusTo = axeHeadingRef.current;
-    axeRetryAnnouncementRef.current = returnFocusTo;
-    retryAxeAudit();
-    showNotice("アクセシビリティの自動チェックをやり直しています…", "status", returnFocusTo);
-  };
-  useEffect(() => {
-    const returnFocusTo = axeRetryAnnouncementRef.current;
-    if (returnFocusTo === undefined || axeAudit.status === "loading") return;
-    axeRetryAnnouncementRef.current = undefined;
-    if (axeAudit.status === "error") {
-      showNotice("アクセシビリティの自動チェックを、もう一度実行できませんでした。時間をおいて「もう一度チェックする」を押してください。", "error", returnFocusTo);
-      return;
-    }
-    const count = axeAudit.findings.length;
-    showNotice(
-      count === 0
-        ? "アクセシビリティの自動チェックが終わりました。見つかる問題はありませんでした。"
-        : `アクセシビリティの自動チェックが終わりました。指摘が${count}件あります。「品質」タブで確認してください。`,
-      "status",
-      returnFocusTo,
-    );
-  }, [axeAudit, showNotice]);
-  const allChecks = useMemo(
-    () => (axeAudit.status === "ready" ? [...quality, axeAudit.check] : quality),
-    [quality, axeAudit],
-  );
-  const hasQualityIssue = allChecks.some((item) => !item.passed);
-  // 書いている途中の理由を、何を・なぜ・どう良くなるかの3点で見る。記録は止めず、書き足す観点を示す。
-  const reasonChecks = useMemo(() => evaluateReason(reason), [reason]);
-  const passedAspects = countPassedAspects(reasonChecks);
-
-  // 記録するデザイン変更が、実際にCSSのどこを動かしたかを取り出す。
-  // 対象の項目だけを基準値から動かして比べるため、まとめて変更しても項目ごとに分けて残せる。
-  const cssChangesForThemeKeys = (keys: ThemeKey[]): string[] => {
-    const changedTheme = { ...themeBaseline };
-    for (const key of keys) Object.assign(changedTheme, { [key]: site.theme[key] });
-    return collectChangedLineTexts(
-      buildSiteArtifacts({ ...site, theme: changedTheme }).css,
-      buildSiteArtifacts({ ...site, theme: themeBaseline }).css,
-    );
-  };
-
-  // 内容の変更はHTMLに出る。表示切替も文章の書き換えも同じ見かたで取り出せる。
-  // 対象のセクションだけを基準から動かして比べるため、他のセクションを未記録のまま
-  // 触っていても、その分は今回のメモへ混ざらない。
-  const htmlChangesForSection = (sectionId: string, nextSection: SiteSection): string[] => {
-    const changedSections = contentBaselineSections.map((section) =>
-      section.id === sectionId ? nextSection : section,
-    );
-    return collectChangedLineTexts(
-      buildSiteArtifacts({ ...site, sections: changedSections }).html,
-      buildSiteArtifacts({ ...site, sections: contentBaselineSections }).html,
-    );
-  };
-
-  // 構成の変更はHTMLのsectionごと増減する。両側に内容の基準値を当てて比べることで、
-  // まだ説明していない文章の書き換えが、構成の説明へ混ざらないようにする。
-  const htmlChangesForStructure = (): string[] =>
-    collectChangedLineTexts(
-      buildSiteArtifacts({ ...site, sections: contentBaselineSections }).html,
-      buildSiteArtifacts({ ...site, sections: structureBaselineSections }).html,
-    );
-  const selectedSection = site.sections.find((section) => section.id === selectedElementId);
-  // 追加したセクションのidは「gallery-2」のように採番されるため、idだけでは引けない。
-  // 種類ごとの解説へ落として、別のセクションの説明が出てしまうのを避ける。
-  const explanation =
-    explanationDictionary[selectedElementId] ??
-    (selectedSection ? explanationDictionary[selectedSection.kind] : undefined) ??
-    explanationDictionary.about;
-
-  // 記録されないまま残っている「変更中の状態」を捨てる。
-  // サイトが差し替わる操作（生成・リセット）のたびに呼ぶ。
-  // 差し替え後のサイトが新しい基準になるため、コード上の変更表示もここで消える。
-  const discardUnrecordedChanges = () => {
-    setTouchedThemeKeys([]);
-    setReason("");
-    const current = useBuilderStore.getState().site;
-    setThemeBaseline(current.theme);
-    setSectionBaselines(Object.fromEntries(current.sections.map((section) => [section.id, section])));
-    setStructureBaseline(current.sections);
-    setPendingStructure([]);
-    setRemovalTargetId(null);
-  };
-
-  // セクションの表示切替は、理由が入っていればその場で学習メモへ残る。
-  // 記録できたときだけ、そのセクションの「未記録の変更」の基準を進める。
-  const toggleSection = (id: string, visible: boolean) => {
-    const trimmedReason = reason.trim();
-    const current = site.sections.find((section) => section.id === id);
-    const nextSection = current ? { ...current, visible } : undefined;
-    updateSection(
-      id,
-      { visible },
-      trimmedReason || undefined,
-      trimmedReason && nextSection ? htmlChangesForSection(id, nextSection) : undefined,
-    );
-    if (trimmedReason && nextSection) {
-      setSectionBaselines((baselines) => ({ ...baselines, [id]: nextSection }));
-    }
-    // 最後の1つを隠すと、プレビューにはヘッダーとフッターしか残らない。案内はプレビュー側に出るが、
-    // チェックボックスを操作している位置からは見えない（モバイルでは別の表示）ため、通知でも伝える。
-    if (!visible && site.sections.every((section) => section.id === id || !section.visible)) {
-      showNotice("すべてのセクションが非表示になりました。「セクション」一覧でチェックを入れると、プレビューに戻ります。");
-    }
-  };
-
-  // セクションの追加。末尾へ入る。どこへ入るか分からないと、押したあとで画面を探すことになる。
-  const handleAddSection = (kind: SectionKind) => {
-    if (addSectionBlockReason(site.sections.length)) return;
-    addSection(kind);
-    // 採番はstoreの中で行うため、追加後の状態から実際に入った1件を取り出す。
-    const added = useBuilderStore.getState().site.sections.at(-1);
-    if (!added) return;
-    const restoredBaseline = structureBaseline.find((section) => section.id === added.id);
-    const removedId = `remove-${added.id}`;
-    // 追加した時点の内容を、その節の内容の基準にする。
-    // ここで基準を置かないと、追加後に書き換えた文章が未説明の内容変更として数えられない。
-    // ただし、記録前に削除したidを再利用した場合は元の内容を基準へ戻す。
-    // 構成の削除と再追加は相殺し、プリセットとの差だけを内容変更として扱う。
-    setSectionBaselines((baselines) => ({
-      ...baselines,
-      [added.id]: restoredBaseline ?? added,
-    }));
-    setPendingStructure((changes) => {
-      if (restoredBaseline && changes.some((change) => change.id === removedId)) {
-        return changes.filter((change) => change.id !== removedId);
-      }
-      return [
-        ...changes,
-        { id: `add-${added.id}`, label: `セクション追加（${added.title}）` },
-      ];
-    });
-    showNotice(`「${added.title}」を末尾に追加しました。なぜ足すのかを書いて記録してください。`);
-  };
-
-  // 削除せずに確認を閉じる。押したボタンは確認ごと消えるため、確認を開いた削除ボタンへ戻す。
-  const closeRemovalConfirm = (sectionId: string) => {
-    setRemovalTargetId(null);
-    document.getElementById(sectionRemoveButtonId(sectionId))?.focus();
   };
 
   // 一覧からセクションを選んで編集を始める。プレビュー内のセクションはクリックでしか選べないため、
@@ -464,216 +122,15 @@ export default function App() {
     selectedSectionHeadingRef.current?.focus();
   };
 
-  // セクションの削除。確認を通ってから呼ぶ。
-  const handleRemoveSection = (section: SiteSection) => {
-    if (removeSectionBlockReason(site.sections.length)) return;
-    // 押した「削除する」は行ごと消えるため、隣の行（末尾なら前の行）へフォーカスを移す。
-    // 移す先は表示切り替えのチェックボックス。削除ボタンは下限に達すると無効になり、受け取れない。
-    const index = site.sections.findIndex((item) => item.id === section.id);
-    const neighbor = site.sections[index + 1] ?? site.sections[index - 1];
-    // 行が消えた後の画面へフォーカスを移すため、ここでの更新は先に描画まで済ませる。
-    flushSync(() => {
-      removeSection(section.id);
-      setRemovalTargetId(null);
-      // 消したセクションの内容の基準は残さない。残すと、もう画面に無い変更を
-      // 未説明として数え続けてしまう。
-      setSectionBaselines((baselines) => {
-        const rest = { ...baselines };
-        delete rest[section.id];
-        return rest;
-      });
-      setPendingStructure((changes) => {
-        // 追加したばかりのものを消したなら、構成は元に戻っている。説明する変更も無い。
-        const addedId = `add-${section.id}`;
-        if (changes.some((change) => change.id === addedId)) {
-          return changes.filter((change) => change.id !== addedId);
-        }
-        if (changes.some((change) => change.id === `remove-${section.id}`)) return changes;
-        return [...changes, { id: `remove-${section.id}`, label: `セクション削除（${section.title}）` }];
-      });
-    });
-    const focusTarget = (neighbor && document.getElementById(sectionToggleId(neighbor.id))) ?? sectionHeadingRef.current;
-    focusTarget?.focus();
-    // 通知を閉じたときの戻り先も、消えた「削除する」ではなく移した先にする。
-    showNotice(`「${section.title}」を削除しました。なぜ削るのかを書いて記録してください。`, "status", focusTarget);
-  };
-
-  // 記録は止めないが、書けていない観点があれば次に何を書けばよいかを添える。
-  // 理由が書けたこと自体を理解の証拠にせず、説明を組み立てる手がかりを返すため。
-  const noticeForRecordedReason = (message: string): string => {
-    const missing = reasonChecks.filter((check) => !check.passed);
-    if (missing.length === 0) return `${message} 何を・なぜ・どう良くなるかがそろっています。`;
-    return `${message} 次は「${missing.map((check) => check.label).join("」「")}」も書けると、変更を自分の言葉で説明できます。`;
-  };
-
-  const generation = useMutation({
-    mutationFn: async ({ topic: nextTopic, concept }: { topic: string; concept?: ConceptDraft; returnFocusTo: HTMLElement | null }) => {
-      try {
-        return { ...await generateSite(nextTopic, concept), concept };
-      } catch {
-        return { site: createSampleSite(nextTopic), provider: "static-sample" as const, concept };
-      }
-    },
-    onSuccess: ({ site: generatedSite, provider, concept }, { returnFocusTo }) => {
-      const viaConcept = concept !== undefined;
-      setSite(generatedSite, provider, viaConcept ? "コンセプト相談と、サイト構成・仮文章の生成" : undefined);
-      // サイトが差し替わると、記録前の変更内容は新しいサイトに対して意味を持たない。
-      // 残したままだと、触れていない初期値を変更として誤記録してしまう。
-      discardUnrecordedChanges();
-      setLoadedProject(false);
-      setCurrentProjectId(null);
-      // 相談で決めたことは、生成した本人の判断そのもの。学習メモに残して提出物へ含める。
-      // setSite がメモを空にするため、必ずそのあとで記録する。
-      if (concept) {
-        addNote("コンセプト", conceptSummary(concept));
-      }
-      showNotice(
-        provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。",
-        "status",
-        returnFocusTo,
-      );
-    },
-  });
-
-  // 画像を含むZIPは作るのに時間がかかる。処理中はボタンを止めて連打による重複出力を防ぎ、
-  // 開始と成否は他の操作と同じ通知で伝える（読み上げにも届く）。失敗してもボタンは戻るため、そのまま再試行できる。
-  const exportZip = useMutation({
-    // ZIPはブラウザの中だけで作るため、オフラインでも止めない。
-    // 既定のままだと、オフライン時に処理が一時停止し「ZIP作成中…」から戻らなくなる。
-    networkMode: "always",
-    // 出力する内容はクリックした時点の値を引数で受け取る。関数の外の値を読むと、
-    // 実行までの間に編集された内容が混ざるおそれがある。
-    mutationFn: (input: {
-      site: SiteModel;
-      notes: LearningNote[];
-      aiUsage: AiUsage[];
-      extraChecks: QualityCheck[];
-      returnFocusTo: HTMLElement | null;
-    }) => exportProject(input.site, input.notes, input.aiUsage, input.extraChecks),
-    onMutate: ({ returnFocusTo }) => {
-      showNotice("提出物ZIPを作成しています…", "status", returnFocusTo);
-    },
-    // 分かるのはZIPを作ってダウンロードを始めたところまで。保存できたかはブラウザ側でしか分からない。
-    onSuccess: (_, { returnFocusTo }) => {
-      showNotice("提出物ZIPを作成しました。ブラウザのダウンロード状況を確認してください。", "status", returnFocusTo);
-    },
-    // 手元の処理なので、待てば直る失敗ではない。起きやすい原因と、自分でできる対処を示す。
-    onError: (_, { returnFocusTo }) => {
-      showNotice(
-        "提出物ZIPを作成できませんでした。画像が大きい・多いとブラウザで処理しきれないことがあります。画像を減らすか、ページを再読み込みしてから、もう一度「提出物ZIP」を押してください。",
-        "error",
-        returnFocusTo,
-      );
-    },
-  });
-
-  const submitTopic = (event: FormEvent) => {
-    event.preventDefault();
-    if (!topic.trim()) return;
-    generation.mutate({ topic: topic.trim(), returnFocusTo: captureFocusOrigin() });
-  };
-
-  // 相談で固めたコンセプトからたたき台を作る。
-  // 題材欄にも反映して、あとから題材だけ変えて作り直せるようにする。
-  const generateFromConcept = (draft: ConceptDraft) => {
-    const nextTopic = draft.topic.trim();
-    if (!nextTopic) return;
-    setTopic(nextTopic);
-    generation.mutate({ topic: nextTopic, concept: draft, returnFocusTo: captureFocusOrigin() });
-  };
-
-  // 色・余白・フォントの変更はプレビューへ即時反映するだけで、メモは残さない。
-  // カラーピッカー等は操作ごとに大量のイベントが発火するため、記録は明示ボタンで行う。
-  //
-  // 変更そのものは止めない。まず変えて、見た目の違いを確かめてから
-  // 「何を・なぜ・どう良くなるか」を書く順序のほうが、言葉にしやすいため。
-  // 変更した項目は覚えておき、記録時に「何をどの値に変えたか」をまとめてメモへ残す。
-  const changeTheme = (key: ThemeKey, value: string | number) => {
-    // 基準の値まで戻したなら、その項目は変更していないのと同じ。
-    // このとき基準に保存されていた値そのものへ戻す。見出しの色を「未指定」から
-    // 触って戻した場合、同じ色を明示値として残すとメインカラーへ追従しなくなり、
-    // 見た目は同じでも基準と違う状態になってしまうため。
-    const backToBaseline = effectiveThemeValue(themeBaseline, key) === value;
-    previewTheme(key, backToBaseline ? themeBaseline[key] : value);
-
-    setTouchedThemeKeys((keys) => {
-      const others = keys.filter((touched) => touched !== key);
-      // 差分が無いのに「デザイン変更」のメモを作れてしまわないよう、対象から外す。
-      if (backToBaseline) return others;
-      return [...others, key];
-    });
-  };
-
-  // ユーザーが理由を書いて「記録」ボタンを押したときだけ、変更内容と理由をメモへ残す。
-  // まだ説明していない変更をまとめて1件にし、そのとき書かれている理由を付ける。
-  const recordThemeReason = () => {
-    if (!reason.trim()) {
-      showNotice("先に『なぜ変えるか』を入力してください。", "error");
-      return;
-    }
-    if (touchedThemeKeys.length === 0) {
-      showNotice("先に色・余白・フォントを変更してください。", "error");
-      return;
-    }
-    const summary = touchedThemeKeys.map((key) => describeThemeChange(key, site.theme)).join(" / ");
-    addNote(`デザイン変更（${summary}）`, reason.trim(), cssChangesForThemeKeys(touchedThemeKeys));
-    showNotice(noticeForRecordedReason("デザイン変更の内容と理由を学習メモへ記録しました。"));
-    setThemeBaseline(site.theme);
-    setTouchedThemeKeys([]);
-    setReason("");
-  };
-
-  const recordContentReason = () => {
-    if (!reason.trim() || !selectedSection) return;
-    addNote(
-      `内容変更（${selectedSection.title}）`,
-      reason.trim(),
-      htmlChangesForSection(selectedSection.id, selectedSection),
-    );
-    showNotice(noticeForRecordedReason("内容変更の理由を学習メモへ記録しました。"));
-    // 基準を進めるのは記録したセクションだけ。他のセクションの未記録の変更は残す。
-    setSectionBaselines((baselines) => ({ ...baselines, [selectedSection.id]: selectedSection }));
-    setReason("");
-  };
-
-  // 構成の変更は、まとめて1件のメモにする。「足して削った」のように
-  // 複数の判断が続くことがあり、1つずつ理由を書かせると同じ説明が並んでしまう。
-  const recordStructureReason = () => {
-    if (!reason.trim()) {
-      showNotice("先に『なぜ変えるか』を入力してください。", "error");
-      return;
-    }
-    if (pendingStructure.length === 0) {
-      showNotice("先にセクションを追加または削除してください。", "error");
-      return;
-    }
-    addNote(
-      pendingStructure.map((change) => change.label).join(" / "),
-      reason.trim(),
-      htmlChangesForStructure(),
-    );
-    showNotice(noticeForRecordedReason("セクション構成の変更と理由を学習メモへ記録しました。"));
-    setStructureBaseline(site.sections);
-    setPendingStructure([]);
-    setReason("");
-  };
-
   const resetBuilder = () => {
     reset();
-    discardUnrecordedChanges();
-    setLoadedProject(false);
-    setCurrentProjectId(null);
+    afterSiteReplaced(false);
     showNotice("初期サンプルへ戻しました。");
   };
 
-  // 上限・下限に達したら押せなくする。押せない理由は文言でも示す。
-  const addBlockReason = addSectionBlockReason(site.sections.length);
-  const removeBlockReason = removeSectionBlockReason(site.sections.length);
-
   const loadProject = (loadedSite: typeof site) => {
     loadSite(loadedSite);
-    discardUnrecordedChanges();
-    setLoadedProject(true);
+    afterSiteReplaced(true);
   };
 
   // ヘッダーはflex-wrapで高さが変わるため、縦flexで残り高さをグリッドへ渡し、
@@ -751,134 +208,15 @@ export default function App() {
           </div>
 
           <div className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${setupOpen ? "block" : "block xl:hidden"}`}>
-          <ConceptChatPanel onGenerate={generateFromConcept} generating={generation.isPending} />
-
-          {/* 直接入力は補助の導線。畳んでしまうと題材から始めたい人が迷うため表示は残し、
-              見た目の重みだけを落として、相談が主であることを示す。 */}
-          <div className="mt-5 border-t border-slate-200 pt-4">
-            <p className="mb-2 text-xs text-slate-500">題材が決まっているなら、直接入力しても始められます。</p>
-            <form onSubmit={submitTopic} className="space-y-2">
-              <label className="text-xs font-bold text-slate-600" htmlFor="topic">紹介サイトの題材</label>
-              <Textarea id="topic" rows={2} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />
-              <Button variant="secondary" className="w-full" disabled={!topic.trim()} loading={generation.isPending} icon={<Sparkles className="size-4" />}>
-                {generation.isPending ? "生成中…" : "たたき台を生成"}
-              </Button>
-            </form>
-          </div>
+          <ConceptChatPanel onGenerate={generation.generateFromConcept} generating={generation.isPending} />
+          <TopicForm generation={generation} />
 
           <Callout tone="warning" className="my-5">
             <strong>AI生成文は仮テキストです。</strong><br />事実情報は必ず自分で調べて入力してください。
           </Callout>
 
-          <h2 ref={sectionHeadingRef} tabIndex={-1} className="mb-1 text-sm font-black">
-            セクション <span className="font-normal text-slate-400">{site.sections.length} / {maxSections}</span>
-          </h2>
-          <p className="mb-2 text-[11px] leading-4 text-slate-500">
-            チェックを外すと非表示になります。使わないと決めたものは削除できます。
-          </p>
-          <ul className="space-y-2">
-            {site.sections.map((section) => (
-              <li key={section.id} className={`rounded-xl border px-3 py-2 text-sm ${section.id === selectedElementId ? "border-blue-300 bg-blue-50" : "border-slate-200"}`}>
-                <div className="flex items-center gap-2">
-                  <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2">
-                    <span className="truncate">{section.title}</span>
-                    <input id={sectionToggleId(section.id)} type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
-                  </label>
-                  {/* プレビュー内のクリックに代わる選び方。どれを選んでいるかはaria-currentで伝える。 */}
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="icon"
-                    onClick={() => editSection(section.id)}
-                    aria-label={`${section.title}を編集`}
-                    aria-current={section.id === selectedElementId ? "true" : undefined}
-                    title={`${section.title}を編集`}
-                    // 行の上下の余白へ重ねて、行の高さを変えない。選んでいる行は青で示す。
-                    className="-my-2 rounded-lg enabled:hover:bg-blue-50 enabled:hover:text-blue-700 aria-[current=true]:text-blue-700"
-                    icon={<Pencil className="size-4" />}
-                  />
-                  <Button
-                    type="button"
-                    variant="quiet-danger"
-                    size="icon"
-                    id={sectionRemoveButtonId(section.id)}
-                    onClick={() => {
-                      // 確認は押したボタンの下に出るだけなので、そのままでは読み上げもTabの位置も
-                      // 確認を素通りする。描画を済ませてから確認の中へフォーカスを入れる。
-                      flushSync(() => setRemovalTargetId(section.id));
-                      removalCancelRef.current?.focus();
-                    }}
-                    disabled={removeBlockReason !== null}
-                    aria-label={`${section.title}を削除`}
-                    title={removeBlockReason ?? `${section.title}を削除`}
-                    // 行の上下と右の余白へ重ねて、行の高さとアイコンの位置をほぼ変えない。
-                    className="-my-2 -mr-2 rounded-lg"
-                    icon={<Trash2 className="size-4" />}
-                  />
-                </div>
-
-                {/* 削除は取り消せないため、押した行の中でもう一度確かめる。
-                    ブラウザのconfirmだと操作が止まるうえ、「まず非表示にする」という
-                    引き返し方を示せない。消す前に、消さずに済む道を出しておく。 */}
-                {removalTargetId === section.id && (
-                  <Callout tone="danger" className="mt-2 p-2">
-                    <p>削除すると元に戻せません。迷うなら、まず非表示にして様子を見てください。</p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => { toggleSection(section.id, false); closeRemovalConfirm(section.id); }}
-                      >
-                        まず非表示にする
-                      </Button>
-                      <Button ref={removalCancelRef} type="button" variant="ghost" size="sm" onClick={() => closeRemovalConfirm(section.id)}>やめる</Button>
-                      <Button type="button" variant="danger" size="sm" onClick={() => handleRemoveSection(section)}>削除する</Button>
-                    </div>
-                  </Callout>
-                )}
-              </li>
-            ))}
-          </ul>
-
-          {/* 追加は末尾へ入る。種類によって出力されるHTML・CSSが変わるため、種類は自分で選ぶ。 */}
-          <div className="mt-3 rounded-xl border border-dashed border-slate-300 p-3">
-            <label className="block text-xs font-bold text-slate-600" htmlFor="new-section-kind">追加するセクション</label>
-            <div className="mt-1 flex gap-2">
-              <Select
-                id="new-section-kind"
-                className="min-w-0 flex-1"
-                value={newSectionKind}
-                onChange={(event) => setNewSectionKind(event.target.value as SectionKind)}
-              >
-                {sectionKinds.map((kind) => <option key={kind} value={kind}>{sectionKindLabels[kind]}</option>)}
-              </Select>
-              <Button type="button" variant="secondary" className="shrink-0 gap-1 px-3" disabled={addBlockReason !== null} onClick={() => handleAddSection(newSectionKind)} icon={<Plus className="size-4" />}>
-                追加
-              </Button>
-            </div>
-            {addBlockReason && <p className="mt-2 text-[11px] leading-4 text-warning">{addBlockReason}</p>}
-          </div>
-
-          <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
-          {/* 内側でスクロールさせない。列のスクロールと二重になり、どちらを動かせばよいか分からなくなる。 */}
-          <div className="space-y-2">
-            {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
-              <div key={note.id} data-testid="learning-note" className="rounded-xl bg-slate-50 p-3 text-xs wrap-anywhere">
-                <strong>{note.target}</strong>
-                <p className="mt-1 text-slate-600">{note.reason}</p>
-                {/* 書いた理由と、そのとき実際に変わったコードを対で残す。 */}
-                {note.codeChanges && note.codeChanges.length > 0 && (
-                  <ul className="mt-2 space-y-0.5 border-t border-slate-200 pt-2">
-                    {/* 同じ内容の行が複数変わることがあるため、行本文ではなく並び順で見分ける。 */}
-                    {note.codeChanges.map((line, index) => (
-                      <li key={`${note.id}-${index}`} className="truncate font-mono text-[10px] text-slate-500" title={line}>{line}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
-          </div>
+          <SectionList tracking={tracking} onEdit={editSection} headingRef={sectionHeadingRef} showNotice={showNotice} />
+          <LearningNotes />
           </div>
           </div>
         </aside>
@@ -887,50 +225,7 @@ export default function App() {
           className={`min-h-[70vh] min-w-0 flex-col p-4 pb-20 xl:flex xl:min-h-0 xl:pb-4 ${mobileView === "preview" ? "flex" : "hidden"}`}
         >
           <div id="view-preview" role="tabpanel" aria-labelledby="view-tab-preview" className="flex min-h-0 flex-1 flex-col">
-          <div className="flex flex-wrap items-end justify-between gap-2 pb-3">
-            {/* サイト名は自由入力。空白のない長い文字列でも、隣のボタンを押し出さずに折り返す。 */}
-            <div className="min-w-0 flex-1 wrap-anywhere">
-              <span className="text-xs font-bold text-slate-600">プレビュー</span>
-              <h2 className="font-black">{site.siteTitle}</h2>
-            </div>
-            <Button variant="secondary" size="sm" onClick={() => setCodeOpen((open) => !open)} aria-expanded={codeOpen} aria-controls="code-panel-content" icon={<Code2 className="size-4" />}>
-              {codeOpen ? "コードを隠す" : "コードを見る"}
-            </Button>
-          </div>
-
-          {/* プレビューと生成コードを同時に見せる。理由を書く場面で、対象のコードを探しに行かせないため。 */}
-          <div ref={previewAreaRef} className="flex min-h-0 flex-1 flex-col">
-            {/* 表示中のセクションが無いと、プレビューにはヘッダーとフッターしか残らない。
-                何が起きたかと戻し方を、プレビューの手前（編集画面の側）で伝える。
-                生成するHTMLには入れない。提出物に編集ツールの案内が混ざるため。 */}
-            {!hasVisibleSection && (
-              <Callout tone="warning" className="mb-3" data-testid="preview-all-hidden">
-                <p>
-                  <strong>すべてのセクションが非表示です。</strong><br />
-                  左の「セクション」一覧でチェックを入れると、プレビューに戻ります。
-                </p>
-                <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={showSectionList}>
-                  セクション一覧へ
-                </Button>
-              </Callout>
-            )}
-            <SitePreview site={site} onElementSelect={selectElement} />
-            {codeOpen && (
-              <>
-                <VerticalSplitter
-                  label="プレビューとコードの高さを調整"
-                  value={codeHeight}
-                  min={minCodeHeight}
-                  max={maxCodeHeight}
-                  // 下へ動かすとコードが縮む。プレビュー側も読める高さを残す。
-                  onResize={(deltaY) => setCodeHeight((height) => limitCodeHeight(height - deltaY))}
-                />
-                <div className="flex shrink-0 flex-col" style={{ height: codeHeight }}>
-                  <CodePanel site={site} baselineSite={baselineSite} selectedElementId={selectedElementId} />
-                </div>
-              </>
-            )}
-          </div>
+            <PreviewArea baselineSite={tracking.baselineSite} onShowSectionList={showSectionList} />
           </div>
         </main>
 
@@ -939,236 +234,18 @@ export default function App() {
           className={`min-h-0 overflow-hidden border-l border-slate-200 bg-slate-100 xl:flex ${mobileView === "panel" ? "flex" : "hidden"}`}
         >
           <div id="view-panel" role="tabpanel" aria-labelledby="view-tab-panel" className="flex min-h-0 min-w-0 flex-1">
-          {/* 畳んだときのつまみ。デスクトップで畳んでいる間はここだけが残る。 */}
-          <div className={`hidden w-10 shrink-0 flex-col items-center py-3 ${panelOpen ? "xl:hidden" : "xl:flex"}`}>
-            <Button
-              ref={panelOpenButtonRef}
-              type="button"
-              variant="quiet"
-              size="icon"
-              onClick={() => {
-                // このボタンは開くと隠れる。描画を済ませてから、畳むボタンへフォーカスを渡す。
-                flushSync(() => setPanelOpen(true));
-                panelCollapseButtonRef.current?.focus();
-              }}
-              aria-expanded={false}
-              aria-label="パネルを開く"
-              title="パネルを開く"
-              className="rounded-l-lg rounded-r-none"
-              icon={<ChevronLeft className="size-4" />}
-            />
-          </div>
-
-          {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
-          <div className={`flex min-w-0 flex-1 flex-col bg-white ${panelOpen ? "flex" : "flex xl:hidden"}`}>
-          {/* 中の見出しはh3から始まるため、領域の見出しとしてh2を置く。無いとモバイルでこの領域だけを
-              表示したときにh1からh3へ飛び、デスクトップではプレビューのh2の下に入ってしまう。
-              見た目ではタブと下部バーが同じ役割を担うので、読み上げ用だけにする。 */}
-          <h2 className="sr-only">調整と学習</h2>
-          {/* タブは横書き。縦書きだと1文字ずつ縦に並び、主要ナビゲーションとして読みにくい。
-              role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
-          <div className="flex shrink-0 items-center border-b border-slate-200 px-2 pt-2">
-            {/* 選択状態は「どのパネルを選んでいるか」だけで決める。
-                畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
-                畳んでいる間はタブ列しか見えないため、選択表示が残っていて差し支えない。
-                タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
-                モバイルではパネルが常時表示なので、ここでpanelOpenを触ると
-                画面に出ていない「デスクトップの畳み状態」を勝手に書き換えてしまう。 */}
-            <Tabs
-              label="調整と学習"
-              items={(Object.keys(panelLabels) as PanelKey[]).map((key) => ({
-                key,
-                title: panelLabels[key],
-                label: <>
-                  <span>{panelLabels[key]}</span>
-                  {key === "quality" && hasQualityIssue && (
-                    <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-danger-vivid" />
-                  )}
-                </>,
-              }))}
-              value={activePanel}
-              onValueChange={setActivePanel}
-              tabId={(key) => `panel-tab-${key}`}
-              panelId={() => "panel-content"}
-              className="items-center gap-1"
-            />
-            <Button
-              ref={panelCollapseButtonRef}
-              type="button"
-              variant="quiet"
-              size="icon"
-              onClick={() => {
-                // このボタンは畳むとタブ列ごと隠れる。描画を済ませてから、開くボタンへフォーカスを渡す。
-                flushSync(() => setPanelOpen(false));
-                panelOpenButtonRef.current?.focus();
-              }}
-              aria-expanded={panelOpen}
-              aria-label="パネルを畳んでプレビューを広げる"
-              title="パネルを畳んでプレビューを広げる"
-              className="ml-auto hidden rounded-lg xl:inline-flex"
-              icon={<ChevronRight className="size-4" />}
-            />
-          </div>
-
-          <div
-            id="panel-content"
-            role="tabpanel"
-            aria-labelledby={`panel-tab-${activePanel}`}
-            className="flex-1 overflow-y-auto p-4 pb-20 xl:pb-4"
-          >
-          {/* いま一番やってほしいことを1つだけ出す。複数並べると、
-              結局どれから手を付ければよいのか分からなくなる。 */}
-          <section aria-labelledby="next-action-heading" className="mb-4 rounded-xl bg-blue-50 p-3">
-            <h3 id="next-action-heading" className="text-xs font-bold text-blue-700">次にすること</h3>
-            <p className="mt-1 text-sm font-black text-blue-950">{nextToDo.title}</p>
-            <p className="mt-1 text-xs leading-5 text-blue-900">{nextToDo.detail}</p>
-          </section>
-
-          {activePanel === "design" && <>
-          <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
-          <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
-          <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-warning-vivid focus-visible:ring-warning-vivid"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
-
-          {/* 書けている観点をその場で返す。記録は止めず、足りない観点の書き足しかたを示す。 */}
-          <ul className="mt-2 space-y-1" aria-label="理由の書けている観点">
-            {reasonChecks.map((check) => (
-              <li key={check.id} className="flex gap-1.5 text-[11px] leading-4">
-                {check.passed
-                  ? <Check className="mt-px size-3.5 shrink-0 text-success-vivid" aria-hidden />
-                  : <Circle className="mt-px size-3.5 shrink-0 text-slate-300" aria-hidden />}
-                <span className={check.passed ? "text-success" : "text-slate-500"}>
-                  <strong className="font-bold">{check.label}</strong>
-                  {check.passed ? <span className="sr-only">：書けています</span> : `：${check.hint}`}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {passedAspects === reasonChecks.length && (
-            <p className="mt-1 text-[11px] font-bold text-success">3つそろいました。記録すると、変わったコードも一緒に残ります。</p>
-          )}
-
-          <Card className="relative mt-4 space-y-4 p-4">
-            <h3 className="text-sm font-black">デザイン</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block text-xs font-bold">メインカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.primary} onChange={(event) => changeTheme("primary", event.target.value)} /></label>
-              <label className="block text-xs font-bold">背景色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.background} onChange={(event) => changeTheme("background", event.target.value)} /></label>
-              <label className="block text-xs font-bold">テキストカラー<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.text} onChange={(event) => changeTheme("text", event.target.value)} /></label>
-              {/* 見出しの色は未指定ならメインカラーを引き継ぐ。ピッカーにはその実効値を表示する。 */}
-              <label className="block text-xs font-bold">見出しの色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.heading ?? site.theme.primary} onChange={(event) => changeTheme("heading", event.target.value)} /></label>
-            </div>
-            <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => changeTheme("spacing", Number(event.target.value))} /></label>
-            <label className="block text-xs font-bold">フォント<Select className="mt-1 w-full" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></Select></label>
-            <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
-          </Card>
-
-          {/* 構成の変更は、色や文章の書き換えより判断の粒度が大きい。
-              何を足して何を削ったのかを並べ、まとめて1件の説明として残す。 */}
-          {pendingStructure.length > 0 && <Card className="mt-4 space-y-3 p-4">
-            <h3 className="text-sm font-black">セクション構成の変更</h3>
-            <ul className="space-y-1 text-xs text-slate-600">
-              {pendingStructure.map((change) => <li key={change.id}>・{change.label}</li>)}
-            </ul>
-            <Button type="button" className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordStructureReason}>セクション構成の理由を記録</Button>
-          </Card>}
-
-          {selectedSection && <Card className="mt-4 space-y-3 p-4">
-            <h3 ref={selectedSectionHeadingRef} tabIndex={-1} className="text-sm font-black wrap-anywhere">選択中: {selectedSection.title}</h3>
-            <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
-            <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} /></label>
-            {selectedSection.kind !== "contact" && (
-              <SectionImageField
-                section={selectedSection}
-                sections={site.sections}
-                onSelect={(image) => setSectionImage(selectedSection.id, image)}
-                onRemove={() => removeSectionImage(selectedSection.id)}
-              />
-            )}
-            {selectedSection.kind !== "contact" && <label className="block text-xs font-bold">画像の説明（alt）<Input className="mt-1" value={selectedSection.imageAlt} onChange={(event) => updateSection(selectedSection.id, { imageAlt: event.target.value })} placeholder="画像が見えない人にも伝わる説明" /></label>}
-            <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordContentReason}>内容変更の理由を記録</Button>
-          </Card>}
-          </>}
-
-          {activePanel === "explanation" && <Card className="mt-4 p-4">
-            <h3 className="text-sm font-black">なぜこのコード？</h3>
-            {/* プレビュー上に置くと画面を圧迫するため、操作案内はこのタブ内に置く。 */}
-            <Callout tone="info" className="mt-2 px-3 py-2">
-              プレビュー内の要素を<strong>クリック</strong>すると、その部分の解説に切り替わります。
-            </Callout>
-            <p className="mt-3 text-sm font-bold text-blue-700">{explanation.title}</p>
-            <p className="mt-2 text-xs leading-5"><strong>HTML:</strong> {explanation.html}</p>
-            <p className="mt-1 text-xs leading-5"><strong>CSS:</strong> {explanation.css}</p>
-            <p className="mt-1 text-xs leading-5 text-slate-600">{explanation.why}</p>
-          </Card>}
-
-          {activePanel === "quality" && <Card className="mt-4 p-4">
-            <h3 className="text-sm font-black">品質チェック</h3>
-            <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-success-vivid" /> : <X className="size-5 shrink-0 text-danger-vivid" />}<div className="min-w-0 wrap-anywhere"><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
-
-            {/* アクセシビリティの自動チェック（axe）。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
-            <section aria-labelledby="axe-heading" className="mt-4 border-t border-slate-200 pt-3">
-              <h4 ref={axeHeadingRef} id="axe-heading" tabIndex={-1} className="text-xs font-black">アクセシビリティの自動チェック</h4>
-
-              {axeAudit.status === "loading" && (
-                <p className="mt-2 text-xs text-slate-500" data-testid="axe-loading">自動チェックを実行しています…</p>
-              )}
-
-              {axeAudit.status === "error" && (
-                <div className="mt-2 text-xs text-danger" data-testid="axe-error">
-                  <p className="flex gap-2">
-                    <X className="size-5 shrink-0" />
-                    <span className="leading-5">{axeAudit.message}</span>
-                  </p>
-                  {/* 検査はサイトが変わったときにしか走らないため、同じサイトのまま再実行できる導線を置く。
-                      押すとこのボタンは消えるため、実行中の表示が続く見出しへフォーカスを移す。 */}
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="mt-2"
-                    onClick={() => {
-                      retryAxeAuditWithNotice();
-                      axeHeadingRef.current?.focus();
-                    }}
-                  >
-                    もう一度チェックする
-                  </Button>
-                </div>
-              )}
-
-              {axeAudit.status === "ready" && axeAudit.findings.length === 0 && (
-                <p className="mt-2 flex gap-2 text-xs text-slate-600" data-testid="axe-empty">
-                  <Check className="size-5 shrink-0 text-success-vivid" />
-                  <span className="leading-5">自動チェックで見つかる問題はありませんでした。</span>
-                </p>
-              )}
-
-              {axeAudit.status === "ready" && axeAudit.findings.length > 0 && (
-                <ul className="mt-2 space-y-3" data-testid="axe-findings">
-                  {axeAudit.findings.map((finding) => (
-                    <li key={finding.ruleId} className="flex gap-2 text-xs">
-                      <X className="size-5 shrink-0 text-danger-vivid" />
-                      <div className="min-w-0">
-                        <strong className="leading-5">{finding.summary}</strong>
-                        <p className="mt-0.5 leading-5 text-slate-600">{finding.why}</p>
-                        <p className="mt-0.5 leading-5 text-slate-500">
-                          影響: {impactLabels[finding.impact]} ／ 対象: <code className="break-all">{finding.target}</code>
-                          {finding.count > 1 && ` ほか${finding.count - 1}件`}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {/* 自動チェックが万能だと思わせないための一文。
-                  axeは機械的に判定できる範囲しか見ないため、通っても内容の分かりやすさは別途確認が要る。 */}
-              <p className="mt-3 text-[11px] leading-4 text-slate-500">
-                提出物と同じHTML・CSSを読み込んで自動判定しています。ここで問題が無くても、文章の分かりやすさは自分の目で確認してください。
-              </p>
-            </section>
-          </Card>}
-          </div>
-          </div>
+            <SidePanel
+              activePanel={activePanel}
+              onActivePanelChange={setActivePanel}
+              panelOpen={panelOpen}
+              onPanelOpenChange={setPanelOpen}
+              hasQualityIssue={hasQualityIssue}
+              nextToDo={nextToDo}
+            >
+              {activePanel === "design" && <DesignPanel tracking={tracking} selectedSectionHeadingRef={selectedSectionHeadingRef} />}
+              {activePanel === "explanation" && <ExplanationPanel />}
+              {activePanel === "quality" && <QualityPanel checks={qualityChecks} />}
+            </SidePanel>
           </div>
         </aside>
       </div>
