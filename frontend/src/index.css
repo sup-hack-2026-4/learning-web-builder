@@ -1,5 +1,27 @@
 @import "tailwindcss";
 
+/* 意味を持つ色。赤・黄・緑を直接書かず、「危険」「注意」「成功」の意味で指定する。
+   値はTailwindの標準色を参照し、見た目は従来のままにする。
+   使い分け: 無印=文字、-strong=淡い背景の上の文字、-vivid=アイコンや印、
+   -subtle=淡い背景、-hover=淡い背景のホバー、-border=枠線。 */
+@theme inline {
+  --color-danger: var(--color-red-700);
+  --color-danger-strong: var(--color-red-900);
+  --color-danger-vivid: var(--color-red-600);
+  --color-danger-subtle: var(--color-red-50);
+  --color-danger-hover: var(--color-red-100);
+  --color-danger-border: var(--color-red-200);
+
+  --color-warning: var(--color-amber-700);
+  --color-warning-strong: var(--color-amber-900);
+  --color-warning-vivid: var(--color-amber-400);
+  --color-warning-subtle: var(--color-amber-50);
+  --color-warning-border: var(--color-amber-200);
+
+  --color-success: var(--color-emerald-700);
+  --color-success-vivid: var(--color-emerald-600);
+}
+
 :root {
   font-family: Inter, "Noto Sans JP", system-ui, sans-serif;
   color: #172033;

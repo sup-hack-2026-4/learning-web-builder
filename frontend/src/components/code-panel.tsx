@@ -10,7 +10,7 @@ import {
   type TokenKind,
 } from "@/features/code-view/annotate-code";
 import type { SiteModel } from "@/features/site-model/schema";
-import { handleTabKeyDown } from "@/lib/tab-keyboard";
+import { Tabs } from "@/components/ui/tabs";
 
 // タブの見出しは、提出物ZIPに入るファイル名と同じにする。
 // 画面で読んでいるコードが、そのまま手元に届くファイルだと分かるようにするため。
@@ -22,7 +22,7 @@ const fileLabels: Record<FileKey, string> = {
   javascript: "script.js",
 };
 
-const fileKeys = Object.keys(fileLabels) as FileKey[];
+const fileTabs = (Object.keys(fileLabels) as FileKey[]).map((key) => ({ key, label: fileLabels[key] }));
 
 // 読みやすさのための色分け。役割ごとに色を割り当てる。
 const tokenClasses: Record<TokenKind, string> = {
@@ -117,27 +117,17 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
   return (
     <section aria-label="生成されたコード" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 px-2 py-1.5">
-        <div role="tablist" aria-label="生成されたコード" aria-orientation="horizontal" className="flex gap-1">
-          {fileKeys.map((key) => {
-            const selected = activeFile === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                id={`code-tab-${key}`}
-                aria-selected={selected}
-                aria-controls="code-panel-content"
-                tabIndex={selected ? 0 : -1}
-                onKeyDown={(event) => handleTabKeyDown(event, fileKeys, activeFile, "horizontal", (k) => `code-tab-${k}`, setActiveFile)}
-                onClick={() => setActiveFile(key)}
-                className={`rounded-lg px-2.5 py-1 font-mono text-xs font-bold transition ${selected ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-              >
-                {fileLabels[key]}
-              </button>
-            );
-          })}
-        </div>
+        <Tabs
+          label="生成されたコード"
+          items={fileTabs}
+          value={activeFile}
+          onValueChange={setActiveFile}
+          tabId={(key) => `code-tab-${key}`}
+          panelId={() => "code-panel-content"}
+          variant="pill"
+          className="gap-1"
+          tabClassName="font-mono"
+        />
 
         {/* いまコードのどこを見ればよいかを、色の意味とあわせて示す。 */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600">

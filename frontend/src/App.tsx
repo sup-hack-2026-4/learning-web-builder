@@ -3,13 +3,15 @@ import { flushSync } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Circle, Code2, Download, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Tabs } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { CodePanel } from "@/components/code-panel";
 import { SitePreview } from "@/components/site-preview";
 import { VerticalSplitter } from "@/components/vertical-splitter";
-import { handleTabKeyDown } from "@/lib/tab-keyboard";
 import { SectionImageField } from "@/features/images/section-image-field";
 import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
 import { collectChangedLineTexts } from "@/features/code-view/annotate-code";
@@ -693,17 +695,18 @@ export default function App() {
             onLoad={loadProject}
             onNotice={showNotice}
           />
-          <Button variant="ghost" onClick={resetBuilder}><RotateCcw className="mr-2 size-4" />リセット</Button>
+          <Button variant="ghost" onClick={resetBuilder} icon={<RotateCcw className="size-4" />}>リセット</Button>
           {/* 提出の手前で、何件記録できていて何件未説明かが分かるようにする。
               「理由を書かずに提出してしまう」のを止めるための最後の目印。 */}
           <span className="text-xs text-slate-500">
             メモ<strong className="mx-0.5 text-slate-800">{notes.length}</strong>件
             {flowState.unexplainedCount > 0 && (
-              <strong className="ml-2 text-amber-700">未説明{flowState.unexplainedCount}件</strong>
+              <strong className="ml-2 text-warning">未説明{flowState.unexplainedCount}件</strong>
             )}
           </span>
           <Button
-            disabled={exportZip.isPending}
+            loading={exportZip.isPending}
+            icon={<Download className="size-4" />}
             onClick={() =>
               exportZip.mutate({
                 site,
@@ -714,7 +717,7 @@ export default function App() {
               })
             }
           >
-            <Download className="mr-2 size-4" />{exportZip.isPending ? "ZIP作成中…" : "提出物ZIP"}
+            {exportZip.isPending ? "ZIP作成中…" : "提出物ZIP"}
           </Button>
         </div>
       </header>
@@ -734,15 +737,17 @@ export default function App() {
           <div id="view-setup" role="tabpanel" aria-labelledby="view-tab-setup" className="flex min-h-0 min-w-0 flex-1">
           {/* 畳んだときに残るつまみ。xl未満では下部バーで切り替えるため出さない。 */}
           <div className="order-2 hidden w-10 shrink-0 flex-col items-center bg-slate-100 py-3 xl:flex">
-            <button
+            <Button
               type="button"
+              variant="quiet"
+              size="icon"
               onClick={() => setSetupOpen((open) => !open)}
               aria-expanded={setupOpen}
+              aria-label={setupOpen ? "題材・メモを畳んでプレビューを広げる" : "題材・メモを開く"}
               title={setupOpen ? "題材・メモを畳んでプレビューを広げる" : "題材・メモを開く"}
-              className="w-10 rounded-r-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
-            >
-              {setupOpen ? <ChevronLeft className="mx-auto size-4" /> : <ChevronRight className="mx-auto size-4" />}
-            </button>
+              className="rounded-l-none rounded-r-lg"
+              icon={setupOpen ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />}
+            />
           </div>
 
           <div className={`flex-1 overflow-y-auto bg-white p-4 pb-20 xl:pb-4 ${setupOpen ? "block" : "block xl:hidden"}`}>
@@ -755,15 +760,15 @@ export default function App() {
             <form onSubmit={submitTopic} className="space-y-2">
               <label className="text-xs font-bold text-slate-600" htmlFor="topic">紹介サイトの題材</label>
               <Textarea id="topic" rows={2} value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="例：地域の小さな植物園" />
-              <Button variant="secondary" className="w-full" disabled={!topic.trim() || generation.isPending}>
-                <Sparkles className="mr-2 size-4" />{generation.isPending ? "生成中…" : "たたき台を生成"}
+              <Button variant="secondary" className="w-full" disabled={!topic.trim()} loading={generation.isPending} icon={<Sparkles className="size-4" />}>
+                {generation.isPending ? "生成中…" : "たたき台を生成"}
               </Button>
             </form>
           </div>
 
-          <div className="my-5 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+          <Callout tone="warning" className="my-5">
             <strong>AI生成文は仮テキストです。</strong><br />事実情報は必ず自分で調べて入力してください。
-          </div>
+          </Callout>
 
           <h2 ref={sectionHeadingRef} tabIndex={-1} className="mb-1 text-sm font-black">
             セクション <span className="font-normal text-slate-400">{site.sections.length} / {maxSections}</span>
@@ -780,19 +785,22 @@ export default function App() {
                     <input id={sectionToggleId(section.id)} type="checkbox" checked={section.visible} onChange={(event) => toggleSection(section.id, event.target.checked)} />
                   </label>
                   {/* プレビュー内のクリックに代わる選び方。どれを選んでいるかはaria-currentで伝える。 */}
-                  <button
+                  <Button
                     type="button"
+                    variant="quiet"
+                    size="icon"
                     onClick={() => editSection(section.id)}
                     aria-label={`${section.title}を編集`}
                     aria-current={section.id === selectedElementId ? "true" : undefined}
                     title={`${section.title}を編集`}
-                    // 削除ボタンとそろえて、アイコンは小さいまま指で押せる40px四方を確保する。
-                    className="-my-2 inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-blue-50 hover:text-blue-700 aria-[current=true]:text-blue-700"
-                  >
-                    <Pencil className="size-4" />
-                  </button>
-                  <button
+                    // 行の上下の余白へ重ねて、行の高さを変えない。選んでいる行は青で示す。
+                    className="-my-2 rounded-lg enabled:hover:bg-blue-50 enabled:hover:text-blue-700 aria-[current=true]:text-blue-700"
+                    icon={<Pencil className="size-4" />}
+                  />
+                  <Button
                     type="button"
+                    variant="quiet-danger"
+                    size="icon"
                     id={sectionRemoveButtonId(section.id)}
                     onClick={() => {
                       // 確認は押したボタンの下に出るだけなので、そのままでは読み上げもTabの位置も
@@ -803,33 +811,31 @@ export default function App() {
                     disabled={removeBlockReason !== null}
                     aria-label={`${section.title}を削除`}
                     title={removeBlockReason ?? `${section.title}を削除`}
-                    // アイコンは小さいまま、指で押せる40px四方を確保する。
                     // 行の上下と右の余白へ重ねて、行の高さとアイコンの位置をほぼ変えない。
-                    className="-my-2 -mr-2 inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
+                    className="-my-2 -mr-2 rounded-lg"
+                    icon={<Trash2 className="size-4" />}
+                  />
                 </div>
 
                 {/* 削除は取り消せないため、押した行の中でもう一度確かめる。
                     ブラウザのconfirmだと操作が止まるうえ、「まず非表示にする」という
                     引き返し方を示せない。消す前に、消さずに済む道を出しておく。 */}
                 {removalTargetId === section.id && (
-                  <div className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-900">
-                    <p className="leading-4">削除すると元に戻せません。迷うなら、まず非表示にして様子を見てください。</p>
+                  <Callout tone="danger" className="mt-2 p-2">
+                    <p>削除すると元に戻せません。迷うなら、まず非表示にして様子を見てください。</p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <Button
                         type="button"
                         variant="secondary"
-                        className="min-h-8 px-2 text-xs"
+                        size="sm"
                         onClick={() => { toggleSection(section.id, false); closeRemovalConfirm(section.id); }}
                       >
                         まず非表示にする
                       </Button>
-                      <Button ref={removalCancelRef} type="button" variant="ghost" className="min-h-8 px-2 text-xs" onClick={() => closeRemovalConfirm(section.id)}>やめる</Button>
-                      <Button type="button" variant="ghost" className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-100" onClick={() => handleRemoveSection(section)}>削除する</Button>
+                      <Button ref={removalCancelRef} type="button" variant="ghost" size="sm" onClick={() => closeRemovalConfirm(section.id)}>やめる</Button>
+                      <Button type="button" variant="danger" size="sm" onClick={() => handleRemoveSection(section)}>削除する</Button>
                     </div>
-                  </div>
+                  </Callout>
                 )}
               </li>
             ))}
@@ -839,19 +845,19 @@ export default function App() {
           <div className="mt-3 rounded-xl border border-dashed border-slate-300 p-3">
             <label className="block text-xs font-bold text-slate-600" htmlFor="new-section-kind">追加するセクション</label>
             <div className="mt-1 flex gap-2">
-              <select
+              <Select
                 id="new-section-kind"
-                className="min-h-10 min-w-0 flex-1 rounded-xl border border-slate-300 px-2 text-sm"
+                className="min-w-0 flex-1"
                 value={newSectionKind}
                 onChange={(event) => setNewSectionKind(event.target.value as SectionKind)}
               >
                 {sectionKinds.map((kind) => <option key={kind} value={kind}>{sectionKindLabels[kind]}</option>)}
-              </select>
-              <Button type="button" variant="secondary" className="shrink-0 px-3" disabled={addBlockReason !== null} onClick={() => handleAddSection(newSectionKind)}>
-                <Plus className="mr-1 size-4" />追加
+              </Select>
+              <Button type="button" variant="secondary" className="shrink-0 gap-1 px-3" disabled={addBlockReason !== null} onClick={() => handleAddSection(newSectionKind)} icon={<Plus className="size-4" />}>
+                追加
               </Button>
             </div>
-            {addBlockReason && <p className="mt-2 text-[11px] leading-4 text-amber-700">{addBlockReason}</p>}
+            {addBlockReason && <p className="mt-2 text-[11px] leading-4 text-warning">{addBlockReason}</p>}
           </div>
 
           <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
@@ -887,8 +893,8 @@ export default function App() {
               <span className="text-xs font-bold text-slate-600">プレビュー</span>
               <h2 className="font-black">{site.siteTitle}</h2>
             </div>
-            <Button variant="secondary" className="min-h-9 px-3 text-xs" onClick={() => setCodeOpen((open) => !open)} aria-expanded={codeOpen} aria-controls="code-panel-content">
-              <Code2 className="mr-2 size-4" />{codeOpen ? "コードを隠す" : "コードを見る"}
+            <Button variant="secondary" size="sm" onClick={() => setCodeOpen((open) => !open)} aria-expanded={codeOpen} aria-controls="code-panel-content" icon={<Code2 className="size-4" />}>
+              {codeOpen ? "コードを隠す" : "コードを見る"}
             </Button>
           </div>
 
@@ -898,15 +904,15 @@ export default function App() {
                 何が起きたかと戻し方を、プレビューの手前（編集画面の側）で伝える。
                 生成するHTMLには入れない。提出物に編集ツールの案内が混ざるため。 */}
             {!hasVisibleSection && (
-              <div className="mb-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900" data-testid="preview-all-hidden">
+              <Callout tone="warning" className="mb-3" data-testid="preview-all-hidden">
                 <p>
                   <strong>すべてのセクションが非表示です。</strong><br />
                   左の「セクション」一覧でチェックを入れると、プレビューに戻ります。
                 </p>
-                <Button type="button" variant="secondary" className="mt-2 min-h-9 px-3 text-xs" onClick={showSectionList}>
+                <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={showSectionList}>
                   セクション一覧へ
                 </Button>
-              </div>
+              </Callout>
             )}
             <SitePreview site={site} onElementSelect={selectElement} />
             {codeOpen && (
@@ -935,20 +941,22 @@ export default function App() {
           <div id="view-panel" role="tabpanel" aria-labelledby="view-tab-panel" className="flex min-h-0 min-w-0 flex-1">
           {/* 畳んだときのつまみ。デスクトップで畳んでいる間はここだけが残る。 */}
           <div className={`hidden w-10 shrink-0 flex-col items-center py-3 ${panelOpen ? "xl:hidden" : "xl:flex"}`}>
-            <button
+            <Button
               ref={panelOpenButtonRef}
               type="button"
+              variant="quiet"
+              size="icon"
               onClick={() => {
                 // このボタンは開くと隠れる。描画を済ませてから、畳むボタンへフォーカスを渡す。
                 flushSync(() => setPanelOpen(true));
                 panelCollapseButtonRef.current?.focus();
               }}
               aria-expanded={false}
+              aria-label="パネルを開く"
               title="パネルを開く"
-              className="w-10 rounded-l-lg py-2 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
-            >
-              <ChevronLeft className="mx-auto size-4" />
-            </button>
+              className="rounded-l-lg rounded-r-none"
+              icon={<ChevronLeft className="size-4" />}
+            />
           </div>
 
           {/* 畳みはxl以上だけの機能。狭い画面ではパネルが画面全体なので、畳むと何も見えなくなる。 */}
@@ -960,55 +968,46 @@ export default function App() {
           {/* タブは横書き。縦書きだと1文字ずつ縦に並び、主要ナビゲーションとして読みにくい。
               role="tablist"の子はtabのみ。畳むボタンはタブではないのでこの外に置く。 */}
           <div className="flex shrink-0 items-center border-b border-slate-200 px-2 pt-2">
-            <div className="flex items-center gap-1" role="tablist" aria-label="調整と学習" aria-orientation="horizontal">
-            {(Object.keys(panelLabels) as PanelKey[]).map((key) => {
-              // 選択状態は「どのパネルを選んでいるか」だけで決める。
-              // 畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
-              // 畳んでいる間はタブ列しか見えないため、選択表示が残っていて差し支えない。
-              const selected = activePanel === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  id={`panel-tab-${key}`}
-                  aria-selected={selected}
-                  aria-controls="panel-content"
-                  tabIndex={selected ? 0 : -1}
-                  title={panelLabels[key]}
-                  onKeyDown={(event) =>
-                    handleTabKeyDown(event, Object.keys(panelLabels) as PanelKey[], activePanel, "horizontal", (k) => `panel-tab-${k}`, setActivePanel)
-                  }
-                  onClick={() => {
-                    // タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
-                    // モバイルではパネルが常時表示なので、ここでpanelOpenを触ると
-                    // 画面に出ていない「デスクトップの畳み状態」を勝手に書き換えてしまう。
-                    setActivePanel(key);
-                  }}
-                  className={`relative rounded-t-lg px-3 py-2 text-sm font-bold whitespace-nowrap transition ${selected ? "bg-white text-blue-700 shadow-[inset_0_-2px_0_0_currentColor]" : "text-slate-500 hover:bg-white/60 hover:text-slate-800"}`}
-                >
+            {/* 選択状態は「どのパネルを選んでいるか」だけで決める。
+                畳み(panelOpen)を混ぜると、中身が見えるモバイルで全タブ非選択になり矛盾する。
+                畳んでいる間はタブ列しか見えないため、選択表示が残っていて差し支えない。
+                タブはパネルの切り替えだけを担う。畳み/展開はデスクトップ専用ボタンの役割。
+                モバイルではパネルが常時表示なので、ここでpanelOpenを触ると
+                画面に出ていない「デスクトップの畳み状態」を勝手に書き換えてしまう。 */}
+            <Tabs
+              label="調整と学習"
+              items={(Object.keys(panelLabels) as PanelKey[]).map((key) => ({
+                key,
+                title: panelLabels[key],
+                label: <>
                   <span>{panelLabels[key]}</span>
                   {key === "quality" && hasQualityIssue && (
-                    <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-600" />
+                    <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-danger-vivid" />
                   )}
-                </button>
-              );
-            })}
-            </div>
-            <button
+                </>,
+              }))}
+              value={activePanel}
+              onValueChange={setActivePanel}
+              tabId={(key) => `panel-tab-${key}`}
+              panelId={() => "panel-content"}
+              className="items-center gap-1"
+            />
+            <Button
               ref={panelCollapseButtonRef}
               type="button"
+              variant="quiet"
+              size="icon"
               onClick={() => {
                 // このボタンは畳むとタブ列ごと隠れる。描画を済ませてから、開くボタンへフォーカスを渡す。
                 flushSync(() => setPanelOpen(false));
                 panelOpenButtonRef.current?.focus();
               }}
               aria-expanded={panelOpen}
+              aria-label="パネルを畳んでプレビューを広げる"
               title="パネルを畳んでプレビューを広げる"
-              className="ml-auto hidden rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 xl:block"
-            >
-              <ChevronRight className="size-4" />
-            </button>
+              className="ml-auto hidden rounded-lg xl:inline-flex"
+              icon={<ChevronRight className="size-4" />}
+            />
           </div>
 
           <div
@@ -1028,16 +1027,16 @@ export default function App() {
           {activePanel === "design" && <>
           <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
           <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
-          <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-amber-400 focus-visible:ring-amber-400"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
+          <Textarea id="reason" rows={2} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-warning-vivid focus-visible:ring-warning-vivid"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
 
           {/* 書けている観点をその場で返す。記録は止めず、足りない観点の書き足しかたを示す。 */}
           <ul className="mt-2 space-y-1" aria-label="理由の書けている観点">
             {reasonChecks.map((check) => (
               <li key={check.id} className="flex gap-1.5 text-[11px] leading-4">
                 {check.passed
-                  ? <Check className="mt-px size-3.5 shrink-0 text-emerald-600" aria-hidden />
+                  ? <Check className="mt-px size-3.5 shrink-0 text-success-vivid" aria-hidden />
                   : <Circle className="mt-px size-3.5 shrink-0 text-slate-300" aria-hidden />}
-                <span className={check.passed ? "text-emerald-700" : "text-slate-500"}>
+                <span className={check.passed ? "text-success" : "text-slate-500"}>
                   <strong className="font-bold">{check.label}</strong>
                   {check.passed ? <span className="sr-only">：書けています</span> : `：${check.hint}`}
                 </span>
@@ -1045,7 +1044,7 @@ export default function App() {
             ))}
           </ul>
           {passedAspects === reasonChecks.length && (
-            <p className="mt-1 text-[11px] font-bold text-emerald-700">3つそろいました。記録すると、変わったコードも一緒に残ります。</p>
+            <p className="mt-1 text-[11px] font-bold text-success">3つそろいました。記録すると、変わったコードも一緒に残ります。</p>
           )}
 
           <Card className="relative mt-4 space-y-4 p-4">
@@ -1058,7 +1057,7 @@ export default function App() {
               <label className="block text-xs font-bold">見出しの色<input className="mt-1 h-10 w-full cursor-pointer" type="color" value={site.theme.heading ?? site.theme.primary} onChange={(event) => changeTheme("heading", event.target.value)} /></label>
             </div>
             <label className="block text-xs font-bold">余白: {site.theme.spacing}<input className="mt-2 w-full" type="range" min="2" max="10" value={site.theme.spacing} onChange={(event) => changeTheme("spacing", Number(event.target.value))} /></label>
-            <label className="block text-xs font-bold">フォント<select className="mt-1 min-h-10 w-full rounded-xl border border-slate-300 px-3" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></select></label>
+            <label className="block text-xs font-bold">フォント<Select className="mt-1 w-full" value={site.theme.fontFamily} onChange={(event) => changeTheme("fontFamily", event.target.value)}><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="rounded">丸ゴシック</option></Select></label>
             <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={recordThemeReason}>デザイン変更の理由を記録</Button>
           </Card>
 
@@ -1092,9 +1091,9 @@ export default function App() {
           {activePanel === "explanation" && <Card className="mt-4 p-4">
             <h3 className="text-sm font-black">なぜこのコード？</h3>
             {/* プレビュー上に置くと画面を圧迫するため、操作案内はこのタブ内に置く。 */}
-            <p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">
+            <Callout tone="info" className="mt-2 px-3 py-2">
               プレビュー内の要素を<strong>クリック</strong>すると、その部分の解説に切り替わります。
-            </p>
+            </Callout>
             <p className="mt-3 text-sm font-bold text-blue-700">{explanation.title}</p>
             <p className="mt-2 text-xs leading-5"><strong>HTML:</strong> {explanation.html}</p>
             <p className="mt-1 text-xs leading-5"><strong>CSS:</strong> {explanation.css}</p>
@@ -1103,7 +1102,7 @@ export default function App() {
 
           {activePanel === "quality" && <Card className="mt-4 p-4">
             <h3 className="text-sm font-black">品質チェック</h3>
-            <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-emerald-600" /> : <X className="size-5 shrink-0 text-red-600" />}<div className="min-w-0 wrap-anywhere"><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
+            <div className="mt-3 space-y-3">{quality.map((item) => <div key={item.id} className="flex gap-2 text-xs">{item.passed ? <Check className="size-5 shrink-0 text-success-vivid" /> : <X className="size-5 shrink-0 text-danger-vivid" />}<div className="min-w-0 wrap-anywhere"><strong>{item.label}</strong><p className="mt-0.5 leading-5 text-slate-600">{item.detail}</p></div></div>)}</div>
 
             {/* アクセシビリティの自動チェック（axe）。実測に時間がかかるため、実行中・結果・失敗を分けて出す。 */}
             <section aria-labelledby="axe-heading" className="mt-4 border-t border-slate-200 pt-3">
@@ -1114,7 +1113,7 @@ export default function App() {
               )}
 
               {axeAudit.status === "error" && (
-                <div className="mt-2 text-xs text-red-700" data-testid="axe-error">
+                <div className="mt-2 text-xs text-danger" data-testid="axe-error">
                   <p className="flex gap-2">
                     <X className="size-5 shrink-0" />
                     <span className="leading-5">{axeAudit.message}</span>
@@ -1124,7 +1123,8 @@ export default function App() {
                   <Button
                     type="button"
                     variant="secondary"
-                    className="mt-2 min-h-9 px-3 text-xs"
+                    size="sm"
+                    className="mt-2"
                     onClick={() => {
                       retryAxeAuditWithNotice();
                       axeHeadingRef.current?.focus();
@@ -1137,7 +1137,7 @@ export default function App() {
 
               {axeAudit.status === "ready" && axeAudit.findings.length === 0 && (
                 <p className="mt-2 flex gap-2 text-xs text-slate-600" data-testid="axe-empty">
-                  <Check className="size-5 shrink-0 text-emerald-600" />
+                  <Check className="size-5 shrink-0 text-success-vivid" />
                   <span className="leading-5">自動チェックで見つかる問題はありませんでした。</span>
                 </p>
               )}
@@ -1146,7 +1146,7 @@ export default function App() {
                 <ul className="mt-2 space-y-3" data-testid="axe-findings">
                   {axeAudit.findings.map((finding) => (
                     <li key={finding.ruleId} className="flex gap-2 text-xs">
-                      <X className="size-5 shrink-0 text-red-600" />
+                      <X className="size-5 shrink-0 text-danger-vivid" />
                       <div className="min-w-0">
                         <strong className="leading-5">{finding.summary}</strong>
                         <p className="mt-0.5 leading-5 text-slate-600">{finding.why}</p>
@@ -1176,30 +1176,23 @@ export default function App() {
       {/* 狭い画面用の切替バー。3カラムを縦積みすると見づらいため、1つずつ表示する。 */}
       {/* navへ直接role="tablist"を付けるとナビゲーションのランドマークが上書きされるため、内側に置く。 */}
       <nav className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-200 bg-white/95 backdrop-blur xl:hidden" aria-label="表示の切り替え">
-        <div className="flex" role="tablist" aria-label="表示の切り替え">
-        {(Object.keys(mobileViewLabels) as MobileView[]).map((key) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            id={`view-tab-${key}`}
-            aria-selected={mobileView === key}
-            aria-controls={`view-${key}`}
-            tabIndex={mobileView === key ? 0 : -1}
-            onKeyDown={(event) =>
-              handleTabKeyDown(event, Object.keys(mobileViewLabels) as MobileView[], mobileView, "horizontal", (k) => `view-tab-${k}`, setMobileView)
-            }
-            onClick={() => setMobileView(key)}
-            className={`relative flex-1 py-3 text-xs font-bold transition ${mobileView === key ? "text-blue-700" : "text-slate-600"}`}
-          >
-            {mobileViewLabels[key]}
-            {key === "panel" && hasQualityIssue && (
-              <span className="ml-1 inline-block size-1.5 rounded-full bg-red-600 align-middle" />
-            )}
-            {mobileView === key && <span className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-blue-700" />}
-          </button>
-        ))}
-        </div>
+        <Tabs
+          label="表示の切り替え"
+          items={(Object.keys(mobileViewLabels) as MobileView[]).map((key) => ({
+            key,
+            label: <>
+              {mobileViewLabels[key]}
+              {key === "panel" && hasQualityIssue && (
+                <span className="ml-1 inline-block size-1.5 rounded-full bg-danger-vivid align-middle" />
+              )}
+            </>,
+          }))}
+          value={mobileView}
+          onValueChange={setMobileView}
+          tabId={(key) => `view-tab-${key}`}
+          panelId={(key) => `view-${key}`}
+          variant="bar"
+        />
       </nav>
     </div>
   );
