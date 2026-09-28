@@ -76,8 +76,12 @@ export function SidePanel({ activePanel, onActivePanelChange, panelOpen, onPanel
               title: panelLabels[key],
               label: <>
                 <span>{panelLabels[key]}</span>
+                {/* 赤い点は色だけで意味を持つため、読み上げには文字で伝える。 */}
                 {key === "quality" && hasQualityIssue && (
-                  <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-danger-vivid" />
+                  <>
+                    <span aria-hidden className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-danger-vivid" />
+                    <span className="sr-only">（問題あり）</span>
+                  </>
                 )}
               </>,
             }))}

@@ -124,9 +124,11 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
         </div>
       )}
 
-      {started && (
-        <>
-          {/* 自由入力とAIの出力は、空白のない長いURLなどを含みうる。枠の中で折り返させる。 */}
+      {/* 新しい応答が届いたことを読み上げで伝える。ライブ領域は中身より先に存在しないと
+          追加を検知できないため、相談を始める前から置いておき、最初の問いかけも読み上げさせる。 */}
+      <div role="log" aria-label="相談のやりとり">
+        {started && (
+          // 自由入力とAIの出力は、空白のない長いURLなどを含みうる。枠の中で折り返させる。
           <ol className="mt-3 space-y-2 wrap-anywhere" data-testid="concept-chat-log">
             {chatMessages.map((message, index) => (
               <li
@@ -142,17 +144,21 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
               </li>
             ))}
           </ol>
+        )}
+      </div>
 
-          {/* ローディング状態 */}
-          {chat.isPending && (
-            <p className="mt-2 text-xs text-slate-500" data-testid="concept-chat-loading">
-              考えています…
-            </p>
-          )}
+      {started && (
+        <>
+          {/* ローディング状態。送信のたびに出入りするので、領域は置いたまま中身だけ切り替える。
+              空の間も非表示（display:none）にはしない。読み上げの対象から外れ、追加を検知できなくなるため。
+              空のpは高さ0なので、余白だけを待機中に付ける。 */}
+          <p role="status" className={`text-xs text-slate-500 ${chat.isPending ? "mt-2" : ""}`} data-testid="concept-chat-loading">
+            {chat.isPending && "考えています…"}
+          </p>
 
           {/* エラー状態。相談できなくても、題材を直接入力すれば生成には進める。 */}
           {chat.isError && (
-            <p className="mt-2 flex gap-2 text-xs text-danger" data-testid="concept-chat-error">
+            <p role="alert" className="mt-2 flex gap-2 text-xs text-danger" data-testid="concept-chat-error">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <span className="leading-5">
                 相談を利用できませんでした。もう一度送信するか、下の題材入力から直接たたき台を作れます。

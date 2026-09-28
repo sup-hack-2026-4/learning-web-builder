@@ -579,7 +579,8 @@ test("内側タブは左右キーでフォーカスと選択が循環移動す�
   await expect(tabList.locator(":scope > :not([role='tab'])")).toHaveCount(0);
   const designTab = page.getByRole("tab", { name: "調整", exact: true });
   const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
-  const qualityTab = page.getByRole("tab", { name: "品質", exact: true });
+  // 品質に問題があると、タブ名の後ろに「（問題あり）」が付く。
+  const qualityTab = page.getByRole("tab", { name: /^品質/ });
 
   // 選択中だけがタブ順に含まれる。
   await expect(designTab).toHaveAttribute("tabindex", "0");
@@ -720,6 +721,26 @@ test("デザインを変えると、コード上に未記録の変更として�
   await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
   await expect(codeView.locator("li[data-changed='true']")).toHaveCount(0);
   await expect(codeView).not.toContainText("未記録の変更");
+});
+
+// 行の状態は読み上げ用の文字で伝えるが、コードを写し取るときには混ざってはいけない。
+test("コードを範囲コピーしても、行の状態を伝える読み上げ用の文字は含まれない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("元気な印象にしたいから");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await expect(codeView.locator("li[data-changed='true']").first()).toBeVisible();
+
+  const copied = await codeView.getByRole("tabpanel").evaluate((panel) => {
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(panel);
+    return selection.toString();
+  });
+  expect(copied).toContain("#e11d48");
+  expect(copied).not.toMatch(/の行: |削除された行: /);
 });
 
 test("コードを隠すとプレビューが縦に広がる", async ({ page }) => {
@@ -1271,6 +1292,9 @@ test("相談の吹き出し・選択肢・決定事項に長いURLが入って�
   await page.getByRole("tab", { name: "題材・メモ" }).click();
 
   await page.getByRole("button", { name: "相談をはじめる" }).click();
+  // 待機の通知は、送信する前から読み上げの対象に入っていないと追加を読み上げられない。
+  // 空の間に非表示（display:none）だと、ここで見つからなくなる。
+  await expect(page.locator("section[aria-labelledby='concept-chat-heading']").getByRole("status")).toHaveCount(1);
   await page.getByLabel("返事を書く").fill(longUrl(200));
   await page.getByRole("button", { name: "送信" }).click();
 
