@@ -1,0 +1,66 @@
+import { useMutation } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
+import { conceptSummary, type ConceptDraft } from "@/features/concept/schema";
+import { captureFocusOrigin, type ShowNotice } from "@/features/notice/notice";
+import { createSampleSite } from "@/features/site-model/sample";
+import { useBuilderStore } from "@/features/site-model/store";
+import { generateSite } from "@/lib/api";
+
+type UseSiteGenerationOptions = {
+  showNotice: ShowNotice;
+  // サイトが差し替わった直後に呼ぶ。記録前の変更や、読み込んだプロジェクトとの対応を捨てるため。
+  onSiteReplaced: () => void;
+};
+
+// 題材またはコンセプトから、たたき台を生成する。
+// AIを使えないときは見本のサイトで代わりにし、生成の成否にかかわらず作業を続けられるようにする。
+export function useSiteGeneration({ showNotice, onSiteReplaced }: UseSiteGenerationOptions) {
+  const { setSite, addNote } = useBuilderStore();
+  const [topic, setTopic] = useState("");
+
+  const generation = useMutation({
+    mutationFn: async ({ topic: nextTopic, concept }: { topic: string; concept?: ConceptDraft; returnFocusTo: HTMLElement | null }) => {
+      try {
+        return { ...await generateSite(nextTopic, concept), concept };
+      } catch {
+        return { site: createSampleSite(nextTopic), provider: "static-sample" as const, concept };
+      }
+    },
+    onSuccess: ({ site: generatedSite, provider, concept }, { returnFocusTo }) => {
+      const viaConcept = concept !== undefined;
+      setSite(generatedSite, provider, viaConcept ? "コンセプト相談と、サイト構成・仮文章の生成" : undefined);
+      // サイトが差し替わると、記録前の変更内容は新しいサイトに対して意味を持たない。
+      // 残したままだと、触れていない初期値を変更として誤記録してしまう。
+      onSiteReplaced();
+      // 相談で決めたことは、生成した本人の判断そのもの。学習メモに残して提出物へ含める。
+      // setSite がメモを空にするため、必ずそのあとで記録する。
+      if (concept) {
+        addNote("コンセプト", conceptSummary(concept));
+      }
+      showNotice(
+        provider === "gemini" ? "AIでたたき台を生成しました。事実情報を確認してください。" : "AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。",
+        "status",
+        returnFocusTo,
+      );
+    },
+  });
+
+  const submitTopic = (event: FormEvent) => {
+    event.preventDefault();
+    if (!topic.trim()) return;
+    generation.mutate({ topic: topic.trim(), returnFocusTo: captureFocusOrigin() });
+  };
+
+  // 相談で固めたコンセプトからたたき台を作る。
+  // 題材欄にも反映して、あとから題材だけ変えて作り直せるようにする。
+  const generateFromConcept = (draft: ConceptDraft) => {
+    const nextTopic = draft.topic.trim();
+    if (!nextTopic) return;
+    setTopic(nextTopic);
+    generation.mutate({ topic: nextTopic, concept: draft, returnFocusTo: captureFocusOrigin() });
+  };
+
+  return { topic, setTopic, submitTopic, generateFromConcept, isPending: generation.isPending };
+}
+
+export type SiteGeneration = ReturnType<typeof useSiteGeneration>;
