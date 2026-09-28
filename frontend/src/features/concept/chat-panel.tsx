@@ -152,7 +152,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
 
           {/* エラー状態。相談できなくても、題材を直接入力すれば生成には進める。 */}
           {chat.isError && (
-            <p className="mt-2 flex gap-2 text-xs text-red-700" data-testid="concept-chat-error">
+            <p className="mt-2 flex gap-2 text-xs text-danger" data-testid="concept-chat-error">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <span className="leading-5">
                 相談を利用できませんでした。もう一度送信するか、下の題材入力から直接たたき台を作れます。
@@ -186,8 +186,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
               placeholder="例：近所の家族連れに来てほしい"
             />
             {/* 左パネルは狭く、横並びにすると「送信」が2行に割れる。縦に積んで文字を折らせない。 */}
-            <Button className="w-full whitespace-nowrap" disabled={!input.trim() || chat.isPending}>
-              <Send className="mr-2 size-4" />
+            <Button className="w-full whitespace-nowrap" disabled={!input.trim()} loading={chat.isPending} icon={<Send className="size-4" />}>
               送信
             </Button>
             <Button type="button" variant="ghost" className="w-full whitespace-nowrap" onClick={startOver}>
@@ -217,11 +216,12 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
                まだ反映されていない内容でたたき台ができてしまう。 */
             <Button
               className="mt-3 w-full"
-              disabled={generating || chat.isPending}
+              disabled={chat.isPending}
+              loading={generating}
+              icon={<Sparkles className="size-4" />}
               onClick={() => onGenerate(conceptDraft)}
               data-testid="generate-from-concept"
             >
-              <Sparkles className="mr-2 size-4" />
               {generating ? "生成中…" : "このコンセプトで生成"}
             </Button>
           )}

@@ -1,6 +1,7 @@
 import { CircleAlert, Info, X } from "lucide-react";
 import { useRef, type MouseEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import type { Notice } from "@/features/notice/notice";
 
 const focusableSelector = [
@@ -65,14 +66,10 @@ export function NoticeBar({ notice, onDismiss }: NoticeBarProps) {
   return (
     // 閉じている間は見た目を消すが、ライブリージョンは残すため sr-only にする。
     <div ref={containerRef} data-testid="notice-bar" className={notice ? "sticky top-0 z-20 px-3 pt-3 xl:px-4" : "sr-only"}>
-      <div
-        className={
-          notice
-            ? `flex items-start gap-2 rounded-xl border px-3 py-2 text-sm shadow-sm ${
-                isError ? "border-red-200 bg-red-50 text-red-900" : "border-amber-200 bg-amber-50 text-amber-900"
-              }`
-            : undefined
-        }
+      <Callout
+        tone={notice ? (isError ? "danger" : "warning") : null}
+        elevated
+        className="flex items-start gap-2 px-3 py-2 text-sm leading-normal"
       >
         {notice && (isError ? <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" /> : <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />)}
         <div className="min-w-0 flex-1 break-words">
@@ -80,11 +77,9 @@ export function NoticeBar({ notice, onDismiss }: NoticeBarProps) {
           <p role="alert">{notice?.tone === "error" && <span key={notice.id}>{notice.message}</span>}</p>
         </div>
         {notice && (
-          <Button variant="ghost" aria-label="通知を閉じる" className="-my-2 -mr-2 min-h-10 min-w-10 shrink-0 px-2 py-2" onClick={dismiss}>
-            <X aria-hidden="true" className="size-4" />
-          </Button>
+          <Button variant="ghost" size="icon" aria-label="通知を閉じる" className="-my-2 -mr-2" onClick={dismiss} icon={<X aria-hidden="true" className="size-4" />} />
         )}
-      </div>
+      </Callout>
     </div>
   );
 }

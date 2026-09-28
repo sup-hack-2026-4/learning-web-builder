@@ -1,4 +1,4 @@
-import { ImagePlus, LoaderCircle, Trash2 } from "lucide-react";
+import { ImagePlus, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { SectionImage, SiteSection } from "@/features/site-model/schema";
@@ -91,43 +91,35 @@ export function SectionImageField({ section, sections, onSelect, onRemove }: Sec
         <Button
           type="button"
           variant="secondary"
-          className="min-h-9 px-2 text-xs"
-          disabled={processing || blockReason !== null}
+          size="sm"
+          disabled={blockReason !== null}
+          loading={processing}
+          icon={<ImagePlus className="size-4" />}
           title={blockReason ?? undefined}
           onClick={() => inputRef.current?.click()}
         >
-          {processing ? (
-            <>
-              <LoaderCircle className="mr-1 size-4 animate-spin" />
-              処理中
-            </>
-          ) : (
-            <>
-              <ImagePlus className="mr-1 size-4" />
-              {section.image ? "画像を変える" : "画像を選ぶ"}
-            </>
-          )}
+          {processing ? "処理中" : section.image ? "画像を変える" : "画像を選ぶ"}
         </Button>
         {section.image && (
           <Button
             type="button"
-            variant="ghost"
-            className="min-h-9 px-2 text-xs text-red-700 hover:bg-red-50"
+            variant="danger"
+            size="sm"
             disabled={processing}
+            icon={<Trash2 className="size-4" />}
             onClick={() => {
               setErrorMessage(null);
               onRemove();
             }}
           >
-            <Trash2 className="mr-1 size-4" />
             画像を削除
           </Button>
         )}
       </div>
 
-      {blockReason && <p className="mt-2 text-[11px] leading-4 text-amber-700">{blockReason}</p>}
+      {blockReason && <p className="mt-2 text-[11px] leading-4 text-warning">{blockReason}</p>}
       {errorMessage && (
-        <p role="alert" className="mt-2 text-[11px] leading-4 text-red-700">
+        <p role="alert" className="mt-2 text-[11px] leading-4 text-danger">
           {errorMessage}
         </p>
       )}

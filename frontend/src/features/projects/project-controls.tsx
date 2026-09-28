@@ -4,6 +4,8 @@ import { Cloud, LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
+import { Select } from "@/components/ui/select";
 import { captureFocusOrigin, type NoticeTone } from "@/features/notice/notice";
 import type { SiteModel } from "@/features/site-model/schema";
 import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
@@ -144,10 +146,10 @@ function ClerkProjectControls({
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <label className="sr-only" htmlFor="saved-project">保存済みプロジェクト</label>
-            <select
+            <Select
               ref={selectRef}
               id="saved-project"
-              className="min-h-10 max-w-52 rounded-xl border border-slate-300 bg-white px-3 text-xs"
+              className="max-w-52"
               value={currentProjectId ?? ""}
               onChange={(event) => handleProjectSelection(event.target.value)}
               disabled={projects.isPending || busy}
@@ -159,7 +161,7 @@ function ClerkProjectControls({
                   {project.site.siteTitle}（v{project.version}）
                 </option>
               ))}
-            </select>
+            </Select>
             {/* 一覧が空のままだと、読み込み中なのか、保存したものが無いのかが区別できない。
                 セレクトの横に状態を書き、読み上げでもセレクトの説明として伝える。 */}
             {/* 状態が変わったことは describedby だけでは伝わらない。ライブリージョンは中身が変わる前から
@@ -172,18 +174,19 @@ function ClerkProjectControls({
             <Button
               variant="secondary"
               disabled={busy || projects.isError}
+              loading={save.isPending || load.isPending}
+              icon={<Cloud className="size-4" />}
               onClick={() => save.mutate(captureFocusOrigin())}
             >
-              {save.isPending || load.isPending
-                ? <LoaderCircle className="mr-2 size-4 animate-spin" />
-                : <Cloud className="mr-2 size-4" />}
               {currentProjectId ? "上書き保存" : "保存"}
             </Button>
             {/* 削除できるのは選択中のプロジェクトだけ。「新しいプロジェクト」には
                 消す対象が無いため、選ぶまで押せないようにする。 */}
-            <button
+            <Button
               ref={deleteButtonRef}
               type="button"
+              variant="quiet-danger"
+              size="icon"
               onClick={() => {
                 // 押すとこのボタンは無効になり、フォーカスが外れる。確認の中の引き返す側へ移す。
                 flushSync(() => setConfirmingDelete(true));
@@ -196,25 +199,25 @@ function ClerkProjectControls({
               title={currentProjectId
                 ? "選択中のプロジェクトを削除"
                 : "削除するプロジェクトを選んでください"}
-              className="inline-flex min-h-10 shrink-0 items-center rounded-xl p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
-            >
-              {remove.isPending
-                ? <LoaderCircle className="size-4 animate-spin" />
-                : <Trash2 className="size-4" />}
-            </button>
+              loading={remove.isPending}
+              icon={<Trash2 className="size-4" />}
+            />
             {/* 一覧の取得はretry: falseなので、失敗すると古い内容が残り続ける。
                 画面から取り直せる導線を置く。 */}
             {projects.isError && (
-              <span className="flex items-center gap-1 text-xs font-bold text-red-600">
+              <span className="flex items-center gap-1 text-xs font-bold text-danger-vivid">
                 保存一覧エラー
-                <button
+                <Button
                   type="button"
+                  variant="danger"
+                  size="sm"
+                  className="px-2 underline"
                   onClick={() => void projects.refetch()}
-                  disabled={projects.isFetching || busy}
-                  className="min-h-10 rounded-xl px-2 font-bold text-red-700 underline transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={busy}
+                  loading={projects.isFetching}
                 >
                   {projects.isFetching ? "再取得中…" : "再試行"}
-                </button>
+                </Button>
               </span>
             )}
           </div>
@@ -223,8 +226,8 @@ function ClerkProjectControls({
               セクション削除と同じくブラウザのconfirmは使わない。操作が止まるうえ、
               何が巻き添えで消えるのかを画面に書けない。 */}
           {confirmingDelete && currentProjectId && (
-            <div className="max-w-full rounded-xl bg-red-50 p-2 text-xs text-red-900">
-              <p className="leading-4 wrap-anywhere">
+            <Callout tone="danger" className="max-w-full p-2">
+              <p className="wrap-anywhere">
                 「{selectedProject?.site.siteTitle ?? "選択中のプロジェクト"}」を削除しますか？<br />
                 このプロジェクトと、関連する学習メモ・品質チェック結果も削除されます。元に戻せません。
               </p>
@@ -233,7 +236,7 @@ function ClerkProjectControls({
                   ref={deleteCancelRef}
                   type="button"
                   variant="ghost"
-                  className="min-h-8 px-2 text-xs"
+                  size="sm"
                   disabled={remove.isPending}
                   onClick={cancelDelete}
                 >
@@ -244,15 +247,16 @@ function ClerkProjectControls({
                     次の上書き保存が404になる。保存ボタンと同じくbusyでそろえる。 */}
                 <Button
                   type="button"
-                  variant="ghost"
-                  className="min-h-8 px-2 text-xs text-red-700 hover:bg-red-100"
+                  variant="danger"
+                  size="sm"
                   disabled={busy}
+                  loading={remove.isPending}
                   onClick={() => remove.mutate({ projectId: currentProjectId })}
                 >
                   {remove.isPending ? "削除中…" : "削除する"}
                 </Button>
               </div>
-            </div>
+            </Callout>
           )}
         </div>
       </SignedIn>

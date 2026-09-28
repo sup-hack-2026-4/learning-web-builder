@@ -33,7 +33,7 @@ export function StepNav({ steps }: { steps: StepView[] }) {
                 step.current
                   ? "bg-blue-600 font-black text-white"
                   : step.done
-                    ? "font-bold text-emerald-700"
+                    ? "font-bold text-success"
                     : "text-slate-400"
               }`}
             >

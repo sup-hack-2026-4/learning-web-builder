@@ -23,9 +23,9 @@ function BackendSessionStatus() {
   }
   if (session.isError || !session.data?.authenticated) {
     // 通信失敗とログイン切れを区別できないため、どちらでも効く再読み込みを案内する。
-    return <span className="text-xs font-bold text-red-600">ログインを確認できません。再読み込みしてください</span>;
+    return <span className="text-xs font-bold text-danger-vivid">ログインを確認できません。再読み込みしてください</span>;
   }
-  return <span className="text-xs font-bold text-emerald-700">ログイン中</span>;
+  return <span className="text-xs font-bold text-success">ログイン中</span>;
 }
 
 export function AuthControls({ enabled }: { enabled: boolean }) {
