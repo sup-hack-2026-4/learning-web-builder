@@ -259,8 +259,12 @@ export default function App() {
             key,
             label: <>
               {mobileViewLabels[key]}
+              {/* 赤い点は色だけで意味を持つため、読み上げには文字で伝える。 */}
               {key === "panel" && hasQualityIssue && (
-                <span className="ml-1 inline-block size-1.5 rounded-full bg-danger-vivid align-middle" />
+                <>
+                  <span aria-hidden className="ml-1 inline-block size-1.5 rounded-full bg-danger-vivid align-middle" />
+                  <span className="sr-only">（問題あり）</span>
+                </>
               )}
             </>,
           }))}

@@ -579,7 +579,8 @@ test("内側タブは左右キーでフォーカスと選択が循環移動す�
   await expect(tabList.locator(":scope > :not([role='tab'])")).toHaveCount(0);
   const designTab = page.getByRole("tab", { name: "調整", exact: true });
   const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
-  const qualityTab = page.getByRole("tab", { name: "品質", exact: true });
+  // 品質に問題があると、タブ名の後ろに「（問題あり）」が付く。
+  const qualityTab = page.getByRole("tab", { name: /^品質/ });
 
   // 選択中だけがタブ順に含まれる。
   await expect(designTab).toHaveAttribute("tabindex", "0");

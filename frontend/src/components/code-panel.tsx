@@ -175,6 +175,10 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
               : selected
                 ? "border-blue-500 bg-blue-50"
                 : "border-transparent";
+            // 色と境界線だけでは読み上げに伝わらないため、削除行と同じく状態を文字で添える。
+            // 見た目は変更を優先するが、読み上げでは両方の状態を伝える。
+            // 上部の「選んだ要素:」の表示と同じ文字列にならないよう、「〜の行」と書く。
+            const stateLabel = [changed && "未記録の変更", selected && "選んだ要素"].filter(Boolean).join("・");
             return (
               <Fragment key={line.number}>
                 <li
@@ -184,6 +188,7 @@ export function CodePanel({ site, baselineSite, selectedElementId }: Props) {
                 >
                   <span aria-hidden className="w-10 shrink-0 select-none pr-2 text-right text-slate-400">{line.number}</span>
                   <code className="whitespace-pre pr-4">
+                    {stateLabel && <span className="sr-only">{stateLabel}の行: </span>}
                     {line.tokens.length === 0
                       ? " "
                       : line.tokens.map((token, index) => (
