@@ -206,7 +206,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request or SiteModel
+          description: Invalid request, SiteModel, or learning record
         "401":
           description: Authentication is required
         "403":
@@ -272,7 +272,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request, project ID, or SiteModel
+          description: Invalid request, project ID, SiteModel, or learning record
         "401":
           description: Authentication is required
         "403":
@@ -413,13 +413,96 @@ components:
       type: object
       additionalProperties: false
       required: [site]
+      description: >-
+        作品と学習の記録をまとめて保存する。notesとaiUsageは省略またはnullにできる。
+        両方とも省略(またはnull)のとき、新規保存(POST)では空の記録を作り、
+        上書き保存(PUT)では保存済みの記録をそのまま残す。
+        どちらか一方でも値を送った場合は、送らなかった方を空として記録全体を置き換える
+        （記録を空にするには、notesとaiUsageに空の配列を送る）。
+        notesとaiUsageの値(送られたJSONそのもの)の合計は300 KiB(307200バイト)まで。
+        超えると400になる。
       properties:
         site:
           $ref: "#/components/schemas/SiteModel"
+        notes:
+          type: [array, "null"]
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/LearningNote"
+        aiUsage:
+          type: [array, "null"]
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/AiUsage"
+    LearningTimestamp:
+      type: string
+      format: date-time
+      description: >-
+        RFC 3339の日時。秒は必須、小数秒は任意、オフセットはZか±hh:mm。
+        暦の上で実在しない日付（2月30日など）は受け付けない。
+        画面が付けた日時を、表記を変えずにそのまま返す。
+      pattern: '^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$'
+    LearningNote:
+      type: object
+      additionalProperties: false
+      required: [id, target, reason, createdAt]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 100 }
+        target: { type: string, minLength: 1, maxLength: 2000 }
+        reason: { type: string, minLength: 1, maxLength: 10000 }
+        createdAt:
+          $ref: "#/components/schemas/LearningTimestamp"
+        codeChanges:
+          type: array
+          description: 省略と空の配列は区別して保存し、そのまま返す。
+          maxItems: 200
+          items: { type: string, maxLength: 10000 }
+    AiUsage:
+      type: object
+      additionalProperties: false
+      required: [provider, purpose, generatedAt]
+      properties:
+        provider:
+          type: string
+          enum: [gemini, static-sample]
+        purpose: { type: string, minLength: 1, maxLength: 200 }
+        generatedAt:
+          $ref: "#/components/schemas/LearningTimestamp"
     Project:
       type: object
       additionalProperties: false
+      required: [id, site, notes, aiUsage, version, createdAt, updatedAt]
+      description: 個別の取得と保存の結果。学習の記録を含む（記録が無ければ空の配列）。
+      properties:
+        id:
+          type: string
+          format: uuid
+        site:
+          $ref: "#/components/schemas/SiteModel"
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LearningNote"
+        aiUsage:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiUsage"
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProjectSummary:
+      type: object
+      additionalProperties: false
       required: [id, site, version, createdAt, updatedAt]
+      description: >-
+        一覧の1件。選択用の見出しを出すためのもので、学習の記録(notes, aiUsage)は含まない。
+        転送量を抑えるため、siteの各セクションの画像(image)も省く。
       properties:
         id:
           type: string
@@ -443,7 +526,7 @@ components:
         projects:
           type: array
           items:
-            $ref: "#/components/schemas/Project"
+            $ref: "#/components/schemas/ProjectSummary"
     SaveQualityResultsRequest:
       type: object
       additionalProperties: false

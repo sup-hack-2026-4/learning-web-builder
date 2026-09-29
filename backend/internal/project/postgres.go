@@ -24,42 +24,56 @@ func NewPostgresRepository(db database) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 
-func (repository *PostgresRepository) Create(ctx context.Context, ownerID string, model site.Model) (Record, error) {
+func (repository *PostgresRepository) Create(ctx context.Context, ownerID string, model site.Model, learning LearningRecord) (Record, error) {
 	siteJSON, err := json.Marshal(model)
 	if err != nil {
 		return Record{}, fmt.Errorf("marshal site model: %w", err)
 	}
+	learningJSON, err := MarshalLearningRecord(learning)
+	if err != nil {
+		return Record{}, fmt.Errorf("marshal learning record: %w", err)
+	}
 
 	row := repository.db.QueryRow(
 		ctx,
-		`INSERT INTO projects (clerk_user_id, title, topic, site_model)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, clerk_user_id, site_model, version, created_at, updated_at`,
+		`INSERT INTO projects (clerk_user_id, title, topic, site_model, learning_record)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id, clerk_user_id, site_model, learning_record, version, created_at, updated_at`,
 		ownerID,
 		model.SiteTitle,
 		model.Topic,
 		siteJSON,
+		learningJSON,
 	)
 	return scanRecord(row)
 }
 
-func (repository *PostgresRepository) Update(ctx context.Context, ownerID, projectID string, model site.Model) (Record, error) {
+func (repository *PostgresRepository) Update(ctx context.Context, ownerID, projectID string, model site.Model, learning *LearningRecord) (Record, error) {
 	siteJSON, err := json.Marshal(model)
 	if err != nil {
 		return Record{}, fmt.Errorf("marshal site model: %w", err)
+	}
+	// nilのままならSQLのNULLになり、COALESCEで保存済みの記録を残す。
+	var learningJSON []byte
+	if learning != nil {
+		learningJSON, err = MarshalLearningRecord(*learning)
+		if err != nil {
+			return Record{}, fmt.Errorf("marshal learning record: %w", err)
+		}
 	}
 
 	row := repository.db.QueryRow(
 		ctx,
 		`UPDATE projects
-		 SET title = $3, topic = $4, site_model = $5, version = version + 1, updated_at = NOW()
+		 SET title = $3, topic = $4, site_model = $5, learning_record = COALESCE($6::jsonb, learning_record), version = version + 1, updated_at = NOW()
 		 WHERE id = $1 AND clerk_user_id = $2
-		 RETURNING id, clerk_user_id, site_model, version, created_at, updated_at`,
+		 RETURNING id, clerk_user_id, site_model, learning_record, version, created_at, updated_at`,
 		projectID,
 		ownerID,
 		model.SiteTitle,
 		model.Topic,
 		siteJSON,
+		learningJSON,
 	)
 	record, err := scanRecord(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -71,7 +85,7 @@ func (repository *PostgresRepository) Update(ctx context.Context, ownerID, proje
 func (repository *PostgresRepository) Get(ctx context.Context, ownerID, projectID string) (Record, error) {
 	row := repository.db.QueryRow(
 		ctx,
-		`SELECT id, clerk_user_id, site_model, version, created_at, updated_at
+		`SELECT id, clerk_user_id, site_model, learning_record, version, created_at, updated_at
 		 FROM projects
 		 WHERE id = $1 AND clerk_user_id = $2`,
 		projectID,
@@ -105,6 +119,8 @@ func (repository *PostgresRepository) List(ctx context.Context, ownerID string) 
 		                 WITH ORDINALITY AS entry(section, ordinality)
 		          ), '[]'::jsonb)
 		        ) AS site_model,
+		        -- 学習記録は読み込み時に個別取得で受け取るため、一覧では運ばない。
+		        '{}'::jsonb AS learning_record,
 		        version,
 		        created_at,
 		        updated_at
@@ -135,7 +151,7 @@ func (repository *PostgresRepository) List(ctx context.Context, ownerID string) 
 }
 
 // Delete は所有者のプロジェクトを1件消す。
-// 学習メモ・品質チェック結果・AI利用記録は外部キーのON DELETE CASCADEで一緒に消える。
+// 学習記録は同じ行に入っているため一緒に消え、品質チェック結果は外部キーのON DELETE CASCADEで消える。
 func (repository *PostgresRepository) Delete(ctx context.Context, ownerID, projectID string) error {
 	// 消せたかどうかをRETURNINGで確かめる。他人のプロジェクトを指定したときも
 	// 該当が無いのと同じ扱いにして、存在の有無を呼び出し側へ漏らさない。
@@ -250,10 +266,12 @@ func (repository *PostgresRepository) ListQualityResults(
 func scanRecord(row pgx.Row) (Record, error) {
 	var record Record
 	var siteJSON []byte
+	var learningJSON []byte
 	if err := row.Scan(
 		&record.ID,
 		&record.OwnerID,
 		&siteJSON,
+		&learningJSON,
 		&record.Version,
 		&record.CreatedAt,
 		&record.UpdatedAt,
@@ -263,6 +281,10 @@ func scanRecord(row pgx.Row) (Record, error) {
 	if err := json.Unmarshal(siteJSON, &record.Site); err != nil {
 		return Record{}, fmt.Errorf("decode stored site model: %w", err)
 	}
+	if err := json.Unmarshal(learningJSON, &record.Learning); err != nil {
+		return Record{}, fmt.Errorf("decode stored learning record: %w", err)
+	}
+	record.Learning = record.Learning.Normalize()
 	return record, nil
 }
 

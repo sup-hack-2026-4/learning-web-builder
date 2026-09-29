@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSampleSite } from "./sample";
 import { createSection, maxSections, minSections, type SectionKind } from "./sections";
-import type { AiUsage, LearningNote, SectionImage, SiteModel } from "./schema";
+import type { AiUsage, LearningNote, LearningRecord, SectionImage, SiteModel } from "./schema";
 import { conceptStateSchema, emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
 
 type BuilderState = {
@@ -12,7 +12,8 @@ type BuilderState = {
   aiUsage: AiUsage[];
   // purpose は AI をどう使ったかの記録。コンセプト相談を経た生成だけ文言が変わる。
   setSite: (site: SiteModel, provider: AiUsage["provider"], purpose?: string) => void;
-  loadSite: (site: SiteModel) => void;
+  // 保存済みの作品を開く。学習の記録も作品と一緒に保存しているので、そのまま戻す。
+  loadSite: (site: SiteModel, record: LearningRecord) => void;
   selectElement: (id: string) => void;
   // テーマの更新はプレビュー反映のみ。学習メモはApp側の明示的な記録操作でaddNoteする。
   // 見出しの色は「未指定（メインカラーを継承）」も正しい状態なので、undefinedも受け取る。
@@ -74,12 +75,12 @@ export const useBuilderStore = create<BuilderState>()(
             generatedAt: new Date().toISOString(),
           }],
         }),
-      loadSite: (site) =>
+      loadSite: (site, record) =>
         set((state) => ({
           site,
           selectedElementId: site.sections[0]?.id ?? "hero",
-          notes: [],
-          aiUsage: [],
+          notes: record.notes,
+          aiUsage: record.aiUsage,
           // 別のプロジェクトを開いたら、前の題材の相談は残さない。
           ...emptyConcept,
           conceptGeneration: state.conceptGeneration + 1,

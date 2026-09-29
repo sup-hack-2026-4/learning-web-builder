@@ -7,15 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Callout } from "@/components/ui/callout";
 import { Select } from "@/components/ui/select";
 import { captureFocusOrigin, type NoticeTone } from "@/features/notice/notice";
-import type { SiteModel } from "@/features/site-model/schema";
+import type { LearningRecord, SiteModel } from "@/features/site-model/schema";
 import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
 
 type ProjectControlsProps = {
   enabled: boolean;
   site: SiteModel;
+  // 作品と一緒に保存する学習の記録。読み込んだときに学習メモやAI利用記録が消えないようにする。
+  record: LearningRecord;
   currentProjectId: string | null;
   onProjectChange: (projectId: string | null) => void;
-  onLoad: (site: SiteModel) => void;
+  onLoad: (site: SiteModel, record: LearningRecord) => void;
   onNotice: (message: string, tone?: NoticeTone, returnFocusTo?: HTMLElement | null) => void;
 };
 
@@ -29,6 +31,7 @@ export function ProjectControls(props: ProjectControlsProps) {
 
 function ClerkProjectControls({
   site,
+  record,
   currentProjectId,
   onProjectChange,
   onLoad,
@@ -57,7 +60,7 @@ function ClerkProjectControls({
   });
   // 結果は遅れて届くため、通知を閉じたときの戻り先は操作を始めた時点の要素を渡す。
   const save = useMutation<Project, Error, HTMLElement | null>({
-    mutationFn: () => saveProject(site, getToken, currentProjectId),
+    mutationFn: () => saveProject(site, record, getToken, currentProjectId),
     onSuccess: async (project, returnFocusTo) => {
       setConfirmingDelete(false);
       onProjectChange(project.id);
@@ -70,7 +73,7 @@ function ClerkProjectControls({
     mutationFn: ({ projectId }: { projectId: string; returnFocusTo: HTMLElement | null }) => getProject(projectId, getToken),
     onSuccess: (project, { returnFocusTo }) => {
       onProjectChange(project.id);
-      onLoad(project.site);
+      onLoad(project.site, { notes: project.notes, aiUsage: project.aiUsage });
       onNotice("保存済みプロジェクトを読み込みました。", "status", returnFocusTo);
     },
     onError: (error: Error, { returnFocusTo }) => onNotice(error.message, "error", returnFocusTo),

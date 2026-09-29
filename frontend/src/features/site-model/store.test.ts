@@ -87,7 +87,7 @@ describe("サイトの差し替えと相談の関係", () => {
     seedConversation();
     const before = useBuilderStore.getState().conceptGeneration;
 
-    useBuilderStore.getState().loadSite(createSampleSite("別の題材"));
+    useBuilderStore.getState().loadSite(createSampleSite("別の題材"), { notes: [], aiUsage: [] });
 
     const state = useBuilderStore.getState();
     expect(state.chatMessages).toEqual([]);
@@ -99,9 +99,27 @@ describe("サイトの差し替えと相談の関係", () => {
     const site = createSampleSite("別の題材");
     site.sections = site.sections.filter((section) => section.id !== "hero");
 
-    useBuilderStore.getState().loadSite(site);
+    useBuilderStore.getState().loadSite(site, { notes: [], aiUsage: [] });
 
     expect(useBuilderStore.getState().selectedElementId).toBe(site.sections[0].id);
+  });
+
+  it("プロジェクトを読み込むと、保存していた学習の記録を戻す", () => {
+    // 記録を空にすると、保存→読み込み→ZIP出力で学習の成果が抜け落ちる(#114)。
+    useBuilderStore.getState().addNote("いまの題材のメモ", "読み込むと置き換わる");
+    const notes = [{
+      id: "note-1",
+      target: "内容変更（活動紹介）",
+      reason: "活動の様子が伝わるよう写真の説明を足した",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      codeChanges: ["<p>毎週金曜に撮影会をしています</p>"],
+    }];
+    const aiUsage = [{ provider: "gemini" as const, purpose: "サイト構成と仮文章の生成", generatedAt: "2026-09-01T00:00:00.000Z" }];
+
+    useBuilderStore.getState().loadSite(createSampleSite("別の題材"), { notes, aiUsage });
+
+    expect(useBuilderStore.getState().notes).toEqual(notes);
+    expect(useBuilderStore.getState().aiUsage).toEqual(aiUsage);
   });
 
   it("全体をリセットすると相談も消える", () => {

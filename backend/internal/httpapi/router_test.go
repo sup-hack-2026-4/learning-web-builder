@@ -50,18 +50,22 @@ type stubProjectRepository struct {
 	ownerID       string
 	projectID     string
 	model         site.Model
+	// learning はリポジトリへ渡された学習記録。上書き保存で記録を残す指定(nil)も見分けられるようポインタで持つ。
+	learning *projectpkg.LearningRecord
 }
 
-func (repository *stubProjectRepository) Create(_ context.Context, ownerID string, model site.Model) (projectpkg.Record, error) {
+func (repository *stubProjectRepository) Create(_ context.Context, ownerID string, model site.Model, learning projectpkg.LearningRecord) (projectpkg.Record, error) {
 	repository.ownerID = ownerID
 	repository.model = model
+	repository.learning = &learning
 	return repository.record, repository.err
 }
 
-func (repository *stubProjectRepository) Update(_ context.Context, ownerID, projectID string, model site.Model) (projectpkg.Record, error) {
+func (repository *stubProjectRepository) Update(_ context.Context, ownerID, projectID string, model site.Model, learning *projectpkg.LearningRecord) (projectpkg.Record, error) {
 	repository.ownerID = ownerID
 	repository.projectID = projectID
 	repository.model = model
+	repository.learning = learning
 	return repository.record, repository.err
 }
 

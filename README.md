@@ -87,14 +87,18 @@ go run ./cmd/api
 
 ```powershell
 psql $env:DATABASE_URL -f db/migrations/001_initial.sql
+psql $env:DATABASE_URL -f db/migrations/002_learning_record.sql
 ```
+
+`db/migrations`のファイルは番号順にすべて適用してください。
+`002`を適用する前のDBでは、保存・読み込みのAPIが500を返します。
 
 その後、バックエンドの`DATABASE_URL`と`CLERK_SECRET_KEY`を環境変数として渡してください（[環境変数](#環境変数)を参照）。
 
-- `POST /api/v1/projects`: 認証ユーザーのプロジェクトを新規保存
+- `POST /api/v1/projects`: 認証ユーザーのプロジェクトを新規保存（作品と一緒に、学習メモ・変更コード・AI利用記録も保存する）
 - `GET /api/v1/projects`: 認証ユーザーの保存済みプロジェクトを更新日時順で一覧取得
-- `GET /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを再取得
-- `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新
+- `GET /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを、学習の記録も含めて再取得
+- `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新（学習の記録を送らなければ、保存済みの記録を残す）
 - `DELETE /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを削除（学習メモ・品質チェック結果も一緒に消える）
 - `POST /api/v1/projects/{projectId}/quality-results`: 品質チェック結果を一括保存
 - `GET /api/v1/projects/{projectId}/quality-results`: 品質チェック履歴を新しい順で取得
