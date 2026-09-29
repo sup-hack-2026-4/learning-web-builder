@@ -117,22 +117,47 @@ export type SiteSection = z.infer<typeof sectionSchema>;
 export type SectionImage = z.infer<typeof sectionImageSchema>;
 
 // 学習記録の上限。サーバー側(backend/internal/project/learning.go)と同じ値を持つ。
+//
+// 対象と変更行は、画面の入力をそのまま運ぶのではなく画面側で組み立てた文字列になる。
+// 対象は構成変更のラベル(セクション名を含む)をつないだもの、変更行は生成HTMLの1行で、
+// 本文(800文字)の & や " はエスケープされて数倍に伸びる。
+// 通常の操作で作られた記録を保存できなくならないよう、1件ごとの上限は広めに取り、
+// 実際の歯止めは記録全体の大きさ(MAX_LEARNING_RECORD_BYTES)に任せる。
 export const MAX_LEARNING_NOTES = 200;
-export const MAX_LEARNING_TARGET_LENGTH = 200;
-export const MAX_LEARNING_REASON_LENGTH = 2000;
+export const MAX_LEARNING_TARGET_LENGTH = 2000;
+export const MAX_LEARNING_REASON_LENGTH = 10000;
 export const MAX_LEARNING_CODE_CHANGES = 200;
-export const MAX_LEARNING_CODE_LINE_LENGTH = 2000;
+export const MAX_LEARNING_CODE_LINE_LENGTH = 10000;
 export const MAX_AI_USAGE_ENTRIES = 50;
 export const MAX_AI_USAGE_PURPOSE_LENGTH = 200;
-// 学習記録全体をJSONにしたときの上限。保存APIのボディ上限は1MiBで、
+// notes と aiUsage をJSONにしたときの合計バイト数の上限。保存APIのボディ上限は1MiBで、
 // 画像(合計600KiB)と作品本文も同じリクエストに乗るため、合計でも縛る。
+// サーバーは受け取ったJSONそのもので数えるので、送るのと同じJSON.stringifyの結果で数える。
 export const MAX_LEARNING_RECORD_BYTES = 300 * 1024;
+// 理由の入力欄の上限。保存の上限(MAX_LEARNING_REASON_LENGTH)より小さくし、
+// 入力した理由がそのまま保存できない、ということが起きないようにする。
+export const MAX_REASON_INPUT_LENGTH = 2000;
 
 const requiredText = (max: number) =>
   z.string().refine((value) => value.trim() !== "" && codePointLength(value) <= max, `1〜${max}文字で入力してください`);
 
-// サーバーはRFC 3339の日時を受け付ける。toISOString()の出力はこの形になる。
-const timestampSchema = z.iso.datetime({ offset: true, message: "日時の形式が正しくありません" });
+// サーバー(backend/internal/project/learning.go)と同じ形の正規表現。
+// 秒は必須、小数秒は任意、オフセットはZか±hh:mm。toISOString()の出力はこの形になる。
+const timestampPattern = /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
+
+// 暦の上で実在するかも確かめる。Date.parseは2月30日を3月2日へ繰り上げて受け付け、
+// Date.UTCは0〜99年を1900年代として扱うため、どちらも使わずに月の日数を数える。
+export function isValidTimestamp(value: string): boolean {
+  const match = timestampPattern.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return day <= daysInMonth;
+}
+
+const timestampSchema = z.string().refine(isValidTimestamp, "日時の形式が正しくありません");
 
 export const learningNoteSchema = z.object({
   id: requiredText(100),
@@ -164,6 +189,13 @@ export type LearningRecord = {
   aiUsage: AiUsage[];
 };
 
+// 保存リクエストに乗る notes と aiUsage の値のバイト数。サーバーはこの部分を受け取ったまま数える。
+// 記録全体をまとめてJSONにした大きさとは、キー名や区切りの分だけ違う。
+export function learningRecordBytes(record: LearningRecord): number {
+  const encoder = new TextEncoder();
+  return encoder.encode(JSON.stringify(record.notes)).length + encoder.encode(JSON.stringify(record.aiUsage)).length;
+}
+
 // 保存前に確かめる。サーバーで弾かれてから汎用のエラーを見せるより、
 // 何が多すぎるのかをその場で伝えるため。問題が無ければnullを返す。
 export function learningRecordProblem(record: LearningRecord): string | null {
@@ -175,13 +207,12 @@ export function learningRecordProblem(record: LearningRecord): string | null {
   }
   const invalidNote = record.notes.findIndex((note) => !learningNoteSchema.safeParse(note).success);
   if (invalidNote >= 0) {
-    return `学習メモの${invalidNote + 1}件目に保存できない内容があります（理由は${MAX_LEARNING_REASON_LENGTH}文字まで）。`;
+    return `学習メモの${invalidNote + 1}件目に保存できない内容があります。`;
   }
   if (record.aiUsage.some((usage) => !aiUsageSchema.safeParse(usage).success)) {
     return "AI利用記録に保存できない内容があります。";
   }
-  const bytes = new TextEncoder().encode(JSON.stringify(record)).length;
-  if (bytes > MAX_LEARNING_RECORD_BYTES) {
+  if (learningRecordBytes(record) > MAX_LEARNING_RECORD_BYTES) {
     return "学習メモが大きすぎて保存できません。提出物ZIPで書き出して手元に残してください。";
   }
   return null;

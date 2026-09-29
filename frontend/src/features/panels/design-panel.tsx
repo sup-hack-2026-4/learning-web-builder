@@ -7,7 +7,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { ChangeTracking } from "@/features/change-tracking/use-change-tracking";
 import { SectionImageField } from "@/features/images/section-image-field";
-import { MAX_LEARNING_REASON_LENGTH } from "@/features/site-model/schema";
+import { MAX_REASON_INPUT_LENGTH } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 
 type DesignPanelProps = {
@@ -26,7 +26,7 @@ export function DesignPanel({ tracking, selectedSectionHeadingRef }: DesignPanel
     <>
       <label className="mt-4 block text-xs font-bold" htmlFor="reason">なぜこの変更をしますか？</label>
       <p className="mt-1 text-[11px] leading-4 text-slate-500">何を・どう変えて・なぜかを具体的に書くと、あとで見返したときに理解が深まります。</p>
-      <Textarea id="reason" rows={2} maxLength={MAX_LEARNING_REASON_LENGTH} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-warning-vivid focus-visible:ring-warning-vivid"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
+      <Textarea id="reason" rows={2} maxLength={MAX_REASON_INPUT_LENGTH} className={`mt-1 ${reason.trim() ? "" : "ring-2 ring-warning-vivid focus-visible:ring-warning-vivid"}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例：見出しを赤にした。植物園の元気な雰囲気を伝えたいから" />
 
       {/* 書けている観点をその場で返す。記録は止めず、足りない観点の書き足しかたを示す。 */}
       <ul className="mt-2 space-y-1" aria-label="理由の書けている観点">

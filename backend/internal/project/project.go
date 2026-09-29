@@ -38,7 +38,9 @@ type QualityResult struct {
 
 type Repository interface {
 	Create(context.Context, string, site.Model, LearningRecord) (Record, error)
-	Update(context.Context, string, string, site.Model, LearningRecord) (Record, error)
+	// Update の学習記録がnilなら、保存済みの記録をそのまま残す。
+	// 記録を送らない以前の画面から上書き保存しても、記録を消さないようにするため。
+	Update(context.Context, string, string, site.Model, *LearningRecord) (Record, error)
 	Get(context.Context, string, string) (Record, error)
 	List(context.Context, string) ([]Record, error)
 	Delete(context.Context, string, string) error

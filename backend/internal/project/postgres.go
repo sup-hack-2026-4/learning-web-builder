@@ -48,20 +48,24 @@ func (repository *PostgresRepository) Create(ctx context.Context, ownerID string
 	return scanRecord(row)
 }
 
-func (repository *PostgresRepository) Update(ctx context.Context, ownerID, projectID string, model site.Model, learning LearningRecord) (Record, error) {
+func (repository *PostgresRepository) Update(ctx context.Context, ownerID, projectID string, model site.Model, learning *LearningRecord) (Record, error) {
 	siteJSON, err := json.Marshal(model)
 	if err != nil {
 		return Record{}, fmt.Errorf("marshal site model: %w", err)
 	}
-	learningJSON, err := MarshalLearningRecord(learning)
-	if err != nil {
-		return Record{}, fmt.Errorf("marshal learning record: %w", err)
+	// nilのままならSQLのNULLになり、COALESCEで保存済みの記録を残す。
+	var learningJSON []byte
+	if learning != nil {
+		learningJSON, err = MarshalLearningRecord(*learning)
+		if err != nil {
+			return Record{}, fmt.Errorf("marshal learning record: %w", err)
+		}
 	}
 
 	row := repository.db.QueryRow(
 		ctx,
 		`UPDATE projects
-		 SET title = $3, topic = $4, site_model = $5, learning_record = $6, version = version + 1, updated_at = NOW()
+		 SET title = $3, topic = $4, site_model = $5, learning_record = COALESCE($6::jsonb, learning_record), version = version + 1, updated_at = NOW()
 		 WHERE id = $1 AND clerk_user_id = $2
 		 RETURNING id, clerk_user_id, site_model, learning_record, version, created_at, updated_at`,
 		projectID,

@@ -98,7 +98,7 @@ psql $env:DATABASE_URL -f db/migrations/002_learning_record.sql
 - `POST /api/v1/projects`: 認証ユーザーのプロジェクトを新規保存（作品と一緒に、学習メモ・変更コード・AI利用記録も保存する）
 - `GET /api/v1/projects`: 認証ユーザーの保存済みプロジェクトを更新日時順で一覧取得
 - `GET /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを、学習の記録も含めて再取得
-- `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新
+- `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新（学習の記録を送らなければ、保存済みの記録を残す）
 - `DELETE /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを削除（学習メモ・品質チェック結果も一緒に消える）
 - `POST /api/v1/projects/{projectId}/quality-results`: 品質チェック結果を一括保存
 - `GET /api/v1/projects/{projectId}/quality-results`: 品質チェック履歴を新しい順で取得

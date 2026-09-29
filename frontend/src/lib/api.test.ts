@@ -120,7 +120,7 @@ describe("project API", () => {
   it("学習の記録が上限を超えていたら、送らずに理由を伝える", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const tooLong = { ...learningRecord.notes[0], reason: "あ".repeat(2001) };
+    const tooLong = { ...learningRecord.notes[0], reason: "あ".repeat(10001) };
 
     await expect(saveProject(projectPayload.site, { ...learningRecord, notes: [tooLong] }, async () => "session-token"))
       .rejects.toThrow("学習メモの1件目に保存できない内容があります");

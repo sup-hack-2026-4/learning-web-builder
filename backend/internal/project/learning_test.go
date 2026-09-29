@@ -1,15 +1,18 @@
 package project
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
 
 func TestMarshalLearningRecordKeepsHTMLSymbols(t *testing.T) {
-	// 画面側はJSON.stringifyで大きさを数えるため、< > & をエスケープすると値がずれる。
+	// 保存先の大きさを無駄に膨らませないよう、< > & をエスケープしない。
+	codeChanges := []string{`<a href="?a=1&b=2">詳しく</a>`}
 	encoded, err := MarshalLearningRecord(LearningRecord{Notes: []LearningNote{{
 		ID: "note-1", Target: "内容変更", Reason: "理由", CreatedAt: "2026-09-29T01:00:00Z",
-		CodeChanges: []string{`<a href="?a=1&b=2">詳しく</a>`},
+		CodeChanges: &codeChanges,
 	}}})
 	if err != nil {
 		t.Fatalf("marshal learning record: %v", err)
@@ -35,15 +38,28 @@ func TestValidateLearningRecordAcceptsEmptyRecord(t *testing.T) {
 	}
 }
 
-func TestValidateLearningRecordAcceptsTimestampsWithAndWithoutFraction(t *testing.T) {
-	record := LearningRecord{
-		Notes: []LearningNote{
-			{ID: "a", Target: "対象", Reason: "理由", CreatedAt: "2026-09-29T01:02:03.456Z"},
-			{ID: "b", Target: "対象", Reason: "理由", CreatedAt: "2026-09-29T10:02:03+09:00"},
-		},
-		AIUsage: []AIUsage{{Provider: "static-sample", Purpose: "初期サンプル", GeneratedAt: "2026-09-29T01:02:03Z"}},
+// 画面側(frontend/src/features/site-model/learning-record.test.ts)と同じ境界値で確かめる。
+// どちらかだけが受け付ける日時があると、画面の検証を通ったのに保存で400になる。
+func TestValidTimestampMatchesSharedCases(t *testing.T) {
+	data, err := os.ReadFile("../../../testdata/learning-timestamps.json")
+	if err != nil {
+		t.Fatalf("read shared timestamp cases: %v", err)
 	}
-	if err := ValidateLearningRecord(record); err != nil {
-		t.Fatalf("expected record to be valid, got %v", err)
+	var cases struct {
+		Valid   []string `json:"valid"`
+		Invalid []string `json:"invalid"`
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatalf("decode shared timestamp cases: %v", err)
+	}
+	for _, value := range cases.Valid {
+		if !ValidTimestamp(value) {
+			t.Errorf("expected %q to be accepted", value)
+		}
+	}
+	for _, value := range cases.Invalid {
+		if ValidTimestamp(value) {
+			t.Errorf("expected %q to be rejected", value)
+		}
 	}
 }

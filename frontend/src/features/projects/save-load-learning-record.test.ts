@@ -48,6 +48,8 @@ describe("保存と読み込み", () => {
     store.addNote("コンセプト", "新入生に活動の雰囲気を伝える");
     store.addNote("デザイン変更（メインカラーを #b91c1c に）", "作品の写真が映える落ち着いた赤にした", ["--primary: #b91c1c;"]);
     store.addNote("内容変更（活動紹介）", "撮影会の様子が伝わるよう説明を足した", ['<p class="body">毎週金曜に撮影会をしています &amp; 講評会も</p>']);
+    // 変わったコードが無かった記録。空の一覧のまま往復し、省略に変わらないことも確かめる。
+    store.addNote("表示切替（お問い合わせ）", "まだ連絡先が決まっていないので隠した", []);
     const before = exportedLearning();
     const { site, notes, aiUsage } = useBuilderStore.getState();
     const getToken = async () => "session-token";
@@ -59,6 +61,7 @@ describe("保存と読み込み", () => {
     useBuilderStore.getState().loadSite(project.site, { notes: project.notes, aiUsage: project.aiUsage });
 
     expect(exportedLearning()).toEqual(before);
-    expect(useBuilderStore.getState().notes).toHaveLength(3);
+    expect(useBuilderStore.getState().notes).toEqual(notes);
+    expect(useBuilderStore.getState().aiUsage).toEqual(aiUsage);
   });
 });
