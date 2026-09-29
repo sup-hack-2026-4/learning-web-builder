@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { siteModelSchema, type SiteModel } from "@/features/site-model/schema";
+import {
+  aiUsageSchema,
+  learningNoteSchema,
+  learningRecordProblem,
+  siteModelSchema,
+  type LearningRecord,
+  type SiteModel,
+} from "@/features/site-model/schema";
 import { conceptReplySchema, trimHistory, type ChatMessage, type ConceptDraft, type ConceptReply } from "@/features/concept/schema";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "/api/v1";
@@ -28,9 +35,13 @@ export type SessionStatus =
   | { authenticated: false; mode: "guest" }
   | { authenticated: true; mode: "clerk"; userId: string };
 
+// notesとaiUsageは個別の取得と保存の結果にだけ含まれ、一覧には無い。
+// 無いときは空の記録として扱う。
 const projectSchema = z.object({
   id: z.uuid(),
   site: siteModelSchema,
+  notes: z.array(learningNoteSchema).default([]),
+  aiUsage: z.array(aiUsageSchema).default([]),
   version: z.number().int().positive(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -135,18 +146,29 @@ export async function deleteProject(projectId: string, getToken: TokenProvider):
   }
 }
 
+/**
+ * 作品と学習の記録をまとめて保存する。
+ *
+ * 記録を作品と別に保存すると、読み込んだときに学習メモやAI利用記録が消え、
+ * 提出物ZIPから学習の成果が抜け落ちる。そのため同じリクエストで送る。
+ */
 export async function saveProject(
   site: SiteModel,
+  record: LearningRecord,
   getToken: TokenProvider,
   projectId?: string | null,
 ): Promise<Project> {
+  const problem = learningRecordProblem(record);
+  if (problem) {
+    throw new Error(problem);
+  }
   const response = await requestApi(
     projectId ? `/projects/${encodeURIComponent(projectId)}` : "/projects",
     {
       getToken,
       method: projectId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ site }),
+      body: JSON.stringify({ site, notes: record.notes, aiUsage: record.aiUsage }),
     },
   );
   if (!response.ok) {

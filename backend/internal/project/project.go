@@ -11,9 +11,11 @@ import (
 var ErrNotFound = errors.New("project not found")
 
 type Record struct {
-	ID        string
-	OwnerID   string
-	Site      site.Model
+	ID      string
+	OwnerID string
+	Site    site.Model
+	// Learning は作品と一緒に保存した学習の記録。一覧(List)では運ばないため空になる。
+	Learning  LearningRecord
 	Version   int
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -35,8 +37,8 @@ type QualityResult struct {
 }
 
 type Repository interface {
-	Create(context.Context, string, site.Model) (Record, error)
-	Update(context.Context, string, string, site.Model) (Record, error)
+	Create(context.Context, string, site.Model, LearningRecord) (Record, error)
+	Update(context.Context, string, string, site.Model, LearningRecord) (Record, error)
 	Get(context.Context, string, string) (Record, error)
 	List(context.Context, string) ([]Record, error)
 	Delete(context.Context, string, string) error

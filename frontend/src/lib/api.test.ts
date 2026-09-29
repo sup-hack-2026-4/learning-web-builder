@@ -63,12 +63,28 @@ const projectPayload = {
   updatedAt: "2026-07-30T00:00:00Z",
 };
 
+const emptyRecord = { notes: [], aiUsage: [] };
+
+const learningRecord = {
+  notes: [{
+    id: "note-1",
+    target: "デザイン変更（メインカラーを #b91c1c に）",
+    reason: "作品の写真が映える落ち着いた赤にした",
+    createdAt: "2026-09-29T01:02:03.456Z",
+    codeChanges: ["--primary: #b91c1c;"],
+  }],
+  aiUsage: [{ provider: "gemini" as const, purpose: "サイト構成と仮文章の生成", generatedAt: "2026-09-29T00:59:00.000Z" }],
+};
+
 describe("project API", () => {
   it("認証付きでプロジェクト一覧を取得する", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ projects: [projectPayload] }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(listProjects(async () => "session-token")).resolves.toHaveLength(1);
+    const projects = await listProjects(async () => "session-token");
+    expect(projects).toHaveLength(1);
+    // 一覧には学習の記録が含まれないため、空の記録として扱う。
+    expect(projects[0]).toMatchObject({ notes: [], aiUsage: [] });
 
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/projects");
@@ -79,7 +95,7 @@ describe("project API", () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json(projectPayload, { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(saveProject(projectPayload.site, async () => "session-token")).resolves.toMatchObject({
+    await expect(saveProject(projectPayload.site, emptyRecord, async () => "session-token")).resolves.toMatchObject({
       id: projectPayload.id,
       version: 1,
     });
@@ -87,14 +103,52 @@ describe("project API", () => {
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/projects$/);
     expect(options.method).toBe("POST");
-    expect(JSON.parse(options.body as string)).toEqual({ site: projectPayload.site });
+    expect(JSON.parse(options.body as string)).toEqual({ site: projectPayload.site, notes: [], aiUsage: [] });
+  });
+
+  it("保存では学習メモとAI利用記録も一緒に送り、応答の記録を返す", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ...projectPayload, ...learningRecord }, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(saveProject(projectPayload.site, learningRecord, async () => "session-token"))
+      .resolves.toMatchObject(learningRecord);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(options.body as string)).toEqual({ site: projectPayload.site, ...learningRecord });
+  });
+
+  it("学習の記録が上限を超えていたら、送らずに理由を伝える", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const tooLong = { ...learningRecord.notes[0], reason: "あ".repeat(2001) };
+
+    await expect(saveProject(projectPayload.site, { ...learningRecord, notes: [tooLong] }, async () => "session-token"))
+      .rejects.toThrow("学習メモの1件目に保存できない内容があります");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("学習の記録全体が大きすぎたら、送らずに理由を伝える", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    // 1件ずつは上限内でも、合計で上限(300KiB)を超える組み合わせ。
+    const bigNote = { ...learningRecord.notes[0], codeChanges: Array.from({ length: 200 }, () => "x".repeat(2000)) };
+
+    await expect(saveProject(projectPayload.site, { ...learningRecord, notes: [bigNote] }, async () => "session-token"))
+      .rejects.toThrow("学習メモが大きすぎて保存できません。");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("取得したプロジェクトの学習の記録を返す", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ...projectPayload, ...learningRecord })));
+
+    await expect(getProject(projectPayload.id, async () => "session-token")).resolves.toMatchObject(learningRecord);
   });
 
   it("既存保存ではIDをURLエンコードしてPUTを使う", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ ...projectPayload, version: 2 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await saveProject(projectPayload.site, async () => "session-token", projectPayload.id);
+    await saveProject(projectPayload.site, emptyRecord, async () => "session-token", projectPayload.id);
 
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/projects/${projectPayload.id}`);

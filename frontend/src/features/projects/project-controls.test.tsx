@@ -24,10 +24,14 @@ vi.mock("@/lib/api", () => ({
 const project: Project = {
   id: "11111111-1111-4111-8111-111111111111",
   site: createSampleSite("スミレ即売会"),
+  notes: [{ id: "note-1", target: "コンセプト", reason: "新入生に雰囲気を伝える", createdAt: "2026-09-01T00:00:00.000Z" }],
+  aiUsage: [{ provider: "gemini", purpose: "サイト構成と仮文章の生成", generatedAt: "2026-09-01T00:00:00.000Z" }],
   version: 1,
   createdAt: "2026-09-01T00:00:00Z",
   updatedAt: "2026-09-01T00:00:00Z",
 };
+
+const onLoad = vi.fn();
 
 // 選択中のプロジェクトは親が持つため、同じ受け渡しをする親を用意する。
 function Harness() {
@@ -36,9 +40,10 @@ function Harness() {
     <ProjectControls
       enabled
       site={project.site}
+      record={{ notes: project.notes, aiUsage: project.aiUsage }}
       currentProjectId={currentProjectId}
       onProjectChange={setCurrentProjectId}
-      onLoad={() => {}}
+      onLoad={onLoad}
       onNotice={() => {}}
     />
   );
@@ -71,6 +76,36 @@ describe("ProjectControls", () => {
     vi.mocked(getProject).mockReset().mockResolvedValue(project);
     vi.mocked(saveProject).mockReset();
     vi.mocked(deleteProject).mockReset();
+    onLoad.mockReset();
+  });
+
+  it("保存では作品と一緒に学習の記録も送る", async () => {
+    vi.mocked(saveProject).mockResolvedValue(project);
+    const user = userEvent.setup();
+    renderControls();
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(saveProject).toHaveBeenCalledWith(
+      project.site,
+      { notes: project.notes, aiUsage: project.aiUsage },
+      expect.any(Function),
+      null,
+    ));
+  });
+
+  it("読み込むと、作品と一緒に学習の記録も画面へ渡す", async () => {
+    const user = userEvent.setup();
+    renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+
+    await waitFor(() => expect(onLoad).toHaveBeenCalledWith(
+      project.site,
+      { notes: project.notes, aiUsage: project.aiUsage },
+    ));
   });
 
   it("一覧の取得中は読み込み中であることを、セレクトの説明と読み上げの両方で伝える", async () => {

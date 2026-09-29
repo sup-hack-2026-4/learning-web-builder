@@ -116,29 +116,81 @@ export type SiteModel = z.infer<typeof siteModelSchema>;
 export type SiteSection = z.infer<typeof sectionSchema>;
 export type SectionImage = z.infer<typeof sectionImageSchema>;
 
-export type LearningNote = {
-  id: string;
-  target: string;
-  reason: string;
-  createdAt: string;
+// 学習記録の上限。サーバー側(backend/internal/project/learning.go)と同じ値を持つ。
+export const MAX_LEARNING_NOTES = 200;
+export const MAX_LEARNING_TARGET_LENGTH = 200;
+export const MAX_LEARNING_REASON_LENGTH = 2000;
+export const MAX_LEARNING_CODE_CHANGES = 200;
+export const MAX_LEARNING_CODE_LINE_LENGTH = 2000;
+export const MAX_AI_USAGE_ENTRIES = 50;
+export const MAX_AI_USAGE_PURPOSE_LENGTH = 200;
+// 学習記録全体をJSONにしたときの上限。保存APIのボディ上限は1MiBで、
+// 画像(合計600KiB)と作品本文も同じリクエストに乗るため、合計でも縛る。
+export const MAX_LEARNING_RECORD_BYTES = 300 * 1024;
+
+const requiredText = (max: number) =>
+  z.string().refine((value) => value.trim() !== "" && codePointLength(value) <= max, `1〜${max}文字で入力してください`);
+
+// サーバーはRFC 3339の日時を受け付ける。toISOString()の出力はこの形になる。
+const timestampSchema = z.iso.datetime({ offset: true, message: "日時の形式が正しくありません" });
+
+export const learningNoteSchema = z.object({
+  id: requiredText(100),
+  target: requiredText(MAX_LEARNING_TARGET_LENGTH),
+  reason: requiredText(MAX_LEARNING_REASON_LENGTH),
+  createdAt: timestampSchema,
   /**
    * 記録した時点で実際に変わったコードの行。
    * 「理由を書けた＝理解できている」とは限らないため、書いた理由と実際の変更を対で残し、
    * あとから見返して突き合わせられるようにする。以前の保存データには無いため任意。
    */
-  codeChanges?: string[];
+  codeChanges: z
+    .array(z.string().refine(maxCodePoints(MAX_LEARNING_CODE_LINE_LENGTH), maxCodePointsMessage(MAX_LEARNING_CODE_LINE_LENGTH)))
+    .max(MAX_LEARNING_CODE_CHANGES)
+    .optional(),
+});
+
+export const aiUsageSchema = z.object({
+  provider: z.enum(["gemini", "static-sample"]),
+  purpose: requiredText(MAX_AI_USAGE_PURPOSE_LENGTH),
+  generatedAt: timestampSchema,
+});
+
+export type LearningNote = z.infer<typeof learningNoteSchema>;
+export type AiUsage = z.infer<typeof aiUsageSchema>;
+
+export type LearningRecord = {
+  notes: LearningNote[];
+  aiUsage: AiUsage[];
 };
+
+// 保存前に確かめる。サーバーで弾かれてから汎用のエラーを見せるより、
+// 何が多すぎるのかをその場で伝えるため。問題が無ければnullを返す。
+export function learningRecordProblem(record: LearningRecord): string | null {
+  if (record.notes.length > MAX_LEARNING_NOTES) {
+    return `学習メモが${MAX_LEARNING_NOTES}件を超えているため保存できません。`;
+  }
+  if (record.aiUsage.length > MAX_AI_USAGE_ENTRIES) {
+    return `AI利用記録が${MAX_AI_USAGE_ENTRIES}件を超えているため保存できません。`;
+  }
+  const invalidNote = record.notes.findIndex((note) => !learningNoteSchema.safeParse(note).success);
+  if (invalidNote >= 0) {
+    return `学習メモの${invalidNote + 1}件目に保存できない内容があります（理由は${MAX_LEARNING_REASON_LENGTH}文字まで）。`;
+  }
+  if (record.aiUsage.some((usage) => !aiUsageSchema.safeParse(usage).success)) {
+    return "AI利用記録に保存できない内容があります。";
+  }
+  const bytes = new TextEncoder().encode(JSON.stringify(record)).length;
+  if (bytes > MAX_LEARNING_RECORD_BYTES) {
+    return "学習メモが大きすぎて保存できません。提出物ZIPで書き出して手元に残してください。";
+  }
+  return null;
+}
 
 export type QualityCheck = {
   id: "headings" | "alt" | "mobile" | "axe";
   label: string;
   passed: boolean;
   detail: string;
-};
-
-export type AiUsage = {
-  provider: "gemini" | "static-sample";
-  purpose: string;
-  generatedAt: string;
 };
 

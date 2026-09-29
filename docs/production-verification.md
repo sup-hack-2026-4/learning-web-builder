@@ -75,7 +75,8 @@ Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認する�
 - Renderに`FRONTEND_ORIGIN`、`CLERK_SECRET_KEY`、`DATABASE_URL`、`GEMINI_API_KEY`が設定されている
 - `FRONTEND_ORIGIN`に、確認で使うCloudflare PagesのURLがすべて入っている
   （カンマ区切りで複数指定できます。本番URLとdevelop URLの両方を使うなら両方書きます）
-- Neonへ`db/migrations/001_initial.sql`を適用済み
+- Neonへ`db/migrations/001_initial.sql`と`002_learning_record.sql`を適用済み
+  （`002`が未適用だと、保存・読み込みのAPIが500を返します。バックエンドをデプロイする前に適用してください）
 
 ## 10分で行う縦断確認
 

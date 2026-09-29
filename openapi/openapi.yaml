@@ -206,7 +206,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request or SiteModel
+          description: Invalid request, SiteModel, or learning record
         "401":
           description: Authentication is required
         "403":
@@ -272,7 +272,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request, project ID, or SiteModel
+          description: Invalid request, project ID, SiteModel, or learning record
         "401":
           description: Authentication is required
         "403":
@@ -413,19 +413,73 @@ components:
       type: object
       additionalProperties: false
       required: [site]
+      description: >-
+        作品と学習の記録をまとめて保存する。notesとaiUsageは省略またはnullにでき、
+        その場合は空の記録として保存する（既存の記録は空で上書きされる）。
+        学習の記録全体をJSONにしたときの大きさは300 KiB(307200バイト)まで。
+        超えると400になる。
       properties:
         site:
           $ref: "#/components/schemas/SiteModel"
+        notes:
+          type: [array, "null"]
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/LearningNote"
+        aiUsage:
+          type: [array, "null"]
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/AiUsage"
+    LearningNote:
+      type: object
+      additionalProperties: false
+      required: [id, target, reason, createdAt]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 100 }
+        target: { type: string, minLength: 1, maxLength: 200 }
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+        createdAt:
+          type: string
+          format: date-time
+          description: 画面が付けた日時を、表記を変えずにそのまま返す。
+        codeChanges:
+          type: array
+          maxItems: 200
+          items: { type: string, maxLength: 2000 }
+    AiUsage:
+      type: object
+      additionalProperties: false
+      required: [provider, purpose, generatedAt]
+      properties:
+        provider:
+          type: string
+          enum: [gemini, static-sample]
+        purpose: { type: string, minLength: 1, maxLength: 200 }
+        generatedAt:
+          type: string
+          format: date-time
     Project:
       type: object
       additionalProperties: false
       required: [id, site, version, createdAt, updatedAt]
+      description: >-
+        notesとaiUsageは、個別の取得と保存の結果にだけ含まれる（記録が無ければ空の配列）。
+        一覧(ProjectList)では含まれない。
       properties:
         id:
           type: string
           format: uuid
         site:
           $ref: "#/components/schemas/SiteModel"
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LearningNote"
+        aiUsage:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiUsage"
         version:
           type: integer
           minimum: 1

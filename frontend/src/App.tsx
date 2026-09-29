@@ -24,6 +24,7 @@ import { ProjectControls } from "@/features/projects/project-controls";
 import { useQualityChecks } from "@/features/quality/use-quality-checks";
 import { LearningNotes } from "@/features/sections/learning-notes";
 import { SectionList } from "@/features/sections/section-list";
+import type { LearningRecord } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 
 // 狭い画面では3カラムを縦に積むと極端に見づらいため、
@@ -97,6 +98,7 @@ export default function App() {
   );
   const steps = useMemo(() => stepViews(flowState), [flowState]);
   const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
+  const learningRecord: LearningRecord = useMemo(() => ({ notes, aiUsage }), [notes, aiUsage]);
 
   // 一覧は左カラム（モバイルでは「題材・メモ」の表示）にある。畳んでいれば開き、
   // 描画を済ませてから一覧の見出しへフォーカスを移す。次のTabで最初のチェックボックスへ進める。
@@ -128,8 +130,8 @@ export default function App() {
     showNotice("初期サンプルへ戻しました。");
   };
 
-  const loadProject = (loadedSite: typeof site) => {
-    loadSite(loadedSite);
+  const loadProject = (loadedSite: typeof site, record: LearningRecord) => {
+    loadSite(loadedSite, record);
     afterSiteReplaced(true);
   };
 
@@ -147,6 +149,7 @@ export default function App() {
           <ProjectControls
             enabled={clerkConfig.enabled}
             site={site}
+            record={learningRecord}
             currentProjectId={currentProjectId}
             onProjectChange={setCurrentProjectId}
             onLoad={loadProject}
