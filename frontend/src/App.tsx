@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ import { useQualityChecks } from "@/features/quality/use-quality-checks";
 import { LearningNotes } from "@/features/sections/learning-notes";
 import { SectionList } from "@/features/sections/section-list";
 import type { LearningRecord } from "@/features/site-model/schema";
-import { useBuilderStore } from "@/features/site-model/store";
+import { onPersistFailure, useBuilderStore } from "@/features/site-model/store";
 
 // 狭い画面では3カラムを縦に積むと極端に見づらいため、
 // プレビューを主役に据え、他はここで切り替える。
@@ -70,6 +70,18 @@ export default function App() {
   // 領域をまたいでフォーカスを移す先。一覧の見出しと、編集欄の見出し。
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const selectedSectionHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  // 下書きはブラウザへ保存している。書けなかったときは、再読み込みで変更と記録が失われうるため知らせる。
+  useEffect(
+    () =>
+      onPersistFailure(() =>
+        showNotice(
+          "ブラウザへの下書きの保存に失敗しました。容量が足りない可能性があります。画像を減らすか、提出物ZIPやアカウントへの保存で作品を残してください。",
+          "error",
+        ),
+      ),
+    [showNotice],
+  );
 
   const tracking = useChangeTracking(showNotice);
   // サイトが差し替わる操作（生成・リセット・読み込み）のあとに共通して行う後始末。

@@ -2,7 +2,8 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
 import { createSampleSite } from "@/features/site-model/sample";
-import { useBuilderStore } from "@/features/site-model/store";
+import { maxSections, minSections } from "@/features/site-model/sections";
+import { onPersistFailure, useBuilderStore, withSectionValues } from "@/features/site-model/store";
 import { useChangeTracking } from "./use-change-tracking";
 
 function setup() {
@@ -158,8 +159,14 @@ describe("再読み込みの前後(#116)", () => {
   });
 
   it("変更記録を持たない以前の保存内容は、保存されていたサイトを基準にして読み込む", async () => {
+    // 起動時の初期サンプルが基準に残ると、保存されていたテーマや本文の違いが未説明の変更として現れる。
     const storageKey = useBuilderStore.persist.getOptions().name!;
-    const savedSite = { ...createSampleSite(), siteTitle: "以前に保存したサイト" };
+    const sample = createSampleSite();
+    const savedSite = {
+      ...sample,
+      theme: { ...sample.theme, primary: "#123456" },
+      sections: sample.sections.map((section) => (section.id === "about" ? { ...section, body: "以前に書いた本文" } : section)),
+    };
     localStorage.setItem(storageKey, JSON.stringify({
       state: { site: savedSite, selectedElementId: "hero", notes: [], aiUsage: [], chatMessages: [], conceptDraft: {}, conceptChoices: [] },
       version: 2,
@@ -168,7 +175,8 @@ describe("再読み込みの前後(#116)", () => {
     await useBuilderStore.persist.rehydrate();
     const { result } = setup();
 
-    expect(useBuilderStore.getState().site.siteTitle).toBe("以前に保存したサイト");
+    expect(useBuilderStore.getState().site).toEqual(savedSite);
+    expect(result.current.baselineSite).toEqual(savedSite);
     expect(result.current.unexplainedCount).toBe(0);
     expect(result.current.reason).toBe("");
   });
@@ -196,5 +204,90 @@ describe("再読み込みの前後(#116)", () => {
     expect(useBuilderStore.getState().site.siteTitle).toBe("壊れた記録のサイト");
     expect(result.current.unexplainedCount).toBe(0);
     expect(result.current.reason).toBe("");
+  });
+});
+
+describe("サイトの変更と記録の一致", () => {
+  it("同じ描画の中で追加を続けても、実際に追加できた分だけを構成の変更として数える", () => {
+    const { result } = setup();
+    const before = useBuilderStore.getState().site.sections.length;
+
+    act(() => {
+      for (let index = 0; index < 5; index += 1) result.current.addSection("gallery");
+    });
+
+    const sections = useBuilderStore.getState().site.sections;
+    expect(sections).toHaveLength(maxSections);
+    expect(result.current.pendingStructure).toHaveLength(maxSections - before);
+  });
+
+  it("同じ描画の中で削除を続けても、下限で消せなかったセクションは削除済みとして扱わない", () => {
+    const { result } = setup();
+    const targets = useBuilderStore.getState().site.sections.slice(0, 3);
+
+    const removed: boolean[] = [];
+    act(() => {
+      for (const section of targets) removed.push(result.current.removeSection(section));
+    });
+
+    const remainingIds = useBuilderStore.getState().site.sections.map((section) => section.id);
+    expect(remainingIds).toHaveLength(minSections);
+    expect(removed.filter(Boolean)).toHaveLength(targets.length - 1);
+    expect(result.current.pendingStructure).toHaveLength(targets.length - 1);
+    // 残ったセクションの内容の基準は消えていない。
+    for (const id of remainingIds) {
+      expect(useBuilderStore.getState().tracking.sectionBaselines[id]).toBeDefined();
+    }
+  });
+
+  it("ブラウザへの保存に失敗しても、サイトと記録はそろったまま進み、失敗は1回だけ知らせる", () => {
+    const { result } = setup();
+    const onFailure = vi.fn();
+    const unsubscribe = onPersistFailure(onFailure);
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("容量を超えました", "QuotaExceededError");
+    });
+    const before = useBuilderStore.getState().site.sections.length;
+
+    try {
+      act(() => result.current.addSection("gallery"));
+      act(() => result.current.setReason("写真で雰囲気を伝えたい"));
+
+      expect(useBuilderStore.getState().site.sections).toHaveLength(before + 1);
+      expect(result.current.pendingStructure).toHaveLength(1);
+      expect(result.current.unexplainedCount).toBe(1);
+      expect(result.current.reason).toBe("写真で雰囲気を伝えたい");
+      expect(onFailure).toHaveBeenCalledTimes(1);
+    } finally {
+      setItem.mockRestore();
+      unsubscribe();
+    }
+    // 書けるようになれば、次の変更で改めて保存される。
+    act(() => result.current.setReason("写真で雰囲気を伝えたいから"));
+    expect(localStorage.getItem(useBuilderStore.persist.getOptions().name!)).toContain("写真で雰囲気を伝えたいから");
+  });
+});
+
+describe("別のタブとの同期", () => {
+  it("別のタブが下書きを書き換えたら、その内容を読み込み直す", async () => {
+    const { result } = setup();
+    const storageKey = useBuilderStore.persist.getOptions().name!;
+    const saved = JSON.parse(localStorage.getItem(storageKey) ?? "null") ?? {
+      state: useBuilderStore.persist.getOptions().partialize!(useBuilderStore.getState()),
+      version: 3,
+    };
+    // 別のタブで本文を書き換えた状態を、保存先へ直接書き込む。
+    const otherSite = withSectionValues(useBuilderStore.getState().site, "about", { body: "別のタブで書いた本文" });
+    const newValue = JSON.stringify({ ...saved, state: { ...saved.state, site: otherSite } });
+    localStorage.setItem(storageKey, newValue);
+
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: storageKey, newValue, storageArea: localStorage }));
+    });
+
+    await vi.waitFor(() => expect(sectionOf("about").body).toBe("別のタブで書いた本文"));
+    // このタブで理由を書いても、別のタブの本文を古い内容で上書きしない。
+    act(() => result.current.setReason("会社概要を書き直した"));
+    expect(localStorage.getItem(storageKey)).toContain("別のタブで書いた本文");
   });
 });
