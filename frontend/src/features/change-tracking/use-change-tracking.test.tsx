@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
 import { createSampleSite } from "@/features/site-model/sample";
 import { useBuilderStore } from "@/features/site-model/store";
 import { useChangeTracking } from "./use-change-tracking";
@@ -14,6 +15,8 @@ const sectionOf = (id: string) => useBuilderStore.getState().site.sections.find(
 
 beforeEach(() => {
   useBuilderStore.setState({ notes: [], aiUsage: [], site: createSampleSite(), selectedElementId: "hero" });
+  // 前のテストの変更記録を持ち越さないよう、差し替えたサイトを基準にし直す。
+  useBuilderStore.getState().discardTracking();
 });
 
 describe("useChangeTracking", () => {
@@ -104,5 +107,94 @@ describe("useChangeTracking", () => {
     expect(result.current.pendingStructure).toHaveLength(0);
     expect(result.current.reason).toBe("");
     expect(result.current.revision).toBe(revision + 1);
+  });
+});
+
+// 再読み込みを再現する。メモリ上の状態を起動直後の値へ戻してから、保存先から読み戻す。
+// 状態を戻す操作も保存先へ書き込まれるため、戻す前の保存内容を取っておいて書き直す。
+async function reload() {
+  const storageKey = useBuilderStore.persist.getOptions().name!;
+  const saved = localStorage.getItem(storageKey);
+  const fresh = createSampleSite();
+  useBuilderStore.setState({ site: fresh, notes: [], aiUsage: [] });
+  useBuilderStore.getState().discardTracking();
+  if (saved !== null) localStorage.setItem(storageKey, saved);
+  await useBuilderStore.persist.rehydrate();
+}
+
+describe("再読み込みの前後(#116)", () => {
+  it("未説明の変更・コード上の差分・入力中の理由が残り、そのまま記録できる", async () => {
+    const first = setup();
+    act(() => first.result.current.changeTheme("primary", "#e11d48"));
+    act(() => useBuilderStore.getState().updateSection("about", { body: "書き換えた本文" }));
+    act(() => first.result.current.addSection("gallery"));
+    act(() => first.result.current.setReason("メインカラーを赤にした。元気な雰囲気を伝えたいから"));
+    const before = {
+      unexplainedCount: first.result.current.unexplainedCount,
+      pendingStructure: first.result.current.pendingStructure,
+      baselineHtml: buildSiteArtifacts(first.result.current.baselineSite).html,
+      baselineCss: buildSiteArtifacts(first.result.current.baselineSite).css,
+    };
+    expect(before.unexplainedCount).toBe(3);
+    first.unmount();
+
+    await reload();
+    const { result } = setup();
+
+    expect(result.current.unexplainedCount).toBe(before.unexplainedCount);
+    expect(result.current.pendingStructure).toEqual(before.pendingStructure);
+    expect(result.current.reason).toBe("メインカラーを赤にした。元気な雰囲気を伝えたいから");
+    // コード上の差分は基準のサイトと今のサイトの比較で出す。基準が編集後のサイトに
+    // 置き換わっていないことを、出力されるコードで確かめる。
+    expect(buildSiteArtifacts(result.current.baselineSite).html).toBe(before.baselineHtml);
+    expect(buildSiteArtifacts(result.current.baselineSite).css).toBe(before.baselineCss);
+
+    act(() => result.current.recordThemeReason());
+
+    const [note] = useBuilderStore.getState().notes;
+    expect(note.target).toBe("デザイン変更（メインカラーを #e11d48 に）");
+    expect(note.codeChanges?.some((line) => line.includes("#e11d48"))).toBe(true);
+    expect(result.current.unexplainedCount).toBe(2);
+  });
+
+  it("変更記録を持たない以前の保存内容は、保存されていたサイトを基準にして読み込む", async () => {
+    const storageKey = useBuilderStore.persist.getOptions().name!;
+    const savedSite = { ...createSampleSite(), siteTitle: "以前に保存したサイト" };
+    localStorage.setItem(storageKey, JSON.stringify({
+      state: { site: savedSite, selectedElementId: "hero", notes: [], aiUsage: [], chatMessages: [], conceptDraft: {}, conceptChoices: [] },
+      version: 2,
+    }));
+
+    await useBuilderStore.persist.rehydrate();
+    const { result } = setup();
+
+    expect(useBuilderStore.getState().site.siteTitle).toBe("以前に保存したサイト");
+    expect(result.current.unexplainedCount).toBe(0);
+    expect(result.current.reason).toBe("");
+  });
+
+  it("保存されていた変更記録が壊れていても、画面を落とさずサイトを基準にして始め直す", async () => {
+    const storageKey = useBuilderStore.persist.getOptions().name!;
+    const savedSite = { ...createSampleSite(), siteTitle: "壊れた記録のサイト" };
+    localStorage.setItem(storageKey, JSON.stringify({
+      state: {
+        site: savedSite,
+        selectedElementId: "hero",
+        notes: [],
+        aiUsage: [],
+        chatMessages: [],
+        conceptDraft: {},
+        conceptChoices: [],
+        tracking: { reason: "書きかけ", touchedThemeKeys: ["no-such-key"], sectionBaselines: null },
+      },
+      version: 3,
+    }));
+
+    await useBuilderStore.persist.rehydrate();
+    const { result } = setup();
+
+    expect(useBuilderStore.getState().site.siteTitle).toBe("壊れた記録のサイト");
+    expect(result.current.unexplainedCount).toBe(0);
+    expect(result.current.reason).toBe("");
   });
 });

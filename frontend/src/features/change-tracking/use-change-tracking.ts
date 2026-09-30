@@ -7,32 +7,31 @@ import type { SiteSection } from "@/features/site-model/schema";
 import { addSectionBlockReason, removeSectionBlockReason, type SectionKind } from "@/features/site-model/sections";
 import { useBuilderStore } from "@/features/site-model/store";
 import { describeThemeChange, effectiveThemeValue, type ThemeKey } from "./theme-change";
+import type { TrackingState } from "./tracking-state";
 
-// まだ説明を書いていない構成の変更1件。
-// 「セクション追加（〜）」のように同じ文言が並ぶことがあるため、
-// 打ち消し（追加してすぐ削除）を扱えるようidを持たせる。
-export type StructureChange = { id: string; label: string };
+export type { StructureChange } from "./tracking-state";
 
 // 変更と、その理由の記録を受け持つ。
 // 「まだ理由を書いていない変更」をコード上で示すための基準値と、未記録の変更をここにまとめる。
 // 基準値と未記録の変更は互いに依存するため、分けずに1か所で更新する。
+// 値そのものは再読み込みで消えないよう、サイトと一緒にstoreへ保存している（中身はtracking-state.tsを参照）。
 export function useChangeTracking(showNotice: ShowNotice) {
-  const { site, previewTheme, updateSection, addSection, removeSection, addNote } = useBuilderStore();
-  const [reason, setReason] = useState("");
-  // 記録ボタンを押すまでに変更したテーマ項目。まだ説明を書いていない変更として持つ。
-  const [touchedThemeKeys, setTouchedThemeKeys] = useState<ThemeKey[]>([]);
-  // デザインと内容は別々に記録するため、基準も分けて持つ。
-  const [themeBaseline, setThemeBaseline] = useState(site.theme);
-  // 内容の基準はセクションごとに持つ。ひとまとめにすると、あるセクションを
-  // 未記録のまま別のセクションを記録したときに、変更コードが別の理由へ混ざってしまう。
-  const [sectionBaselines, setSectionBaselines] = useState<Record<string, SiteSection>>(() =>
-    Object.fromEntries(site.sections.map((section) => [section.id, section])),
-  );
-  // 構成（どのセクションが何番目にあるか）の基準。内容の基準とは別に持つ。
-  // 内容の基準はid単位なので、セクションが増えた・減ったこと自体は表せない。
-  const [structureBaseline, setStructureBaseline] = useState<SiteSection[]>(() => site.sections);
-  // まだ説明を書いていない構成の変更。押した順に並べ、まとめて1件として記録する。
-  const [pendingStructure, setPendingStructure] = useState<StructureChange[]>([]);
+  const { site, previewTheme, updateSection, addSection, removeSection, addNote, tracking, updateTracking, discardTracking } =
+    useBuilderStore();
+  const { reason, touchedThemeKeys, themeBaseline, sectionBaselines, structureBaseline, pendingStructure } = tracking;
+  // useStateと同じ書き方で更新できるようにする。関数を渡すと、storeにある最新の値から次の値を作る。
+  const trackingSetter =
+    <K extends keyof TrackingState>(key: K) =>
+    (next: TrackingState[K] | ((current: TrackingState[K]) => TrackingState[K])) =>
+      updateTracking((current) => ({
+        [key]: typeof next === "function" ? (next as (value: TrackingState[K]) => TrackingState[K])(current[key]) : next,
+      }));
+  const setReason = trackingSetter("reason");
+  const setTouchedThemeKeys = trackingSetter("touchedThemeKeys");
+  const setThemeBaseline = trackingSetter("themeBaseline");
+  const setSectionBaselines = trackingSetter("sectionBaselines");
+  const setStructureBaseline = trackingSetter("structureBaseline");
+  const setPendingStructure = trackingSetter("pendingStructure");
   // 基準を捨てた回数。画面側で、記録前の操作途中の状態（削除の確認など）を閉じる合図に使う。
   const [revision, setRevision] = useState(0);
 
@@ -113,13 +112,7 @@ export function useChangeTracking(showNotice: ShowNotice) {
   // サイトが差し替わる操作（生成・リセット・読み込み）のたびに呼ぶ。
   // 差し替え後のサイトが新しい基準になるため、コード上の変更表示もここで消える。
   const discard = () => {
-    setTouchedThemeKeys([]);
-    setReason("");
-    const current = useBuilderStore.getState().site;
-    setThemeBaseline(current.theme);
-    setSectionBaselines(Object.fromEntries(current.sections.map((section) => [section.id, section])));
-    setStructureBaseline(current.sections);
-    setPendingStructure([]);
+    discardTracking();
     setRevision((value) => value + 1);
   };
 

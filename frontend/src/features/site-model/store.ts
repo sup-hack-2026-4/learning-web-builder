@@ -4,6 +4,7 @@ import { createSampleSite } from "./sample";
 import { createSection, maxSections, minSections, type SectionKind } from "./sections";
 import type { AiUsage, LearningNote, LearningRecord, SectionImage, SiteModel } from "./schema";
 import { conceptStateSchema, emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
+import { restoreTracking, trackingFromSite, type TrackingState } from "@/features/change-tracking/tracking-state";
 
 type BuilderState = {
   site: SiteModel;
@@ -47,6 +48,13 @@ type BuilderState = {
   dropLastChatMessage: () => void;
   setConceptReply: (draft: ConceptDraft, choices: string[]) => void;
   resetConcept: () => void;
+  // 変更と、その理由の記録の途中経過。更新はuseChangeTrackingを通して行う。
+  // サイトが差し替わる操作（生成・読み込み・リセット）では、同じ更新の中で新しいサイトを基準にする。
+  // 別々に更新すると、差し替え後のサイトと古い基準の組が保存されうるため。
+  tracking: TrackingState;
+  updateTracking: (update: (tracking: TrackingState) => Partial<TrackingState>) => void;
+  // 記録されないまま残っている変更を捨て、いまのサイトを基準にする。
+  discardTracking: () => void;
 };
 
 const emptyConcept = {
@@ -74,6 +82,7 @@ export const useBuilderStore = create<BuilderState>()(
             purpose: purpose ?? "サイト構成と仮文章の生成",
             generatedAt: new Date().toISOString(),
           }],
+          tracking: trackingFromSite(site),
         }),
       loadSite: (site, record) =>
         set((state) => ({
@@ -81,6 +90,7 @@ export const useBuilderStore = create<BuilderState>()(
           selectedElementId: site.sections[0]?.id ?? "hero",
           notes: record.notes,
           aiUsage: record.aiUsage,
+          tracking: trackingFromSite(site),
           // 別のプロジェクトを開いたら、前の題材の相談は残さない。
           ...emptyConcept,
           conceptGeneration: state.conceptGeneration + 1,
@@ -164,14 +174,18 @@ export const useBuilderStore = create<BuilderState>()(
           notes: [...state.notes, { id: crypto.randomUUID(), target, reason, createdAt: new Date().toISOString(), codeChanges }],
         })),
       reset: () =>
-        set((state) => ({
-          site: createSampleSite(),
-          selectedElementId: "hero",
-          notes: [],
-          aiUsage: [],
-          ...emptyConcept,
-          conceptGeneration: state.conceptGeneration + 1,
-        })),
+        set((state) => {
+          const site = createSampleSite();
+          return {
+            site,
+            selectedElementId: "hero",
+            notes: [],
+            aiUsage: [],
+            tracking: trackingFromSite(site),
+            ...emptyConcept,
+            conceptGeneration: state.conceptGeneration + 1,
+          };
+        }),
       ...emptyConcept,
       conceptGeneration: 0,
       appendChatMessage: (message) =>
@@ -181,10 +195,14 @@ export const useBuilderStore = create<BuilderState>()(
       setConceptReply: (conceptDraft, conceptChoices) => set({ conceptDraft, conceptChoices }),
       resetConcept: () =>
         set((state) => ({ ...emptyConcept, conceptGeneration: state.conceptGeneration + 1 })),
+      tracking: trackingFromSite(initialSite),
+      updateTracking: (update) => set((state) => ({ tracking: { ...state.tracking, ...update(state.tracking) } })),
+      discardTracking: () => set((state) => ({ tracking: trackingFromSite(state.site) })),
     }),
     {
       name: "learning-web-builder-draft-v1",
-      version: 2,
+      // v3で変更記録の途中経過を保存対象へ加えた。v2以前には無いため、読み込み時にサイトから作る。
+      version: 3,
       // v1には相談の項目が無い。壊れた値や古い形式のまま読み込むと、
       // 描画中に例外になって画面ごと落ちるため、ここで形をそろえる。
       migrate: (persisted, version) => {
@@ -194,6 +212,12 @@ export const useBuilderStore = create<BuilderState>()(
         }
         return { ...state, ...emptyConcept, conceptGeneration: 0 };
       },
+      // 変更記録は、保存の版が同じでも壊れた値が入りうる。migrateは版が変わったときしか
+      // 呼ばれないため、読み込みのたびにここで形を確かめる。
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<BuilderState>) };
+        return { ...merged, tracking: restoreTracking(merged.tracking, merged.site) };
+      },
       partialize: (state) => ({
         site: state.site,
         selectedElementId: state.selectedElementId,
@@ -202,6 +226,7 @@ export const useBuilderStore = create<BuilderState>()(
         chatMessages: state.chatMessages,
         conceptDraft: state.conceptDraft,
         conceptChoices: state.conceptChoices,
+        tracking: state.tracking,
       }),
     },
   ),
