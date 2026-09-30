@@ -15,6 +15,8 @@ function renderList(revision: number) {
 
 beforeEach(() => {
   useBuilderStore.setState({ notes: [], aiUsage: [], site: createSampleSite(), selectedElementId: "hero" });
+  // 前のテストの変更記録を持ち越さないよう、差し替えたサイトを基準にし直す。
+  useBuilderStore.getState().discardTracking();
 });
 
 describe("SectionList", () => {
