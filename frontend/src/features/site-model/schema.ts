@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // OpenAPIのmaxLength(JSON Schema)はUnicodeコードポイント数を数える仕様のため、
 // JavaScriptのstring.length(UTF-16コード単位)ではなく[...value].lengthで揃える。
-function codePointLength(value: string): number {
+export function codePointLength(value: string): number {
   return [...value].length;
 }
 
@@ -11,6 +11,13 @@ function maxCodePoints(max: number) {
 }
 
 const maxCodePointsMessage = (max: number) => `${max}文字以内で入力してください`;
+
+// 利用者が入力する項目の上限。サーバー側(backend/internal/site/validate.go、httpapi/router.go)と同じ値を持つ。
+// 画面の入力欄でも同じ値でエラーを出すため、スキーマと共有する。
+export const MAX_TOPIC_LENGTH = 100;
+export const MAX_SECTION_TITLE_LENGTH = 80;
+export const MAX_SECTION_BODY_LENGTH = 800;
+export const MAX_IMAGE_ALT_LENGTH = 160;
 
 // 画像の上限。サーバー側(backend/internal/site/validate.go)と同じ値を持つ。
 // 保存APIのボディ上限は1MiBで、本文や学習メモも同じリクエストに乗るため、
@@ -47,9 +54,9 @@ export const sectionSchema = z.object({
   title: z
     .string()
     .min(1)
-    .refine(maxCodePoints(80), maxCodePointsMessage(80)),
-  body: z.string().refine(maxCodePoints(800), maxCodePointsMessage(800)),
-  imageAlt: z.string().refine(maxCodePoints(160), maxCodePointsMessage(160)),
+    .refine(maxCodePoints(MAX_SECTION_TITLE_LENGTH), maxCodePointsMessage(MAX_SECTION_TITLE_LENGTH)),
+  body: z.string().refine(maxCodePoints(MAX_SECTION_BODY_LENGTH), maxCodePointsMessage(MAX_SECTION_BODY_LENGTH)),
+  imageAlt: z.string().refine(maxCodePoints(MAX_IMAGE_ALT_LENGTH), maxCodePointsMessage(MAX_IMAGE_ALT_LENGTH)),
   // 利用者が選んだ画像。任意項目で、未指定なら従来どおりプレースホルダーを表示する。
   // 保存済みの古いプロジェクトはこの項目を持たないため、必須にすると復元できなくなる。
   image: sectionImageSchema.optional(),
@@ -61,7 +68,7 @@ export const siteModelSchema = z.object({
   topic: z
     .string()
     .min(1)
-    .refine(maxCodePoints(100), maxCodePointsMessage(100)),
+    .refine(maxCodePoints(MAX_TOPIC_LENGTH), maxCodePointsMessage(MAX_TOPIC_LENGTH)),
   siteTitle: z
     .string()
     .min(1)
@@ -216,6 +223,50 @@ export function learningRecordProblem(record: LearningRecord): string | null {
     return "学習メモが大きすぎて保存できません。提出物ZIPで書き出して手元に残してください。";
   }
   return null;
+}
+
+// 入力欄の値が上限を超えていれば、直し方の分かる日本語のエラーを返す。問題が無ければnull。
+// 保存するときに初めて汎用のエラーになると、どこを直せばよいか分からないため、入力の時点で示す(#117)。
+function lengthProblem(label: string, value: string, max: number): string | null {
+  const length = codePointLength(value);
+  if (length <= max) return null;
+  return `${label}は${max}文字以内で入力してください（いま${length}文字）。`;
+}
+
+// 題材。前後の空白はサーバーと同じく数えない。空のときは生成ボタンを押せないため、ここではエラーにしない。
+export function topicProblem(topic: string): string | null {
+  return lengthProblem("題材", topic.trim(), MAX_TOPIC_LENGTH);
+}
+
+export type SectionField = "title" | "body" | "imageAlt";
+
+const sectionFieldLimits: Record<SectionField, { label: string; max: number }> = {
+  title: { label: "見出し", max: MAX_SECTION_TITLE_LENGTH },
+  body: { label: "本文", max: MAX_SECTION_BODY_LENGTH },
+  imageAlt: { label: "画像の説明（alt）", max: MAX_IMAGE_ALT_LENGTH },
+};
+
+export function sectionFieldProblem(field: SectionField, value: string): string | null {
+  // 見出しが空だと、プレビューでもどのセクションか分からなくなり、保存もできない。
+  if (field === "title" && value.length === 0) return "見出しを入力してください。";
+  const { label, max } = sectionFieldLimits[field];
+  return lengthProblem(label, value, max);
+}
+
+// 保存する前に、作品がスキーマを満たすかを確かめる。どのセクションのどの項目を直せばよいかを返す。
+export function siteModelProblem(site: SiteModel): string | null {
+  for (const section of site.sections) {
+    for (const field of ["title", "body", "imageAlt"] as const) {
+      const problem = sectionFieldProblem(field, section[field]);
+      // 見出しが空のセクションは、見出しで呼べないため種類とidで示す。
+      if (problem) return `「${section.title || section.id}」のセクション: ${problem}`;
+    }
+  }
+  const parsed = siteModelSchema.safeParse(site);
+  if (parsed.success) return null;
+  // 画像の枚数・容量のように全体で決まる問題は、スキーマに日本語の説明を書いてある。
+  const custom = parsed.error.issues.find((issue) => issue.code === "custom");
+  return custom ? `${custom.message}。` : "作品に保存できない内容があります。";
 }
 
 export type QualityCheck = {

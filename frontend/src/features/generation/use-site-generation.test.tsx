@@ -5,10 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
 import type { SiteModel } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
-import { generateSite } from "@/lib/api";
+import { GenerateInputError, generateSite } from "@/lib/api";
 import { useSiteGeneration } from "./use-site-generation";
 
-vi.mock("@/lib/api", () => ({ generateSite: vi.fn() }));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  // 入力の誤りを表すエラーの型は、本物を使う。
+  GenerateInputError: (await importOriginal<typeof import("@/lib/api")>()).GenerateInputError,
+  generateSite: vi.fn(),
+}));
 
 type Generated = { site: SiteModel; provider: "gemini" | "static-sample" };
 
@@ -65,5 +69,38 @@ describe("useSiteGeneration", () => {
     ));
     expect(useBuilderStore.getState().site.id).toBe(loaded.id);
     expect(onSiteReplaced).not.toHaveBeenCalled();
+  });
+
+  it("入力の誤りで断られたら、見本で隠さずにエラーを伝える(#117)", async () => {
+    vi.mocked(generateSite).mockRejectedValue(new GenerateInputError("題材またはコンセプトの内容を確認してください。"));
+    const before = useBuilderStore.getState().site.id;
+    const { result, showNotice, onSiteReplaced } = setup();
+
+    submit(result, "植物園");
+
+    await waitFor(() => expect(showNotice.mock.calls.map(([message, tone]) => [message, tone])).toContainEqual(
+      ["題材またはコンセプトの内容を確認してください。", "error"],
+    ));
+    expect(useBuilderStore.getState().site.id).toBe(before);
+    expect(onSiteReplaced).not.toHaveBeenCalled();
+  });
+
+  it("通信やサーバーの障害なら、これまでどおり見本で作業を続ける", async () => {
+    vi.mocked(generateSite).mockRejectedValue(new Error("サイト生成APIを利用できません。"));
+    const { result, onSiteReplaced } = setup();
+
+    submit(result, "植物園");
+
+    await waitFor(() => expect(useBuilderStore.getState().site.topic).toBe("植物園"));
+    expect(onSiteReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it("題材が上限を超えていたら、送らずに入力欄のエラーを返す", () => {
+    const { result } = setup();
+
+    submit(result, "あ".repeat(101));
+
+    expect(result.current.topicError).toBe("題材は100文字以内で入力してください（いま101文字）。");
+    expect(generateSite).not.toHaveBeenCalled();
   });
 });

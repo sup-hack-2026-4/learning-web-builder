@@ -1,12 +1,21 @@
-import type { SiteModel } from "./schema";
+import { MAX_SECTION_TITLE_LENGTH, MAX_TOPIC_LENGTH, type SiteModel } from "./schema";
 
+// 文字数の上限はコードポイントで数えるため、切るときもコードポイント単位で切る。
+// UTF-16の単位で切ると、絵文字などを途中で割ってしまう。
+function truncateCodePoints(value: string, max: number): string {
+  return [...value].slice(0, max).join("");
+}
+
+// 生成を使えないときの見本。題材が長くても、スキーマの上限を守る(#117)。
+// サーバー側の見本(backend/internal/site/sample.go)と同じく、サイト名と最初の見出しは見出しの上限で切る。
 export function createSampleSite(topic = "地域の小さな植物園"): SiteModel {
-  const cleanTopic = topic.trim() || "地域の小さな植物園";
+  const cleanTopic = truncateCodePoints(topic.trim(), MAX_TOPIC_LENGTH) || "地域の小さな植物園";
+  const title = truncateCodePoints(cleanTopic, MAX_SECTION_TITLE_LENGTH);
 
   return {
     id: crypto.randomUUID(),
     topic: cleanTopic,
-    siteTitle: cleanTopic,
+    siteTitle: title,
     tagline: `${cleanTopic}の魅力を、初めての方にも分かりやすく紹介します。`,
     theme: {
       primary: "#2563eb",
@@ -19,7 +28,7 @@ export function createSampleSite(topic = "地域の小さな植物園"): SiteMod
       {
         id: "hero",
         kind: "hero",
-        title: cleanTopic,
+        title,
         body: "ここはAIが生成した仮の紹介文です。公開前に、根拠のある事実情報へ自分で書き換えてください。",
         imageAlt: "",
         visible: true,
