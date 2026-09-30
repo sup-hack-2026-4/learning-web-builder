@@ -283,4 +283,33 @@ describe("作業の世代(#115)", () => {
 
     expect(isCurrent()).toBe(true);
   });
+
+  it("リセットの直後に生成しても、それぞれで世代が進む", () => {
+    const before = useBuilderStore.getState().siteGeneration;
+
+    useBuilderStore.getState().reset();
+    useBuilderStore.getState().setSite(createSampleSite("植物園"), "gemini");
+
+    expect(useBuilderStore.getState().siteGeneration).toBe(before + 2);
+  });
+
+  it("作品を差し替えるたびに差し替えのidと出どころが変わり、編集では変わらない", () => {
+    const store = useBuilderStore.getState();
+    const ids = new Set<string>();
+    const expectations: Array<[() => void, string]> = [
+      [() => store.setSite(createSampleSite("植物園"), "gemini"), "generated"],
+      [() => store.loadSite(createSampleSite("別の題材"), { notes: [], aiUsage: [] }), "project"],
+      [() => store.reset(), "sample"],
+    ];
+    for (const [replace, origin] of expectations) {
+      replace();
+      ids.add(useBuilderStore.getState().workspaceId);
+      expect(useBuilderStore.getState().siteOrigin).toBe(origin);
+    }
+    expect(ids.size).toBe(expectations.length);
+
+    const workspaceId = useBuilderStore.getState().workspaceId;
+    useBuilderStore.getState().updateSection("about", { body: "書き換えた本文" });
+    expect(useBuilderStore.getState().workspaceId).toBe(workspaceId);
+  });
 });

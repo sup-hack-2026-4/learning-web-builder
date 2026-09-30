@@ -10,8 +10,10 @@ import { ProjectControls } from "./project-controls";
 import { useProjectLink } from "./use-project-link";
 
 // ログイン済みの状態を固定する。Clerkの画面や通信はこのテストの対象ではない。
+// ユーザーの切り替えを確かめるテストだけ、途中でuserIdを変える。
+const auth = vi.hoisted(() => ({ userId: "user_1" }));
 vi.mock("@clerk/clerk-react", () => ({
-  useAuth: () => ({ getToken: async () => "test-token", isSignedIn: true, userId: "user_1" }),
+  useAuth: () => ({ getToken: async () => "test-token", isSignedIn: true, userId: auth.userId }),
   SignedIn: ({ children }: { children: ReactNode }) => children,
   SignedOut: () => null,
 }));
@@ -57,11 +59,14 @@ function renderControls() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  render(
+  const tree = () => (
     <QueryClientProvider client={queryClient}>
       <Harness />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree());
+  // 同じ部品を描き直す。ログインし直したあとの画面を作るのに使う。
+  return { rerender: () => view.rerender(tree()) };
 }
 
 // 保存済みの一覧からプロジェクトを選び、削除の確認を開くところまで進める。
@@ -188,6 +193,7 @@ const lastSavedProjectId = () => vi.mocked(saveProject).mock.calls.at(-1)?.[3];
 
 describe("処理の途中で作業が切り替わったとき(#115)", () => {
   beforeEach(() => {
+    auth.userId = "user_1";
     vi.mocked(listProjects).mockReset().mockResolvedValue([project]);
     vi.mocked(getProject).mockReset().mockResolvedValue(project);
     vi.mocked(saveProject).mockReset().mockResolvedValue(project);
@@ -247,5 +253,54 @@ describe("処理の途中で作業が切り替わったとき(#115)", () => {
       expect.anything(),
     ));
     expect(onLoad).not.toHaveBeenCalled();
+  });
+
+  it("読み込むと作品を差し替えたあとも、読み込んだプロジェクトを更新先として残す", async () => {
+    // 差し替えで作業の世代が進むため、更新先を先に付けると外れてしまう。
+    onLoad.mockImplementation((site, record) => useBuilderStore.getState().loadSite(site, record));
+    const user = userEvent.setup();
+    renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+
+    await user.click(await screen.findByRole("button", { name: "上書き保存" }));
+    await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(1));
+    expect(lastSavedProjectId()).toBe(project.id);
+  });
+
+  it("保存中に別のユーザーでログインし直したら、前のユーザーの保存結果を反映しない", async () => {
+    const pendingSave = deferred<Project>();
+    vi.mocked(saveProject).mockReturnValueOnce(pendingSave.promise);
+    const user = userEvent.setup();
+    const { rerender } = renderControls();
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    auth.userId = "user_2";
+    rerender();
+    await act(async () => pendingSave.resolve(project));
+
+    // 前のユーザーのプロジェクトを、いまのユーザーの更新先にしない。通知も出さない。
+    expect(await screen.findByRole("button", { name: "保存" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "上書き保存" })).not.toBeInTheDocument();
+    expect(onNotice).not.toHaveBeenCalled();
+  });
+
+  it("読み込み中に別のユーザーでログインし直したら、前のユーザーのプロジェクトを反映しない", async () => {
+    const pendingLoad = deferred<Project>();
+    vi.mocked(getProject).mockReturnValueOnce(pendingLoad.promise);
+    const user = userEvent.setup();
+    const { rerender } = renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+    auth.userId = "user_2";
+    rerender();
+    await act(async () => pendingLoad.resolve(project));
+
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(onNotice).not.toHaveBeenCalled();
   });
 });

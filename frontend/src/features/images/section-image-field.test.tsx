@@ -82,4 +82,21 @@ describe("SectionImageField", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(`画像は全体で${MAX_IMAGE_COUNT}枚までです`);
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it("処理中にセクションを削除して同じidで追加し直したら、新しいセクションへ画像を入れない", async () => {
+    // 削除したidは次の追加で使い回されるため、idだけでは同じセクションか見分けられない。
+    const pending = pendingImage();
+    const { onSelect } = renderField();
+
+    await chooseFile();
+    act(() => {
+      useBuilderStore.getState().removeSection("about");
+      useBuilderStore.getState().addSection("about");
+    });
+    expect(useBuilderStore.getState().site.sections.some((section) => section.id === "about")).toBe(true);
+    await pending.resolve(image);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("画像の処理中にセクションが削除されたため、反映しませんでした。");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

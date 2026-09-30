@@ -42,11 +42,18 @@ export function SectionImageField({ section, sections, onSelect, onRemove }: Sec
     // 縮小と再圧縮の間に、リセットや読み込みで作業が切り替わることがある。
     // 切り替わっていたら、同じidを持つ新しい作品のセクションへ画像を入れないよう、反映しない(#115)。
     const isCurrent = captureSiteGeneration();
+    // 削除したセクションのidは、次の追加で使い回される。処理中に削除があったら、同じidでも
+    // 選んだときのセクションとは限らないため反映しない。
+    const removalsAtStart = useBuilderStore.getState().sectionRemovals;
     try {
       const takenFileNamesIn = (current: readonly SiteSection[]) =>
         current.flatMap((other) => (other.id !== section.id && other.image ? [other.image.fileName] : []));
       const image = await prepareSectionImage(file, section.id, takenFileNamesIn(sections));
       if (!isCurrent()) return;
+      if (useBuilderStore.getState().sectionRemovals !== removalsAtStart) {
+        setErrorMessage("画像の処理中にセクションが削除されたため、反映しませんでした。もう一度選んでください。");
+        return;
+      }
       // 処理の間に別のセクションへ画像が入ることもあるため、判定は反映の直前の状態で行う。
       // 1枚ずつが上限内でも、合計では超えることがある。
       const latestSections = useBuilderStore.getState().site.sections;

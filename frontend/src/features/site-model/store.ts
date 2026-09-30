@@ -63,7 +63,20 @@ export type BuilderState = {
   // 届いたときに世代が変わっていれば、いまの作業へ反映しない(#115)。
   // タブごとの値なので保存しない。
   siteGeneration: number;
+  // 作品を丸ごと差し替えるたびに新しくなるid。こちらは保存し、別のタブでの差し替えを見分けるのに使う。
+  // サイトのidでは見分けられない。「新しいプロジェクト」として保存し直しても、サイトのidは変わらないため、
+  // 別々のプロジェクトが同じサイトのidを持ちうる。
+  workspaceId: string;
+  // いまの作品の出どころ。工程の表示（生成を済ませたか）に使う。
+  // 保存して別のタブとも同期し、別のタブでリセットしたのに「読み込み済み」のまま残らないようにする。
+  siteOrigin: SiteOrigin;
+  // セクションを削除した回数。削除したidは次の追加で使い回されるため、idだけでは
+  // 「処理を始めたときと同じセクションか」を見分けられない。画像の処理で、途中の削除を検出するのに使う。
+  sectionRemovals: number;
 };
+
+export type SiteOrigin = "sample" | "generated" | "project";
+const siteOrigins: readonly SiteOrigin[] = ["sample", "generated", "project"];
 
 // 以下は、状態から次の状態を作る関数。storeの操作と変更記録（useChangeTracking）の両方から使う。
 
@@ -108,9 +121,9 @@ export function sectionAdded(
 
 // 削除できなければnullを返す。
 export function sectionRemoved(
-  state: Pick<BuilderState, "site" | "selectedElementId">,
+  state: Pick<BuilderState, "site" | "selectedElementId" | "sectionRemovals">,
   id: string,
-): Pick<BuilderState, "site" | "selectedElementId"> | null {
+): Pick<BuilderState, "site" | "selectedElementId" | "sectionRemovals"> | null {
   if (state.site.sections.length <= minSections) return null;
   const sections = state.site.sections.filter((section) => section.id !== id);
   // 存在しないidなら何もしない。件数だけ減ると、消えた理由が追えなくなる。
@@ -119,6 +132,7 @@ export function sectionRemoved(
     site: { ...state.site, sections },
     // 消したセクションを選んだままだと、右パネルの編集欄が消えて何も選べなくなる。
     selectedElementId: state.selectedElementId === id ? sections[0].id : state.selectedElementId,
+    sectionRemovals: state.sectionRemovals + 1,
   };
 }
 
@@ -181,6 +195,8 @@ export const useBuilderStore = create<BuilderState>()(
           }],
           tracking: trackingFromSite(site),
           siteGeneration: state.siteGeneration + 1,
+          workspaceId: crypto.randomUUID(),
+          siteOrigin: "generated",
         })),
       loadSite: (site, record) =>
         set((state) => ({
@@ -190,6 +206,8 @@ export const useBuilderStore = create<BuilderState>()(
           aiUsage: record.aiUsage,
           tracking: trackingFromSite(site),
           siteGeneration: state.siteGeneration + 1,
+          workspaceId: crypto.randomUUID(),
+          siteOrigin: "project",
           // 別のプロジェクトを開いたら、前の題材の相談は残さない。
           ...emptyConcept,
           conceptGeneration: state.conceptGeneration + 1,
@@ -242,6 +260,8 @@ export const useBuilderStore = create<BuilderState>()(
             aiUsage: [],
             tracking: trackingFromSite(site),
             siteGeneration: state.siteGeneration + 1,
+            workspaceId: crypto.randomUUID(),
+            siteOrigin: "sample",
             ...emptyConcept,
             conceptGeneration: state.conceptGeneration + 1,
           };
@@ -259,6 +279,9 @@ export const useBuilderStore = create<BuilderState>()(
       commit: (recipe) => set((state) => recipe(state)),
       discardTracking: () => set((state) => ({ tracking: trackingFromSite(state.site) })),
       siteGeneration: 0,
+      workspaceId: crypto.randomUUID(),
+      siteOrigin: "sample",
+      sectionRemovals: 0,
     }),
     {
       name: "learning-web-builder-draft-v1",
@@ -281,13 +304,20 @@ export const useBuilderStore = create<BuilderState>()(
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<BuilderState> & { tracking?: unknown };
         const merged = { ...current, ...saved };
-        // 別のタブで別の作品に差し替わっていたら、このタブでも作業が切り替わったものとして世代を進める。
-        // サイトのidは生成・読み込み・リセットのたびに変わるため、idの違いで判定できる。
-        const siteReplaced = merged.site.id !== current.site.id;
+        // 別のタブで作品が差し替わっていたら、このタブでも作業が切り替わったものとして世代を進める。
+        // 差し替えのidを持たない以前の保存内容は、サイトのidで代わりに見分ける。
+        const workspaceId = typeof saved.workspaceId === "string" ? saved.workspaceId : crypto.randomUUID();
+        const siteReplaced =
+          typeof saved.workspaceId === "string"
+            ? saved.workspaceId !== current.workspaceId
+            : merged.site.id !== current.site.id;
         return {
           ...merged,
           tracking: restoreTracking(saved.tracking, merged.site),
           siteGeneration: siteReplaced ? current.siteGeneration + 1 : current.siteGeneration,
+          workspaceId,
+          // 出どころを持たない以前の保存内容は、見本として扱う（これまでも再読み込みで見本扱いに戻っていた）。
+          siteOrigin: siteOrigins.includes(saved.siteOrigin as SiteOrigin) ? (saved.siteOrigin as SiteOrigin) : "sample",
         };
       },
       partialize: (state) => ({
@@ -299,6 +329,8 @@ export const useBuilderStore = create<BuilderState>()(
         conceptDraft: state.conceptDraft,
         conceptChoices: state.conceptChoices,
         tracking: packTracking(state.tracking, state.site),
+        workspaceId: state.workspaceId,
+        siteOrigin: state.siteOrigin,
       }),
     },
   ),

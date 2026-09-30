@@ -11,6 +11,9 @@ import type { LearningRecord, SiteModel } from "@/features/site-model/schema";
 import { captureSiteGeneration } from "@/features/site-model/store";
 import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
 
+// 保存・読み込みを始めた時点の状況。結果が届いたときに、いまも同じかを確かめる。
+type Work = { isSiteCurrent: () => boolean; isSameUser: () => boolean };
+
 type ProjectControlsProps = {
   enabled: boolean;
   site: SiteModel;
@@ -49,9 +52,19 @@ function ClerkProjectControls({
   // フォーカスを受け取れないため、処理が終わってから移す。
   const focusAfterRemoveRef = useRef<HTMLElement | null>(null);
 
+  // いまログインしているユーザー。保存と読み込みの結果が届いたときに、始めたときと同じ人かを確かめる。
+  const userIdRef = useRef(userId);
   useEffect(() => {
+    userIdRef.current = userId;
     onProjectChange(null);
   }, [onProjectChange, userId]);
+
+  // 処理を始める時点で呼び、あとで「始めたときの作業とユーザーのままか」を確かめられるようにする。
+  const captureWork = (): Work => {
+    const isSiteCurrent = captureSiteGeneration();
+    const startedBy = userIdRef.current;
+    return { isSiteCurrent, isSameUser: () => userIdRef.current === startedBy };
+  };
 
   const projects = useQuery({
     queryKey: ["projects", userId],
@@ -60,15 +73,17 @@ function ClerkProjectControls({
     retry: false,
   });
   // 結果は遅れて届くため、通知を閉じたときの戻り先は操作を始めた時点の要素を渡す。
-  // 保存と読み込みの間に、リセットや生成で作業が切り替わることがある。isCurrentで始めた時点の作業かを確かめ、
-  // 古い結果をいまの作業へ反映しない(#115)。
-  const save = useMutation<Project, Error, { returnFocusTo: HTMLElement | null; isCurrent: () => boolean }>({
+  // 保存と読み込みの間に、リセットや生成で作業が切り替わったり、別のユーザーでログインし直したりすることがある。
+  // 始めた時点の作業とユーザーかを確かめ、古い結果をいまの作業へ反映しない(#115)。
+  // ユーザーが変わっていたら、前のユーザーのプロジェクトの話なので、保存先・作品・通知のどれにも出さない。
+  const save = useMutation<Project, Error, { returnFocusTo: HTMLElement | null; work: Work }>({
     mutationFn: () => saveProject(site, record, getToken, currentProjectId),
-    onSuccess: async (project, { returnFocusTo, isCurrent }) => {
+    onSuccess: async (project, { returnFocusTo, work }) => {
+      if (!work.isSameUser()) return;
       setConfirmingDelete(false);
       // 保存そのものは済んでいる。ただ、切り替え後の作品を保存したプロジェクトへ結び付けると、
       // 次の保存で切り替え前のプロジェクトを上書きしてしまうため、対応は付けない。
-      const current = isCurrent();
+      const current = work.isSiteCurrent();
       if (current) onProjectChange(project.id);
       await queryClient.invalidateQueries({ queryKey: ["projects", userId] });
       const message = currentProjectId ? "プロジェクトを更新しました。" : "プロジェクトを保存しました。";
@@ -78,13 +93,16 @@ function ClerkProjectControls({
         returnFocusTo,
       );
     },
-    onError: (error: Error, { returnFocusTo }) => onNotice(error.message, "error", returnFocusTo),
+    onError: (error: Error, { returnFocusTo, work }) => {
+      if (work.isSameUser()) onNotice(error.message, "error", returnFocusTo);
+    },
   });
   const load = useMutation({
-    mutationFn: ({ projectId }: { projectId: string; returnFocusTo: HTMLElement | null; isCurrent: () => boolean }) =>
+    mutationFn: ({ projectId }: { projectId: string; returnFocusTo: HTMLElement | null; work: Work }) =>
       getProject(projectId, getToken),
-    onSuccess: (project, { returnFocusTo, isCurrent }) => {
-      if (!isCurrent()) {
+    onSuccess: (project, { returnFocusTo, work }) => {
+      if (!work.isSameUser()) return;
+      if (!work.isSiteCurrent()) {
         onNotice("読み込み中に作業を切り替えたため、読み込んだプロジェクトは反映しませんでした。", "status", returnFocusTo);
         return;
       }
@@ -93,7 +111,9 @@ function ClerkProjectControls({
       onProjectChange(project.id);
       onNotice("保存済みプロジェクトを読み込みました。", "status", returnFocusTo);
     },
-    onError: (error: Error, { returnFocusTo }) => onNotice(error.message, "error", returnFocusTo),
+    onError: (error: Error, { returnFocusTo, work }) => {
+      if (work.isSameUser()) onNotice(error.message, "error", returnFocusTo);
+    },
   });
 
   const remove = useMutation({
@@ -154,7 +174,7 @@ function ClerkProjectControls({
       onNotice("次回の保存は新しいプロジェクトとして作成します。");
       return;
     }
-    load.mutate({ projectId, returnFocusTo: captureFocusOrigin(), isCurrent: captureSiteGeneration() });
+    load.mutate({ projectId, returnFocusTo: captureFocusOrigin(), work: captureWork() });
   };
 
   return (
@@ -196,7 +216,7 @@ function ClerkProjectControls({
               disabled={busy || projects.isError}
               loading={save.isPending || load.isPending}
               icon={<Cloud className="size-4" />}
-              onClick={() => save.mutate({ returnFocusTo: captureFocusOrigin(), isCurrent: captureSiteGeneration() })}
+              onClick={() => save.mutate({ returnFocusTo: captureFocusOrigin(), work: captureWork() })}
             >
               {currentProjectId ? "上書き保存" : "保存"}
             </Button>
