@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
 import { createSampleSite } from "@/features/site-model/sample";
 import { maxSections, minSections } from "@/features/site-model/sections";
-import { onPersistFailure, useBuilderStore, withSectionValues } from "@/features/site-model/store";
+import { captureSiteGeneration, onPersistFailure, useBuilderStore, withSectionValues } from "@/features/site-model/store";
 import { useChangeTracking } from "./use-change-tracking";
 
 function setup() {
@@ -281,13 +281,64 @@ describe("別のタブとの同期", () => {
     const newValue = JSON.stringify({ ...saved, state: { ...saved.state, site: otherSite } });
     localStorage.setItem(storageKey, newValue);
 
+    const generation = useBuilderStore.getState().siteGeneration;
+
     act(() => {
       window.dispatchEvent(new StorageEvent("storage", { key: storageKey, newValue, storageArea: localStorage }));
     });
 
     await vi.waitFor(() => expect(sectionOf("about").body).toBe("別のタブで書いた本文"));
+    // 同じ作品の編集なので、作業は切り替わっていない。
+    expect(useBuilderStore.getState().siteGeneration).toBe(generation);
     // このタブで理由を書いても、別のタブの本文を古い内容で上書きしない。
     act(() => result.current.setReason("会社概要を書き直した"));
     expect(localStorage.getItem(storageKey)).toContain("別のタブで書いた本文");
+  });
+
+  // 別のタブが書き込んだ保存内容を、このタブへ届ける。
+  function receiveFromOtherTab(changes: Record<string, unknown>) {
+    const storageKey = useBuilderStore.persist.getOptions().name!;
+    const state = useBuilderStore.persist.getOptions().partialize!(useBuilderStore.getState()) as Record<string, unknown>;
+    const newValue = JSON.stringify({ state: { ...state, tracking: undefined, ...changes }, version: 3 });
+    localStorage.setItem(storageKey, newValue);
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: storageKey, newValue, storageArea: localStorage }));
+    });
+  }
+
+  it("別のタブで別の作品に差し替わったら、このタブでも作業が切り替わったものとして扱う", async () => {
+    // 世代を進めないと、このタブの保存先のプロジェクトが前の作品のまま残り、
+    // 別のタブの作品で前のプロジェクトを上書きしてしまう(#115)。
+    setup();
+    const otherSite = createSampleSite("別のタブで生成した題材");
+    const isCurrent = captureSiteGeneration();
+
+    receiveFromOtherTab({ site: otherSite, workspaceId: crypto.randomUUID(), siteOrigin: "generated" });
+
+    await vi.waitFor(() => expect(useBuilderStore.getState().site.id).toBe(otherSite.id));
+    expect(isCurrent()).toBe(false);
+    expect(useBuilderStore.getState().siteOrigin).toBe("generated");
+  });
+
+  it("サイトのidが同じ別のプロジェクトを別のタブで読み込んでも、作業が切り替わったと分かる", async () => {
+    // 「新しいプロジェクト」として保存し直すとサイトのidは変わらないため、別々のプロジェクトが同じidを持ちうる。
+    setup();
+    const sameIdSite = { ...useBuilderStore.getState().site, siteTitle: "別のプロジェクト" };
+    const isCurrent = captureSiteGeneration();
+
+    receiveFromOtherTab({ site: sameIdSite, workspaceId: crypto.randomUUID(), siteOrigin: "project" });
+
+    await vi.waitFor(() => expect(useBuilderStore.getState().site.siteTitle).toBe("別のプロジェクト"));
+    expect(isCurrent()).toBe(false);
+  });
+
+  it("別のタブでリセットしたら、読み込み済みの作品として扱わない", async () => {
+    setup();
+    act(() => useBuilderStore.getState().loadSite(createSampleSite("読み込んだ作品"), { notes: [], aiUsage: [] }));
+    expect(useBuilderStore.getState().siteOrigin).toBe("project");
+
+    receiveFromOtherTab({ site: createSampleSite(), workspaceId: crypto.randomUUID(), siteOrigin: "sample", aiUsage: [] });
+
+    await vi.waitFor(() => expect(useBuilderStore.getState().siteOrigin).toBe("sample"));
   });
 });

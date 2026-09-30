@@ -21,6 +21,7 @@ import { QualityPanel } from "@/features/panels/quality-panel";
 import { SidePanel, type PanelKey } from "@/features/panels/side-panel";
 import { PreviewArea } from "@/features/preview/preview-area";
 import { ProjectControls } from "@/features/projects/project-controls";
+import { useProjectLink } from "@/features/projects/use-project-link";
 import { useQualityChecks } from "@/features/quality/use-quality-checks";
 import { LearningNotes } from "@/features/sections/learning-notes";
 import { SectionList } from "@/features/sections/section-list";
@@ -40,9 +41,9 @@ const mobileViewLabels: Record<MobileView, string> = {
 // 画面の配置と、各機能のつなぎ込みだけを受け持つ。
 // 変更と理由の記録、生成、品質チェックなどの中身は、それぞれのフックと部品に置く。
 export default function App() {
-  const { site, notes, aiUsage, loadSite, selectElement, reset } = useBuilderStore();
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
-  const [loadedProject, setLoadedProject] = useState(false);
+  const { site, notes, aiUsage, siteOrigin, loadSite, selectElement, reset } = useBuilderStore();
+  // 作業が切り替わると、保存先のプロジェクトとの対応は自動的に外れる。
+  const { currentProjectId, setCurrentProjectId } = useProjectLink();
   // 最初の案内は操作の結果ではなく、画面の説明として最初から置いておく。
   // 初回の描画から文言が入っているため、ライブ通知としては読み上げられない（通常の内容として読める）。
   const [notice, setNotice] = useState<Notice | null>({
@@ -85,12 +86,11 @@ export default function App() {
 
   const tracking = useChangeTracking(showNotice);
   // サイトが差し替わる操作（生成・リセット・読み込み）のあとに共通して行う後始末。
-  const afterSiteReplaced = (fromProject: boolean) => {
+  // 作品の出どころ（読み込んだプロジェクトかどうか）はstoreが差し替えと同時に持つ。
+  const afterSiteReplaced = () => {
     tracking.discard();
-    setLoadedProject(fromProject);
-    if (!fromProject) setCurrentProjectId(null);
   };
-  const generation = useSiteGeneration({ showNotice, onSiteReplaced: () => afterSiteReplaced(false) });
+  const generation = useSiteGeneration({ showNotice, onSiteReplaced: afterSiteReplaced });
   const exportZip = useExportZip(showNotice);
   const qualityChecks = useQualityChecks(site, showNotice);
   const { axeAudit, hasQualityIssue } = qualityChecks;
@@ -100,13 +100,13 @@ export default function App() {
     () => ({
       topicReady: generation.topic.trim().length > 0,
       // 生成したかどうかは、AIの利用記録が「初期サンプル」以外を含むかで見る。
-      generated: loadedProject || aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
+      generated: siteOrigin === "project" || aiUsage.some((usage) => usage.purpose !== "初期サンプル"),
       unexplainedCount: tracking.unexplainedCount,
       // コンセプトの記録だけでは、調整とその理由説明を終えたことにはならない。
       explainedCount: notes.filter((note) => note.target !== "コンセプト").length,
       noteCount: notes.length,
     }),
-    [generation.topic, loadedProject, aiUsage, tracking.unexplainedCount, notes],
+    [generation.topic, siteOrigin, aiUsage, tracking.unexplainedCount, notes],
   );
   const steps = useMemo(() => stepViews(flowState), [flowState]);
   const nextToDo = useMemo(() => nextAction(flowState), [flowState]);
@@ -138,13 +138,13 @@ export default function App() {
 
   const resetBuilder = () => {
     reset();
-    afterSiteReplaced(false);
+    afterSiteReplaced();
     showNotice("初期サンプルへ戻しました。");
   };
 
   const loadProject = (loadedSite: typeof site, record: LearningRecord) => {
     loadSite(loadedSite, record);
-    afterSiteReplaced(true);
+    afterSiteReplaced();
   };
 
   // ヘッダーはflex-wrapで高さが変わるため、縦flexで残り高さをグリッドへ渡し、
