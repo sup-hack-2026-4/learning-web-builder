@@ -58,6 +58,11 @@ export type BuilderState = {
   commit: (recipe: (state: BuilderState) => Partial<BuilderState>) => void;
   // 記録されないまま残っている変更を捨て、いまのサイトを基準にする。
   discardTracking: () => void;
+  // 作業の世代。サイトが丸ごと差し替わるたび（生成・読み込み・リセット・別タブでの差し替え）に進む。
+  // 保存・生成・読み込み・画像処理のように結果が遅れて届く処理は、始めた時点の世代を覚えておき、
+  // 届いたときに世代が変わっていれば、いまの作業へ反映しない(#115)。
+  // タブごとの値なので保存しない。
+  siteGeneration: number;
 };
 
 // 以下は、状態から次の状態を作る関数。storeの操作と変更記録（useChangeTracking）の両方から使う。
@@ -165,7 +170,7 @@ export const useBuilderStore = create<BuilderState>()(
       notes: [],
       aiUsage: [{ provider: "static-sample", purpose: "初期サンプル", generatedAt: new Date().toISOString() }],
       setSite: (site, provider, purpose) =>
-        set({
+        set((state) => ({
           site,
           selectedElementId: site.sections[0]?.id ?? "hero",
           notes: [],
@@ -175,7 +180,8 @@ export const useBuilderStore = create<BuilderState>()(
             generatedAt: new Date().toISOString(),
           }],
           tracking: trackingFromSite(site),
-        }),
+          siteGeneration: state.siteGeneration + 1,
+        })),
       loadSite: (site, record) =>
         set((state) => ({
           site,
@@ -183,6 +189,7 @@ export const useBuilderStore = create<BuilderState>()(
           notes: record.notes,
           aiUsage: record.aiUsage,
           tracking: trackingFromSite(site),
+          siteGeneration: state.siteGeneration + 1,
           // 別のプロジェクトを開いたら、前の題材の相談は残さない。
           ...emptyConcept,
           conceptGeneration: state.conceptGeneration + 1,
@@ -234,6 +241,7 @@ export const useBuilderStore = create<BuilderState>()(
             notes: [],
             aiUsage: [],
             tracking: trackingFromSite(site),
+            siteGeneration: state.siteGeneration + 1,
             ...emptyConcept,
             conceptGeneration: state.conceptGeneration + 1,
           };
@@ -250,6 +258,7 @@ export const useBuilderStore = create<BuilderState>()(
       tracking: trackingFromSite(initialSite),
       commit: (recipe) => set((state) => recipe(state)),
       discardTracking: () => set((state) => ({ tracking: trackingFromSite(state.site) })),
+      siteGeneration: 0,
     }),
     {
       name: "learning-web-builder-draft-v1",
@@ -272,7 +281,14 @@ export const useBuilderStore = create<BuilderState>()(
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<BuilderState> & { tracking?: unknown };
         const merged = { ...current, ...saved };
-        return { ...merged, tracking: restoreTracking(saved.tracking, merged.site) };
+        // 別のタブで別の作品に差し替わっていたら、このタブでも作業が切り替わったものとして世代を進める。
+        // サイトのidは生成・読み込み・リセットのたびに変わるため、idの違いで判定できる。
+        const siteReplaced = merged.site.id !== current.site.id;
+        return {
+          ...merged,
+          tracking: restoreTracking(saved.tracking, merged.site),
+          siteGeneration: siteReplaced ? current.siteGeneration + 1 : current.siteGeneration,
+        };
       },
       partialize: (state) => ({
         site: state.site,
@@ -298,4 +314,10 @@ if (typeof window !== "undefined") {
     if (event.newValue === null) return;
     void useBuilderStore.persist.rehydrate();
   });
+}
+
+// 処理を始める時点で呼び、あとで「その作業がまだ続いているか」を確かめる関数を受け取る。
+export function captureSiteGeneration(): () => boolean {
+  const generation = useBuilderStore.getState().siteGeneration;
+  return () => useBuilderStore.getState().siteGeneration === generation;
 }

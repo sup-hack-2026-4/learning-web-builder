@@ -21,6 +21,7 @@ import { QualityPanel } from "@/features/panels/quality-panel";
 import { SidePanel, type PanelKey } from "@/features/panels/side-panel";
 import { PreviewArea } from "@/features/preview/preview-area";
 import { ProjectControls } from "@/features/projects/project-controls";
+import { useProjectLink } from "@/features/projects/use-project-link";
 import { useQualityChecks } from "@/features/quality/use-quality-checks";
 import { LearningNotes } from "@/features/sections/learning-notes";
 import { SectionList } from "@/features/sections/section-list";
@@ -41,7 +42,8 @@ const mobileViewLabels: Record<MobileView, string> = {
 // 変更と理由の記録、生成、品質チェックなどの中身は、それぞれのフックと部品に置く。
 export default function App() {
   const { site, notes, aiUsage, loadSite, selectElement, reset } = useBuilderStore();
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  // 作業が切り替わると、保存先のプロジェクトとの対応は自動的に外れる。
+  const { currentProjectId, setCurrentProjectId } = useProjectLink();
   const [loadedProject, setLoadedProject] = useState(false);
   // 最初の案内は操作の結果ではなく、画面の説明として最初から置いておく。
   // 初回の描画から文言が入っているため、ライブ通知としては読み上げられない（通常の内容として読める）。
@@ -88,7 +90,6 @@ export default function App() {
   const afterSiteReplaced = (fromProject: boolean) => {
     tracking.discard();
     setLoadedProject(fromProject);
-    if (!fromProject) setCurrentProjectId(null);
   };
   const generation = useSiteGeneration({ showNotice, onSiteReplaced: () => afterSiteReplaced(false) });
   const exportZip = useExportZip(showNotice);

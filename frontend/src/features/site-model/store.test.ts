@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useBuilderStore } from "./store";
+import { captureSiteGeneration, useBuilderStore } from "./store";
 import { createSampleSite } from "./sample";
 import { emptyDraft } from "@/features/concept/schema";
 import { maxSections, minSections } from "./sections";
@@ -252,5 +252,35 @@ describe("セクションの画像", () => {
   it("画像を設定してもスキーマ検証を通る", () => {
     useBuilderStore.getState().setSectionImage("about", image);
     expect(() => siteModelSchema.parse(useBuilderStore.getState().site)).not.toThrow();
+  });
+});
+
+describe("作業の世代(#115)", () => {
+  it("生成・読み込み・リセットのたびに進み、始めた時点の作業ではなくなったと分かる", () => {
+    const store = useBuilderStore.getState();
+    for (const replace of [
+      () => store.setSite(createSampleSite("植物園"), "gemini"),
+      () => store.loadSite(createSampleSite("別の題材"), { notes: [], aiUsage: [] }),
+      () => store.reset(),
+    ]) {
+      const before = useBuilderStore.getState().siteGeneration;
+      const isCurrent = captureSiteGeneration();
+
+      replace();
+
+      expect(useBuilderStore.getState().siteGeneration).toBe(before + 1);
+      expect(isCurrent()).toBe(false);
+    }
+  });
+
+  it("作品の中身の編集では進まない", () => {
+    const isCurrent = captureSiteGeneration();
+
+    useBuilderStore.getState().updateSection("about", { body: "書き換えた本文" });
+    useBuilderStore.getState().previewTheme("primary", "#e11d48");
+    useBuilderStore.getState().addSection("gallery");
+    useBuilderStore.getState().addNote("内容変更", "理由");
+
+    expect(isCurrent()).toBe(true);
   });
 });

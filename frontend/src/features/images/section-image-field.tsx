@@ -2,6 +2,7 @@ import { ImagePlus, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { SectionImage, SiteSection } from "@/features/site-model/schema";
+import { captureSiteGeneration, useBuilderStore } from "@/features/site-model/store";
 import {
   acceptedImageTypes,
   imageAddBlockReason,
@@ -38,15 +39,25 @@ export function SectionImageField({ section, sections, onSelect, onRemove }: Sec
 
     setErrorMessage(null);
     setProcessing(true);
+    // 縮小と再圧縮の間に、リセットや読み込みで作業が切り替わることがある。
+    // 切り替わっていたら、同じidを持つ新しい作品のセクションへ画像を入れないよう、反映しない(#115)。
+    const isCurrent = captureSiteGeneration();
     try {
-      const takenFileNames = sections.flatMap((other) =>
-        other.id !== section.id && other.image ? [other.image.fileName] : [],
-      );
-      const image = await prepareSectionImage(file, section.id, takenFileNames);
-      // 1枚ずつが上限内でも、合計では超えることがある。入れる直前にもう一度確かめる。
-      const totalBlockReason = imageTotalBlockReason(sections, section.id, image);
-      if (totalBlockReason) {
-        setErrorMessage(totalBlockReason);
+      const takenFileNamesIn = (current: readonly SiteSection[]) =>
+        current.flatMap((other) => (other.id !== section.id && other.image ? [other.image.fileName] : []));
+      const image = await prepareSectionImage(file, section.id, takenFileNamesIn(sections));
+      if (!isCurrent()) return;
+      // 処理の間に別のセクションへ画像が入ることもあるため、判定は反映の直前の状態で行う。
+      // 1枚ずつが上限内でも、合計では超えることがある。
+      const latestSections = useBuilderStore.getState().site.sections;
+      const blockReason =
+        imageAddBlockReason(latestSections, section.id) ??
+        imageTotalBlockReason(latestSections, section.id, image) ??
+        (takenFileNamesIn(latestSections).includes(image.fileName)
+          ? "処理の間に同じ名前の画像が追加されました。もう一度選んでください。"
+          : null);
+      if (blockReason) {
+        setErrorMessage(blockReason);
         return;
       }
       onSelect(image);

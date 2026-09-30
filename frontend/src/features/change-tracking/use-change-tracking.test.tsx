@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSiteArtifacts } from "@/features/artifacts/build-site-artifacts";
 import { createSampleSite } from "@/features/site-model/sample";
 import { maxSections, minSections } from "@/features/site-model/sections";
-import { onPersistFailure, useBuilderStore, withSectionValues } from "@/features/site-model/store";
+import { captureSiteGeneration, onPersistFailure, useBuilderStore, withSectionValues } from "@/features/site-model/store";
 import { useChangeTracking } from "./use-change-tracking";
 
 function setup() {
@@ -281,13 +281,39 @@ describe("別のタブとの同期", () => {
     const newValue = JSON.stringify({ ...saved, state: { ...saved.state, site: otherSite } });
     localStorage.setItem(storageKey, newValue);
 
+    const generation = useBuilderStore.getState().siteGeneration;
+
     act(() => {
       window.dispatchEvent(new StorageEvent("storage", { key: storageKey, newValue, storageArea: localStorage }));
     });
 
     await vi.waitFor(() => expect(sectionOf("about").body).toBe("別のタブで書いた本文"));
+    // 同じ作品の編集なので、作業は切り替わっていない。
+    expect(useBuilderStore.getState().siteGeneration).toBe(generation);
     // このタブで理由を書いても、別のタブの本文を古い内容で上書きしない。
     act(() => result.current.setReason("会社概要を書き直した"));
     expect(localStorage.getItem(storageKey)).toContain("別のタブで書いた本文");
+  });
+
+  it("別のタブで別の作品に差し替わったら、このタブでも作業が切り替わったものとして扱う", async () => {
+    // 世代を進めないと、このタブの保存先のプロジェクトが前の作品のまま残り、
+    // 別のタブの作品で前のプロジェクトを上書きしてしまう(#115)。
+    setup();
+    const storageKey = useBuilderStore.persist.getOptions().name!;
+    const saved = {
+      state: useBuilderStore.persist.getOptions().partialize!(useBuilderStore.getState()) as Record<string, unknown>,
+      version: 3,
+    };
+    const otherSite = createSampleSite("別のタブで生成した題材");
+    const newValue = JSON.stringify({ ...saved, state: { ...saved.state, site: otherSite, tracking: undefined } });
+    localStorage.setItem(storageKey, newValue);
+    const isCurrent = captureSiteGeneration();
+
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: storageKey, newValue, storageArea: localStorage }));
+    });
+
+    await vi.waitFor(() => expect(useBuilderStore.getState().site.id).toBe(otherSite.id));
+    expect(isCurrent()).toBe(false);
   });
 });

@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
+import { useBuilderStore } from "@/features/site-model/store";
 import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
 import { ProjectControls } from "./project-controls";
+import { useProjectLink } from "./use-project-link";
 
 // ログイン済みの状態を固定する。Clerkの画面や通信はこのテストの対象ではない。
 vi.mock("@clerk/clerk-react", () => ({
@@ -32,10 +34,11 @@ const project: Project = {
 };
 
 const onLoad = vi.fn();
+const onNotice = vi.fn();
 
-// 選択中のプロジェクトは親が持つため、同じ受け渡しをする親を用意する。
+// 選択中のプロジェクトは親が持つため、画面と同じ受け渡しをする親を用意する。
 function Harness() {
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const { currentProjectId, setCurrentProjectId } = useProjectLink();
   return (
     <ProjectControls
       enabled
@@ -44,7 +47,7 @@ function Harness() {
       currentProjectId={currentProjectId}
       onProjectChange={setCurrentProjectId}
       onLoad={onLoad}
-      onNotice={() => {}}
+      onNotice={onNotice}
     />
   );
 }
@@ -77,6 +80,7 @@ describe("ProjectControls", () => {
     vi.mocked(saveProject).mockReset();
     vi.mocked(deleteProject).mockReset();
     onLoad.mockReset();
+    onNotice.mockReset();
   });
 
   it("保存では作品と一緒に学習の記録も送る", async () => {
@@ -167,5 +171,81 @@ describe("ProjectControls", () => {
     const select = screen.getByLabelText("保存済みプロジェクト");
     expect(within(select).queryByRole("option", { name: /スミレ即売会/ })).not.toBeInTheDocument();
     expect(select).toHaveValue("");
+  });
+});
+
+// 結果が届くのを、テストの中で好きな時点まで止めておく。
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+// saveProjectの最後の呼び出しで渡した、更新先のプロジェクトのid。
+const lastSavedProjectId = () => vi.mocked(saveProject).mock.calls.at(-1)?.[3];
+
+describe("処理の途中で作業が切り替わったとき(#115)", () => {
+  beforeEach(() => {
+    vi.mocked(listProjects).mockReset().mockResolvedValue([project]);
+    vi.mocked(getProject).mockReset().mockResolvedValue(project);
+    vi.mocked(saveProject).mockReset().mockResolvedValue(project);
+    onLoad.mockReset();
+    onNotice.mockReset();
+  });
+
+  it("切り替えなければ、保存したプロジェクトを次の保存の更新先にする", async () => {
+    const user = userEvent.setup();
+    renderControls();
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("プロジェクトを保存しました。", "status", expect.anything()));
+    await user.click(await screen.findByRole("button", { name: "上書き保存" }));
+
+    await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(2));
+    expect(lastSavedProjectId()).toBe(project.id);
+  });
+
+  it("保存中にリセットしたら、保存したプロジェクトをいまの作品の更新先にしない", async () => {
+    // 更新先が残ると、リセット後の作品で保存したプロジェクトを上書きしてしまう。
+    const pendingSave = deferred<Project>();
+    vi.mocked(saveProject).mockReturnValueOnce(pendingSave.promise);
+    const user = userEvent.setup();
+    renderControls();
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    act(() => useBuilderStore.getState().reset());
+    await act(async () => pendingSave.resolve(project));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(
+      expect.stringContaining("次に保存すると新しいプロジェクトになります"),
+      "status",
+      expect.anything(),
+    ));
+    // 更新先が無いので、ボタンも「上書き保存」にならない。
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(2));
+    expect(lastSavedProjectId()).toBeNull();
+  });
+
+  it("読み込み中にリセットしたら、届いたプロジェクトで作品を上書きしない", async () => {
+    const pendingLoad = deferred<Project>();
+    vi.mocked(getProject).mockReturnValueOnce(pendingLoad.promise);
+    const user = userEvent.setup();
+    renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+    act(() => useBuilderStore.getState().reset());
+    await act(async () => pendingLoad.resolve(project));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(
+      "読み込み中に作業を切り替えたため、読み込んだプロジェクトは反映しませんでした。",
+      "status",
+      expect.anything(),
+    ));
+    expect(onLoad).not.toHaveBeenCalled();
   });
 });
