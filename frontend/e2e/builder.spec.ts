@@ -1,4 +1,6 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
+import JSZip from "jszip";
 
 test("題材を入力し、静的フォールバックでサイトを生成できる", async ({ page }) => {
   await page.goto("/");
@@ -145,6 +147,43 @@ test("提出物ZIPをダウンロードできる", async ({ page }) => {
   // 出力できたことが通知で伝わり、ボタンは次の出力のために元へ戻る。
   await expect(page.getByTestId("notice-bar").getByRole("status")).toContainText("提出物ZIPを作成しました。");
   await expect(page.getByRole("button", { name: "提出物ZIP" })).toBeEnabled();
+});
+
+// 編集用のスクリプトが提出物に入ると、クリックが止められてリンクが動かなくなる。
+// ZIPの中身をそのまま別のオリジンで配信し、編集画面の外で開いた状態を再現して確かめる。
+test("提出物ZIPを単独で開くと、ロゴから本文へのリンクが動く", async ({ page, context }) => {
+  await page.goto("/");
+  await page.getByLabel("紹介サイトの題材").fill("スミレ即売会");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByRole("heading", { name: "スミレ即売会", exact: true })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "提出物ZIP" }).click();
+  const download = await downloadPromise;
+  const zip = await JSZip.loadAsync(await readFile(await download.path()));
+
+  const contentTypes: Record<string, string> = {
+    "index.html": "text/html; charset=utf-8",
+    "style.css": "text/css; charset=utf-8",
+    "script.js": "text/javascript; charset=utf-8",
+  };
+  const submissionOrigin = "http://submission.test";
+  await context.route(`${submissionOrigin}/**`, async (route) => {
+    const fileName = new URL(route.request().url()).pathname.slice(1);
+    const file = zip.file(fileName);
+    if (!file || !contentTypes[fileName]) return route.fulfill({ status: 404 });
+    return route.fulfill({ contentType: contentTypes[fileName], body: await file.async("string") });
+  });
+
+  const submission = await context.newPage();
+  const pageErrors: Error[] = [];
+  submission.on("pageerror", (error) => pageErrors.push(error));
+  await submission.goto(`${submissionOrigin}/index.html`);
+  await expect(submission.getByRole("heading", { level: 1 })).toBeVisible();
+
+  await submission.getByRole("link", { name: "スミレ即売会" }).click();
+  await expect(submission).toHaveURL(`${submissionOrigin}/index.html#main`);
+  expect(pageErrors).toEqual([]);
 });
 
 test("オフラインでも提出物ZIPを作成できる", async ({ page }) => {
