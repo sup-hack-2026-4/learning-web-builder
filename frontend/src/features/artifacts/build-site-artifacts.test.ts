@@ -14,14 +14,25 @@ describe("buildSiteArtifacts", () => {
     const artifacts = buildSiteArtifacts(createSampleSite());
     expect(artifacts.html).toContain("<!doctype html>");
     expect(artifacts.css).toContain("@media (max-width: 640px)");
-    expect(artifacts.javascript).toContain("postMessage");
+    expect(artifacts.html).toContain('<script src="script.js"></script>');
     expect(artifacts.srcdoc).toContain('<style id="builder-theme">');
   });
 
-  it("親からのテーマ更新メッセージを受け取るスクリプトを含む", () => {
+  it("プレビューには、選択の通知とテーマ更新を受け取るスクリプトを入れる", () => {
     const artifacts = buildSiteArtifacts(createSampleSite());
-    expect(artifacts.javascript).toContain("learning-builder:theme");
-    expect(artifacts.javascript).toContain("builder-theme");
+    expect(artifacts.editorJavascript).toContain("learning-builder:select");
+    expect(artifacts.editorJavascript).toContain("learning-builder:theme");
+    expect(artifacts.editorJavascript).toContain("builder-theme");
+    expect(artifacts.srcdoc).toContain(`<script>${artifacts.editorJavascript}</script>`);
+  });
+
+  it("提出物のスクリプトには編集用の処理を入れない", () => {
+    // クリックを止める処理が入ると、単独で開いたときにロゴから本文へのリンクが動かない。
+    const artifacts = buildSiteArtifacts(createSampleSite());
+    expect(artifacts.javascript).not.toContain("preventDefault");
+    expect(artifacts.javascript).not.toContain("postMessage");
+    expect(artifacts.javascript).not.toContain("addEventListener");
+    expect(artifacts.javascript).not.toContain("learning-builder:");
   });
 });
 

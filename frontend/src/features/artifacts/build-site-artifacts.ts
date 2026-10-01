@@ -7,9 +7,12 @@ export type SiteArtifacts = {
   html: string;
   /** 提出物(ZIP)に入れるCSS。編集用のスタイルは含めない。 */
   css: string;
+  /** 提出物(ZIP)に入れるJavaScript。編集用の処理は含めない。 */
   javascript: string;
   /** 編集画面のプレビュー用。cssに選択枠などを上乗せしたもの。 */
   editorCss: string;
+  /** 編集画面のプレビュー用。要素の選択を親画面へ伝え、テーマ更新を受け取る。 */
+  editorJavascript: string;
   srcdoc: string;
   /**
    * 提出物ZIPへ同梱する画像。表示中のセクションで実際に使われているものだけを入れる。
@@ -192,7 +195,15 @@ footer { padding: calc(var(--space) * 1.4); text-align: center; color: var(--tex
   .section-hero { min-height: 54vh; }
 }`;
 
-  const javascript = `document.querySelectorAll('[data-builder-id]').forEach((element) => {
+  // 生成するサイトはHTMLとCSSだけで動くため、提出物のスクリプトには処理を入れない。
+  // ファイル自体は残し、あとから自分で動きを書き足せる場所として渡す。
+  const javascript = `// このサイトは、いまのところJavaScriptを使っていません。
+// ボタンを押したときの動きなどを足したくなったら、ここに書きます。
+`;
+
+  // 編集画面でだけ使うスクリプト。クリックを選択として扱うためリンクの移動を止めるので、
+  // 提出物へ入れるとロゴから本文へのリンク(#main)が動かなくなる。
+  const editorJavascript = `document.querySelectorAll('[data-builder-id]').forEach((element) => {
   element.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -224,9 +235,9 @@ window.addEventListener('message', (event) => {
   const srcdoc = inlineSectionImages(
     html
       .replace('<link rel="stylesheet" href="style.css">', `<style id="builder-theme">${editorCss}</style>`)
-      .replace('<script src="script.js"></script>', `<script>${javascript}</script>`),
+      .replace('<script src="script.js"></script>', `<script>${editorJavascript}</script>`),
     images,
   );
 
-  return { html, css, javascript, editorCss, srcdoc, images };
+  return { html, css, javascript, editorCss, editorJavascript, srcdoc, images };
 }
