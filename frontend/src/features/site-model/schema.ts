@@ -12,6 +12,11 @@ function maxCodePoints(max: number) {
 
 const maxCodePointsMessage = (max: number) => `${max}文字以内で入力してください`;
 
+// 半角・全角の空白や改行だけの値は、何も入力していないのと同じに扱う。
+function isNotBlank(value: string): boolean {
+  return value.trim() !== "";
+}
+
 // 利用者が入力する項目の上限。サーバー側(backend/internal/site/validate.go、httpapi/router.go)と同じ値を持つ。
 // 画面の入力欄でも同じ値でエラーを出すため、スキーマと共有する。
 export const MAX_TOPIC_LENGTH = 100;
@@ -51,9 +56,10 @@ export const sectionImageSchema = z.object({
 export const sectionSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(["hero", "about", "features", "gallery", "contact"]),
+  // サーバーは空白を除いて空の見出しを断るため、空白だけの見出しも空として扱う。
   title: z
     .string()
-    .min(1)
+    .refine(isNotBlank, "見出しを入力してください")
     .refine(maxCodePoints(MAX_SECTION_TITLE_LENGTH), maxCodePointsMessage(MAX_SECTION_TITLE_LENGTH)),
   body: z.string().refine(maxCodePoints(MAX_SECTION_BODY_LENGTH), maxCodePointsMessage(MAX_SECTION_BODY_LENGTH)),
   imageAlt: z.string().refine(maxCodePoints(MAX_IMAGE_ALT_LENGTH), maxCodePointsMessage(MAX_IMAGE_ALT_LENGTH)),
@@ -248,7 +254,8 @@ const sectionFieldLimits: Record<SectionField, { label: string; max: number }> =
 
 export function sectionFieldProblem(field: SectionField, value: string): string | null {
   // 見出しが空だと、プレビューでもどのセクションか分からなくなり、保存もできない。
-  if (field === "title" && value.length === 0) return "見出しを入力してください。";
+  // 空白だけの見出しも、サーバーが空として断るため同じ扱いにする。
+  if (field === "title" && !isNotBlank(value)) return "見出しを入力してください。";
   const { label, max } = sectionFieldLimits[field];
   return lengthProblem(label, value, max);
 }
@@ -258,8 +265,8 @@ export function siteModelProblem(site: SiteModel): string | null {
   for (const section of site.sections) {
     for (const field of ["title", "body", "imageAlt"] as const) {
       const problem = sectionFieldProblem(field, section[field]);
-      // 見出しが空のセクションは、見出しで呼べないため種類とidで示す。
-      if (problem) return `「${section.title || section.id}」のセクション: ${problem}`;
+      // 見出しが空（空白だけも含む）のセクションは、見出しで呼べないためidで示す。
+      if (problem) return `「${section.title.trim() || section.id}」のセクション: ${problem}`;
     }
   }
   const parsed = siteModelSchema.safeParse(site);

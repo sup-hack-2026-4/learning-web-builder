@@ -52,6 +52,22 @@ describe("入力欄のエラー", () => {
     expect(sectionFieldProblem("body", "あ".repeat(801))).toBe("本文は800文字以内で入力してください（いま801文字）。");
     expect(sectionFieldProblem("imageAlt", "あ".repeat(161))).toBe("画像の説明（alt）は160文字以内で入力してください（いま161文字）。");
   });
+
+  // サーバーは空白を除いて空の見出しを断る。画面で通すと、保存のときに初めて汎用のエラーになる。
+  it.each([
+    ["半角の空白", "   "],
+    ["全角の空白", "　　"],
+    ["改行とタブ", "\n\t"],
+  ])("%sだけの見出しは、空として伝える", (_label, title) => {
+    expect(sectionFieldProblem("title", title)).toBe("見出しを入力してください。");
+  });
+
+  it("見出しの文字数は、前後の空白も含めて数える", () => {
+    expect(sectionFieldProblem("title", ` ${"あ".repeat(MAX_SECTION_TITLE_LENGTH - 1)}`)).toBeNull();
+    expect(sectionFieldProblem("title", ` ${"あ".repeat(MAX_SECTION_TITLE_LENGTH)}`)).toBe(
+      "見出しは80文字以内で入力してください（いま81文字）。",
+    );
+  });
 });
 
 describe("保存前の検証", () => {
@@ -71,6 +87,13 @@ describe("保存前の検証", () => {
   it("見出しが空のセクションは、idで示す", () => {
     const site = createSampleSite();
     site.sections = site.sections.map((section) => (section.id === "about" ? { ...section, title: "" } : section));
+
+    expect(siteModelProblem(site)).toBe("「about」のセクション: 見出しを入力してください。");
+  });
+
+  it("見出しが空白だけのセクションも保存せず、idで示す", () => {
+    const site = createSampleSite();
+    site.sections = site.sections.map((section) => (section.id === "about" ? { ...section, title: "　 " } : section));
 
     expect(siteModelProblem(site)).toBe("「about」のセクション: 見出しを入力してください。");
   });

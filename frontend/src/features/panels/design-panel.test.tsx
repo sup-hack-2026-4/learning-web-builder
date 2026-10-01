@@ -45,6 +45,19 @@ describe("DesignPanel の入力欄(#117)", () => {
     expect(title).toHaveAccessibleDescription("見出しを入力してください。");
   });
 
+  it("見出しを空白だけにしても、入力するよう伝える", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const title = screen.getByRole("textbox", { name: "見出し" });
+
+    await user.clear(title);
+    await user.type(title, " 　");
+
+    expect(title).toHaveValue(" 　");
+    expect(title).toHaveAttribute("aria-invalid", "true");
+    expect(title).toHaveAccessibleDescription("見出しを入力してください。");
+  });
+
   it("本文と画像の説明も、上限を超えたら理由を出す", async () => {
     const user = userEvent.setup();
     render(<Harness />);
