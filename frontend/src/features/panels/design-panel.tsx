@@ -2,12 +2,13 @@ import { Check, Circle } from "lucide-react";
 import type { RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { ChangeTracking } from "@/features/change-tracking/use-change-tracking";
 import { SectionImageField } from "@/features/images/section-image-field";
-import { MAX_REASON_INPUT_LENGTH } from "@/features/site-model/schema";
+import { MAX_REASON_INPUT_LENGTH, sectionFieldProblem } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 
 type DesignPanelProps = {
@@ -21,6 +22,11 @@ export function DesignPanel({ tracking, selectedSectionHeadingRef }: DesignPanel
   const { site, selectedElementId, updateSection, setSectionImage, removeSectionImage } = useBuilderStore();
   const { reason, setReason, reasonChecks, passedAspects, changeTheme, pendingStructure } = tracking;
   const selectedSection = site.sections.find((section) => section.id === selectedElementId);
+  // 上限を超えても入力は止めない。貼り付けた文章を、見ながら削って直せるようにするため。
+  // 代わりに欄の下へ理由を出し、保存の前にも同じ判定で止める(#117)。
+  const titleError = selectedSection ? sectionFieldProblem("title", selectedSection.title) : null;
+  const bodyError = selectedSection ? sectionFieldProblem("body", selectedSection.body) : null;
+  const imageAltError = selectedSection ? sectionFieldProblem("imageAlt", selectedSection.imageAlt) : null;
 
   return (
     <>
@@ -72,8 +78,15 @@ export function DesignPanel({ tracking, selectedSectionHeadingRef }: DesignPanel
 
       {selectedSection && <Card className="mt-4 space-y-3 p-4">
         <h3 ref={selectedSectionHeadingRef} tabIndex={-1} className="text-sm font-black wrap-anywhere">選択中: {selectedSection.title}</h3>
-        <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} /></label>
-        <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} /></label>
+        {/* エラー文はlabelの外に置く。中に置くと、欄の名前（読み上げで読む名前）にまで含まれてしまう。 */}
+        <div>
+          <label className="block text-xs font-bold">見出し<Input className="mt-1" value={selectedSection.title} onChange={(event) => updateSection(selectedSection.id, { title: event.target.value })} aria-invalid={titleError ? true : undefined} aria-describedby={titleError ? "section-title-error" : undefined} /></label>
+          <FieldError id="section-title-error" message={titleError} />
+        </div>
+        <div>
+          <label className="block text-xs font-bold">本文<Textarea className="mt-1" rows={4} value={selectedSection.body} onChange={(event) => updateSection(selectedSection.id, { body: event.target.value })} aria-invalid={bodyError ? true : undefined} aria-describedby={bodyError ? "section-body-error" : undefined} /></label>
+          <FieldError id="section-body-error" message={bodyError} />
+        </div>
         {selectedSection.kind !== "contact" && (
           <SectionImageField
             section={selectedSection}
@@ -82,7 +95,10 @@ export function DesignPanel({ tracking, selectedSectionHeadingRef }: DesignPanel
             onRemove={() => removeSectionImage(selectedSection.id)}
           />
         )}
-        {selectedSection.kind !== "contact" && <label className="block text-xs font-bold">画像の説明（alt）<Input className="mt-1" value={selectedSection.imageAlt} onChange={(event) => updateSection(selectedSection.id, { imageAlt: event.target.value })} placeholder="画像が見えない人にも伝わる説明" /></label>}
+        {selectedSection.kind !== "contact" && <div>
+          <label className="block text-xs font-bold">画像の説明（alt）<Input className="mt-1" value={selectedSection.imageAlt} onChange={(event) => updateSection(selectedSection.id, { imageAlt: event.target.value })} placeholder="画像が見えない人にも伝わる説明" aria-invalid={imageAltError ? true : undefined} aria-describedby={imageAltError ? "section-image-alt-error" : undefined} /></label>
+          <FieldError id="section-image-alt-error" message={imageAltError} />
+        </div>}
         <Button className="w-full whitespace-nowrap px-2 text-xs" variant="secondary" disabled={!reason.trim()} onClick={() => tracking.recordContentReason(selectedSection)}>内容変更の理由を記録</Button>
       </Card>}
     </>

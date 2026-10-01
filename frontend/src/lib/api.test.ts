@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
-import { deleteProject, getProject, getSession, listProjects, requestApi, saveProject } from "./api";
+import { deleteProject, GenerateInputError, generateSite, getProject, getSession, listProjects, requestApi, saveProject } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -127,6 +127,17 @@ describe("project API", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("作品が文字数の上限を超えていたら、送らずにどこを直せばよいかを伝える(#117)", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const site = createSampleSite();
+    site.sections = site.sections.map((section) => (section.id === "hero" ? { ...section, title: "あ".repeat(81) } : section));
+
+    await expect(saveProject(site, learningRecord, async () => "session-token"))
+      .rejects.toThrow("見出しは80文字以内で入力してください（いま81文字）。");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("学習の記録全体が大きすぎたら、送らずに理由を伝える", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -181,5 +192,21 @@ describe("project API", () => {
     })));
 
     await expect(getProject(projectPayload.id, async () => "session-token")).rejects.toThrow();
+  });
+});
+
+describe("generateSite", () => {
+  it("入力の誤り(400)は、通信の障害と区別できるエラーにする(#117)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "topic must be between 1 and 100 characters" }, { status: 400 })));
+
+    await expect(generateSite("植物園")).rejects.toBeInstanceOf(GenerateInputError);
+  });
+
+  it("サーバーの障害は、入力の誤りとは別のエラーにする", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+
+    const error = await generateSite("植物園").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(GenerateInputError);
   });
 });

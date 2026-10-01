@@ -3,6 +3,7 @@ import {
   aiUsageSchema,
   learningNoteSchema,
   learningRecordProblem,
+  siteModelProblem,
   siteModelSchema,
   type LearningRecord,
   type SiteModel,
@@ -66,6 +67,12 @@ export async function getSession(getToken: TokenProvider): Promise<SessionStatus
 }
 
 /**
+ * 生成APIが入力の誤りとして断ったことを表す。
+ * 通信やサーバーの障害とは違い、見本で代わりにすると誤りが見えなくなるため、呼び出し側で区別する(#117)。
+ */
+export class GenerateInputError extends Error {}
+
+/**
  * 題材からたたき台を生成する。
  *
  * concept は相談で固めたコンセプト。省略できるため、相談を使わずに
@@ -81,6 +88,9 @@ export async function generateSite(
     body: JSON.stringify(concept ? { topic, concept } : { topic }),
   });
 
+  if (response.status === 400) {
+    throw new GenerateInputError("題材またはコンセプトの内容を確認してください。題材は1〜100文字で入力してください。");
+  }
   if (!response.ok) {
     throw new Error("サイト生成APIを利用できません。");
   }
@@ -158,7 +168,8 @@ export async function saveProject(
   getToken: TokenProvider,
   projectId?: string | null,
 ): Promise<Project> {
-  const problem = learningRecordProblem(record);
+  // 送る前に確かめる。サーバーで断られると「保存できません」としか伝えられず、どこを直せばよいか分からない。
+  const problem = siteModelProblem(site) ?? learningRecordProblem(record);
   if (problem) {
     throw new Error(problem);
   }

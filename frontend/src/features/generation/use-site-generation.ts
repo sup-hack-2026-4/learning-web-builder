@@ -3,8 +3,9 @@ import { useState, type FormEvent } from "react";
 import { conceptSummary, type ConceptDraft } from "@/features/concept/schema";
 import { captureFocusOrigin, type ShowNotice } from "@/features/notice/notice";
 import { createSampleSite } from "@/features/site-model/sample";
+import { topicProblem } from "@/features/site-model/schema";
 import { captureSiteGeneration, useBuilderStore } from "@/features/site-model/store";
-import { generateSite } from "@/lib/api";
+import { GenerateInputError, generateSite } from "@/lib/api";
 
 type UseSiteGenerationOptions = {
   showNotice: ShowNotice;
@@ -27,7 +28,9 @@ export function useSiteGeneration({ showNotice, onSiteReplaced }: UseSiteGenerat
     }) => {
       try {
         return { ...await generateSite(nextTopic, concept), concept };
-      } catch {
+      } catch (error) {
+        // 入力の誤りは見本で隠さず、直してもらう。通信やサーバーの障害のときだけ見本で作業を続ける(#117)。
+        if (error instanceof GenerateInputError) throw error;
         return { site: createSampleSite(nextTopic), provider: "static-sample" as const, concept };
       }
     },
@@ -53,11 +56,18 @@ export function useSiteGeneration({ showNotice, onSiteReplaced }: UseSiteGenerat
         returnFocusTo,
       );
     },
+    onError: (error, { returnFocusTo, isCurrent }) => {
+      if (!isCurrent()) return;
+      showNotice(error.message, "error", returnFocusTo);
+    },
   });
+
+  // 題材の入力欄に出すエラー。送る前に同じ判定で止め、サーバーに断られてから知るのを避ける。
+  const topicError = topicProblem(topic);
 
   const submitTopic = (event: FormEvent) => {
     event.preventDefault();
-    if (!topic.trim()) return;
+    if (!topic.trim() || topicError) return;
     generation.mutate({ topic: topic.trim(), returnFocusTo: captureFocusOrigin(), isCurrent: captureSiteGeneration() });
   };
 
@@ -66,11 +76,16 @@ export function useSiteGeneration({ showNotice, onSiteReplaced }: UseSiteGenerat
   const generateFromConcept = (draft: ConceptDraft) => {
     const nextTopic = draft.topic.trim();
     if (!nextTopic) return;
+    const problem = topicProblem(nextTopic);
+    if (problem) {
+      showNotice(problem, "error");
+      return;
+    }
     setTopic(nextTopic);
     generation.mutate({ topic: nextTopic, concept: draft, returnFocusTo: captureFocusOrigin(), isCurrent: captureSiteGeneration() });
   };
 
-  return { topic, setTopic, submitTopic, generateFromConcept, isPending: generation.isPending };
+  return { topic, setTopic, topicError, submitTopic, generateFromConcept, isPending: generation.isPending };
 }
 
 export type SiteGeneration = ReturnType<typeof useSiteGeneration>;

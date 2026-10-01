@@ -44,6 +44,16 @@ describe("siteModelSchema", () => {
     expect(() => siteModelSchema.parse(site)).toThrow();
   });
 
+  it.each([
+    ["空", ""],
+    ["半角の空白だけ", "  "],
+    ["全角の空白だけ", "　"],
+  ])("%sのtitleを拒否する", (_label, title) => {
+    const site = createSampleSite();
+    site.sections[0].title = title;
+    expect(() => siteModelSchema.parse(site)).toThrow();
+  });
+
   it("空のtopicを拒否する", () => {
     const site = createSampleSite();
     site.topic = "";
