@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/concept"
 )
 
@@ -88,6 +89,74 @@ func TestGenerateStaysWithinTheSameLimit(t *testing.T) {
 
 	if lastCode != http.StatusTooManyRequests {
 		t.Errorf("expected 429 once the limit is exceeded, got %d", lastCode)
+	}
+}
+
+// headerAuthenticator は、リクエストごとに別のユーザーを名乗れるようにする。
+// stubAuthenticator はルーターごとに1人しか表せず、回数の記録もルーターごとに持つため、
+// 同じルーターを別々のユーザーで呼ぶにはこちらが要る。ヘッダーが無ければゲストとして通す。
+type headerAuthenticator struct{}
+
+const testUserHeader = "X-Test-User"
+
+func (headerAuthenticator) Optional(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		userID := request.Header.Get(testUserHeader)
+		if userID == "" {
+			next.ServeHTTP(writer, request)
+			return
+		}
+		ctx := authn.ContextWithIdentity(request.Context(), authn.Identity{UserID: userID})
+		next.ServeHTTP(writer, request.WithContext(ctx))
+	})
+}
+
+func TestAILimitCountsSignedInUsersOnTheSameIPSeparately(t *testing.T) {
+	// 教室のように同じ回線から使う場面。ログインしていれば、ほかの人の利用に巻き込まれないこと(#120)。
+	router := NewRouter(Config{
+		Authenticator: headerAuthenticator{},
+		Generator:     &stubGenerator{},
+		Advisor:       &stubAdvisor{reply: concept.Reply{Reply: "質問です。"}},
+	})
+	const sharedIP = "203.0.113.7"
+	call := func(path, body, userID string) int {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.RemoteAddr = sharedIP
+		if userID != "" {
+			request.Header.Set(testUserHeader, userID)
+		}
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	generate := func(userID string) int { return call("/api/v1/generate", `{"topic":"植物園"}`, userID) }
+	chat := func(userID string) int {
+		return call("/api/v1/concept/chat", `{"messages":[{"role":"user","text":"植物園"}],"draft":{}}`, userID)
+	}
+
+	for attempt := 1; attempt <= aiRequestsPerWindow; attempt++ {
+		if code := generate("user_a"); code == http.StatusTooManyRequests {
+			t.Fatalf("request %d of user_a should be within the limit", attempt)
+		}
+	}
+	if code := generate("user_a"); code != http.StatusTooManyRequests {
+		t.Fatalf("expected user_a to be limited after %d requests, got %d", aiRequestsPerWindow, code)
+	}
+	// 生成と相談は同じ枠で数える。
+	if code := chat("user_a"); code != http.StatusTooManyRequests {
+		t.Errorf("expected chat of user_a to share the limit with generate, got %d", code)
+	}
+
+	if code := generate("user_b"); code == http.StatusTooManyRequests {
+		t.Error("another signed-in user on the same IP must not be limited by user_a")
+	}
+	if code := chat("user_b"); code == http.StatusTooManyRequests {
+		t.Error("chat of another signed-in user on the same IP must not be limited by user_a")
+	}
+	// ログインしたユーザーの利用は、同じIPのゲストの枠を減らさない。
+	if code := generate(""); code == http.StatusTooManyRequests {
+		t.Error("a guest on the same IP must not be limited by signed-in users")
 	}
 }
 

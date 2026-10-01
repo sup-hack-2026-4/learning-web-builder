@@ -2,20 +2,23 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { conceptChat } from "@/lib/api";
+import { TokenProviderContext } from "@/features/auth/token-provider";
+import { conceptChat, type TokenProvider } from "@/lib/api";
 import { useBuilderStore } from "@/features/site-model/store";
 import { ConceptChatPanel } from "./chat-panel";
 import { emptyDraft, type ConceptReply } from "./schema";
 
 vi.mock("@/lib/api", () => ({ conceptChat: vi.fn() }));
 
-function renderPanel() {
+// getTokenを渡すと、ログイン機能のある環境（AppProvidersがトークンの取得関数を配る状態）を再現する。
+function renderPanel(getToken?: TokenProvider) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  return render(
+  const panel = (
     <QueryClientProvider client={client}>
       <ConceptChatPanel onGenerate={vi.fn()} generating={false} />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  return render(getToken ? <TokenProviderContext.Provider value={getToken}>{panel}</TokenProviderContext.Provider> : panel);
 }
 
 async function startAndSend(text: string) {
@@ -55,6 +58,27 @@ describe("ConceptChatPanel", () => {
     expect(await within(screen.getByRole("log")).findByText("誰に向けたサイトですか。")).toBeInTheDocument();
     // 応答の追加と待機状態の解除は同時ではないため、解除を待つ。
     await waitFor(() => expect(screen.getByRole("status")).toBeEmptyDOMElement());
+  });
+
+  it("ログイン機能のある環境では、そのトークンの取得関数で相談を呼ぶ(#120)", async () => {
+    vi.mocked(conceptChat).mockResolvedValue({ reply: "誰に向けたサイトですか。", draft: { ...emptyDraft, topic: "パン屋" }, choices: [], missing: ["audience", "goal"], ready: false, provider: "static-sample" });
+    const getToken = vi.fn(async () => "session-token");
+    renderPanel(getToken);
+
+    await startAndSend("パン屋");
+
+    await waitFor(() => expect(conceptChat).toHaveBeenCalled());
+    expect(vi.mocked(conceptChat).mock.calls[0][2]).toBe(getToken);
+  });
+
+  it("ゲストモードでは、トークンなしで相談を呼ぶ(#120)", async () => {
+    vi.mocked(conceptChat).mockResolvedValue({ reply: "誰に向けたサイトですか。", draft: { ...emptyDraft, topic: "パン屋" }, choices: [], missing: ["audience", "goal"], ready: false, provider: "static-sample" });
+    renderPanel();
+
+    await startAndSend("パン屋");
+
+    await waitFor(() => expect(conceptChat).toHaveBeenCalled());
+    await expect(vi.mocked(conceptChat).mock.calls[0][2]()).resolves.toBeNull();
   });
 
   it("相談に失敗したら、警告として読み上げる", async () => {

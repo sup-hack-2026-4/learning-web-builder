@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
-import { deleteProject, GenerateInputError, generateSite, getProject, getSession, listProjects, requestApi, saveProject } from "./api";
+import { emptyDraft } from "@/features/concept/schema";
+import { conceptChat, deleteProject, GenerateInputError, generateSite, getProject, getSession, listProjects, OPTIONAL_TOKEN_TIMEOUT_MS, requestApi, saveProject, type TokenProvider } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
+
+// ログインしていないときのトークン取得。Clerkはログアウト中にnullを返す。
+const guest: TokenProvider = async () => null;
 
 describe("requestApi", () => {
   it("ClerkトークンをBearerヘッダーへ設定する", async () => {
@@ -199,14 +204,87 @@ describe("generateSite", () => {
   it("入力の誤り(400)は、通信の障害と区別できるエラーにする(#117)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "topic must be between 1 and 100 characters" }, { status: 400 })));
 
-    await expect(generateSite("植物園")).rejects.toBeInstanceOf(GenerateInputError);
+    await expect(generateSite("植物園", guest)).rejects.toBeInstanceOf(GenerateInputError);
   });
 
   it("サーバーの障害は、入力の誤りとは別のエラーにする", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
 
-    const error = await generateSite("植物園").catch((caught: unknown) => caught);
+    const error = await generateSite("植物園", guest).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(GenerateInputError);
+  });
+});
+
+// ログイン中にトークンを付けないと、回数制限がIP単位になり、同じ回線の全員で分け合うことになる(#120)。
+describe("AIを呼ぶAPIの認証(#120)", () => {
+  const generated = { site: createSampleSite("植物園"), provider: "gemini" };
+  const reply = { reply: "誰に向けたサイトですか。", draft: { ...emptyDraft, topic: "植物園" }, choices: [], missing: ["audience", "goal"], ready: false, provider: "gemini" };
+
+  const calls = {
+    generate: { path: "/generate", payload: generated, run: (getToken: TokenProvider) => generateSite("植物園", getToken) },
+    chat: { path: "/concept/chat", payload: reply, run: (getToken: TokenProvider) => conceptChat([{ role: "user", text: "植物園" }], emptyDraft, getToken) },
+  };
+
+  it.each([
+    ["生成", calls.generate],
+    ["相談", calls.chat],
+  ])("ログイン中は、%sにトークンを付ける", async (_label, { path, payload, run }) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(payload));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await run(async () => "session-token");
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(path);
+    expect(new Headers(options.headers).get("Authorization")).toBe("Bearer session-token");
+  });
+
+  it.each([
+    ["生成", calls.generate],
+    ["相談", calls.chat],
+  ])("ゲストでは、%sにトークンを付けない", async (_label, { payload, run }) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(payload));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await run(guest);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(options.headers).has("Authorization")).toBe(false);
+  });
+
+  // ClerkのgetTokenは、Clerkの読み込みが終わるまで返らない。通信の遮断や障害で読み込めないときに、
+  // 生成や相談まで止めない。
+  it.each([
+    ["生成", calls.generate],
+    ["相談", calls.chat],
+  ])("トークンをいつまでも取れないときは、待ち続けずにトークンなしで%sを呼ぶ", async (_label, { payload, run }) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(payload));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = run(() => new Promise(() => {}));
+    await vi.advanceTimersByTimeAsync(OPTIONAL_TOKEN_TIMEOUT_MS - 1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await result;
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(options.headers).has("Authorization")).toBe(false);
+  });
+
+  it.each([
+    ["生成", calls.generate],
+    ["相談", calls.chat],
+  ])("トークンの取得に失敗したときも、トークンなしで%sを呼ぶ", async (_label, { payload, run }) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(payload));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await run(async () => {
+      throw new Error("Clerkへ接続できません");
+    });
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(options.headers).has("Authorization")).toBe(false);
   });
 });
