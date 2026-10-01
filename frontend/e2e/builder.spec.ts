@@ -167,6 +167,11 @@ test("提出物ZIPを単独で開くと、ロゴから本文へのリンクが�
     "style.css": "text/css; charset=utf-8",
     "script.js": "text/javascript; charset=utf-8",
   };
+  // ファイルが欠けていても、リンクはHTMLだけで動いてしまう。提出物としてそろっていることを先に確かめる。
+  for (const fileName of Object.keys(contentTypes)) {
+    expect(zip.file(fileName), `${fileName}がZIPに入っている`).not.toBeNull();
+  }
+
   const submissionOrigin = "http://submission.test";
   await context.route(`${submissionOrigin}/**`, async (route) => {
     const fileName = new URL(route.request().url()).pathname.slice(1);
@@ -178,8 +183,17 @@ test("提出物ZIPを単独で開くと、ロゴから本文へのリンクが�
   const submission = await context.newPage();
   const pageErrors: Error[] = [];
   submission.on("pageerror", (error) => pageErrors.push(error));
+  // 読み込みの失敗(404)はページのエラーにならないため、応答の状態を別に集める。
+  const responseStatuses = new Map<string, number>();
+  submission.on("response", (response) => {
+    responseStatuses.set(new URL(response.url()).pathname.slice(1), response.status());
+  });
   await submission.goto(`${submissionOrigin}/index.html`);
   await expect(submission.getByRole("heading", { level: 1 })).toBeVisible();
+  // HTMLが参照するCSSとJavaScriptも、同じ場所から読み込めている。
+  for (const fileName of Object.keys(contentTypes)) {
+    expect(responseStatuses.get(fileName), `${fileName}を読み込めている`).toBe(200);
+  }
 
   await submission.getByRole("link", { name: "スミレ即売会" }).click();
   await expect(submission).toHaveURL(`${submissionOrigin}/index.html#main`);
