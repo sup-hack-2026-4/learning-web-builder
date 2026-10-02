@@ -136,8 +136,8 @@ func TestAILimitCountsSignedInUsersOnTheSameIPSeparately(t *testing.T) {
 	}
 
 	for attempt := 1; attempt <= aiRequestsPerWindow; attempt++ {
-		if code := generate("user_a"); code == http.StatusTooManyRequests {
-			t.Fatalf("request %d of user_a should be within the limit", attempt)
+		if code := generate("user_a"); code != http.StatusOK {
+			t.Fatalf("request %d of user_a should be within the limit, got %d", attempt, code)
 		}
 	}
 	if code := generate("user_a"); code != http.StatusTooManyRequests {
@@ -148,15 +148,15 @@ func TestAILimitCountsSignedInUsersOnTheSameIPSeparately(t *testing.T) {
 		t.Errorf("expected chat of user_a to share the limit with generate, got %d", code)
 	}
 
-	if code := generate("user_b"); code == http.StatusTooManyRequests {
-		t.Error("another signed-in user on the same IP must not be limited by user_a")
+	if code := generate("user_b"); code != http.StatusOK {
+		t.Errorf("another signed-in user on the same IP must not be limited by user_a, got %d", code)
 	}
-	if code := chat("user_b"); code == http.StatusTooManyRequests {
-		t.Error("chat of another signed-in user on the same IP must not be limited by user_a")
+	if code := chat("user_b"); code != http.StatusOK {
+		t.Errorf("chat of another signed-in user on the same IP must not be limited by user_a, got %d", code)
 	}
 	// ログインしたユーザーの利用は、同じIPのゲストの枠を減らさない。
-	if code := generate(""); code == http.StatusTooManyRequests {
-		t.Error("a guest on the same IP must not be limited by signed-in users")
+	if code := generate(""); code != http.StatusOK {
+		t.Errorf("a guest on the same IP must not be limited by signed-in users, got %d", code)
 	}
 }
 
