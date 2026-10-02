@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
 import type { SiteModel } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
-import { GenerateInputError, generateSite } from "@/lib/api";
+import { TokenProviderContext } from "@/features/auth/token-provider";
+import { GenerateInputError, generateSite, type TokenProvider } from "@/lib/api";
 import { useSiteGeneration } from "./use-site-generation";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -16,13 +17,15 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 
 type Generated = { site: SiteModel; provider: "gemini" | "static-sample" };
 
-function setup() {
+// getTokenを渡すと、ログイン機能のある環境（AppProvidersがトークンの取得関数を配る状態）を再現する。
+function setup(getToken?: TokenProvider) {
   const showNotice = vi.fn();
   const onSiteReplaced = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
+  const wrapper = ({ children }: { children: ReactNode }) => {
+    const content = <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    return getToken ? <TokenProviderContext.Provider value={getToken}>{content}</TokenProviderContext.Provider> : content;
+  };
   const hook = renderHook(() => useSiteGeneration({ showNotice, onSiteReplaced }), { wrapper });
   return { ...hook, showNotice, onSiteReplaced };
 }
@@ -93,6 +96,27 @@ describe("useSiteGeneration", () => {
 
     await waitFor(() => expect(useBuilderStore.getState().site.topic).toBe("植物園"));
     expect(onSiteReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it("ログイン機能のある環境では、そのトークンの取得関数で生成を呼ぶ(#120)", async () => {
+    vi.mocked(generateSite).mockResolvedValue({ site: createSampleSite("植物園"), provider: "gemini" });
+    const getToken = vi.fn(async () => "session-token");
+    const { result } = setup(getToken);
+
+    submit(result, "植物園");
+
+    await waitFor(() => expect(generateSite).toHaveBeenCalledWith("植物園", getToken, undefined));
+  });
+
+  it("ゲストモードでは、トークンなしで生成を呼ぶ(#120)", async () => {
+    vi.mocked(generateSite).mockResolvedValue({ site: createSampleSite("植物園"), provider: "gemini" });
+    const { result } = setup();
+
+    submit(result, "植物園");
+
+    await waitFor(() => expect(generateSite).toHaveBeenCalled());
+    const getToken = vi.mocked(generateSite).mock.calls[0][1];
+    await expect(getToken()).resolves.toBeNull();
   });
 
   it("題材が上限を超えていたら、送らずに入力欄のエラーを返す", () => {

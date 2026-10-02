@@ -4,6 +4,7 @@ import { MessageCircle, Send, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { conceptChat } from "@/lib/api";
+import { useTokenProvider } from "@/features/auth/token-provider";
 import { useBuilderStore } from "@/features/site-model/store";
 import {
   isDraftReady,
@@ -38,6 +39,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
   const dropLastChatMessage = useBuilderStore((state) => state.dropLastChatMessage);
   const setConceptReply = useBuilderStore((state) => state.setConceptReply);
   const resetConcept = useBuilderStore((state) => state.resetConcept);
+  const getToken = useTokenProvider();
 
   const [input, setInput] = useState("");
 
@@ -55,7 +57,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
       appendChatMessage(next);
       // どの相談に対する応答かを覚えておく。返るころにやり直されていたら捨てる。
       const generation = conceptGeneration;
-      const reply = await conceptChat([...chatMessages, next], conceptDraft);
+      const reply = await conceptChat([...chatMessages, next], conceptDraft, getToken);
       return { reply, generation };
     },
     onSuccess: ({ reply, generation }) => {

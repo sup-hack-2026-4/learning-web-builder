@@ -32,6 +32,26 @@ export async function requestApi(path: string, options: ApiRequestOptions = {}):
   });
 }
 
+// AIを呼ぶAPIでトークンを待つ上限。
+export const OPTIONAL_TOKEN_TIMEOUT_MS = 3000;
+
+/**
+ * トークンを取れないときは、待ち続けずにゲストとして続ける。
+ *
+ * 生成と相談はログインしていなくても使え、トークンは回数制限の単位を決めるためだけに付ける。
+ * ClerkのgetTokenはClerkの読み込みが終わるまで返らないため、通信の遮断や障害で読み込めないと、
+ * そのまま渡すと生成が始まらず、見本への切り替えも起きなくなる。
+ */
+function optionalToken(getToken: TokenProvider): TokenProvider {
+  return () =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), OPTIONAL_TOKEN_TIMEOUT_MS);
+      getToken()
+        .then(resolve, () => resolve(null))
+        .finally(() => clearTimeout(timer));
+    });
+}
+
 export type SessionStatus =
   | { authenticated: false; mode: "guest" }
   | { authenticated: true; mode: "clerk"; userId: string };
@@ -77,12 +97,16 @@ export class GenerateInputError extends Error {}
  *
  * concept は相談で固めたコンセプト。省略できるため、相談を使わずに
  * 題材だけで生成する導線もこれまでどおり動く。
+ *
+ * トークンは回数制限の単位を決める。ログイン中に付けないと、ゲストと同じIP単位で数えられる(#120)。
  */
 export async function generateSite(
   topic: string,
+  getToken: TokenProvider,
   concept?: ConceptDraft,
 ): Promise<{ site: SiteModel; provider: "gemini" | "static-sample" }> {
   const response = await requestApi("/generate", {
+    getToken: optionalToken(getToken),
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(concept ? { topic, concept } : { topic }),
@@ -110,8 +134,10 @@ export async function generateSite(
  * 履歴はサーバーから見て未信頼な入力になるため、確定済みの項目は
  * サーバー側で保持される（こちらが送った下書きが勝手に書き換わることはない）。
  */
-export async function conceptChat(messages: ChatMessage[], draft: ConceptDraft): Promise<ConceptReply> {
+export async function conceptChat(messages: ChatMessage[], draft: ConceptDraft, getToken: TokenProvider): Promise<ConceptReply> {
   const response = await requestApi("/concept/chat", {
+    // 生成と同じく、ログイン中はユーザー単位で回数を数えてもらう(#120)。
+    getToken: optionalToken(getToken),
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messages: trimHistory(messages), draft }),

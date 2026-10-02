@@ -1,5 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { useTokenProvider } from "@/features/auth/token-provider";
 import { conceptSummary, type ConceptDraft } from "@/features/concept/schema";
 import { captureFocusOrigin, type ShowNotice } from "@/features/notice/notice";
 import { createSampleSite } from "@/features/site-model/sample";
@@ -17,6 +18,7 @@ type UseSiteGenerationOptions = {
 // AIを使えないときは見本のサイトで代わりにし、生成の成否にかかわらず作業を続けられるようにする。
 export function useSiteGeneration({ showNotice, onSiteReplaced }: UseSiteGenerationOptions) {
   const { setSite, addNote } = useBuilderStore();
+  const getToken = useTokenProvider();
   const [topic, setTopic] = useState("");
 
   const generation = useMutation({
@@ -27,7 +29,7 @@ export function useSiteGeneration({ showNotice, onSiteReplaced }: UseSiteGenerat
       isCurrent: () => boolean;
     }) => {
       try {
-        return { ...await generateSite(nextTopic, concept), concept };
+        return { ...await generateSite(nextTopic, getToken, concept), concept };
       } catch (error) {
         // 入力の誤りは見本で隠さず、直してもらう。通信やサーバーの障害のときだけ見本で作業を続ける(#117)。
         if (error instanceof GenerateInputError) throw error;
