@@ -24,6 +24,8 @@ type Config struct {
 	Generator      SiteGenerator
 	Advisor        ConceptAdvisor
 	Projects       project.Repository
+	// 手前にある信頼できるプロキシの段数。0ならX-Forwarded-Forを見ず、接続元のIPで数える。
+	TrustedProxyHops int
 }
 
 type SessionAuthenticator interface {
@@ -49,7 +51,6 @@ type generateRequest struct {
 func NewRouter(config Config) http.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
 	router.Use(cors(config.AllowedOrigins))
@@ -58,7 +59,7 @@ func NewRouter(config Config) http.Handler {
 	// 画面が動かなくなる範囲が広がりすぎる。
 	aiLimiter := newRateLimiter(aiRequestsPerWindow, aiRateLimitWindow)
 	aiSlots := make(chan struct{}, aiConcurrencyLimit)
-	limitAI := limitAIUsage(aiLimiter, aiSlots)
+	limitAI := limitAIUsage(aiLimiter, aiSlots, config.TrustedProxyHops)
 
 	router.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", func(writer http.ResponseWriter, _ *http.Request) {

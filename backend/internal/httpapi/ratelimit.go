@@ -88,10 +88,10 @@ func (limiter *rateLimiter) sweep(now time.Time) {
 //
 // 数える単位はログイン済みならユーザー、未ログインならIP。
 // 同じ回線から複数人が使う教室を想定し、IP単位の上限は厳しくしすぎない。
-func limitAIUsage(limiter *rateLimiter, slots chan struct{}) func(http.Handler) http.Handler {
+func limitAIUsage(limiter *rateLimiter, slots chan struct{}, trustedProxyHops int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			key := rateLimitKey(request)
+			key := rateLimitKey(request, trustedProxyHops)
 			if allowed, retryAfter := limiter.allow(key); !allowed {
 				writer.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
 				writeJSON(writer, http.StatusTooManyRequests, map[string]string{
@@ -120,12 +120,11 @@ func limitAIUsage(limiter *rateLimiter, slots chan struct{}) func(http.Handler) 
 
 // rateLimitKey は、数える単位を決める。
 // ログイン済みならユーザー、未ログインならIP。
-func rateLimitKey(request *http.Request) string {
+func rateLimitKey(request *http.Request, trustedProxyHops int) string {
 	if identity, authenticated := authn.IdentityFromContext(request.Context()); authenticated {
 		return "user:" + identity.UserID
 	}
-	// RealIP ミドルウェアが X-Forwarded-For を解決した値を入れている。
-	return "ip:" + request.RemoteAddr
+	return "ip:" + clientIP(request, trustedProxyHops)
 }
 
 func retryAfterSeconds(duration time.Duration) string {

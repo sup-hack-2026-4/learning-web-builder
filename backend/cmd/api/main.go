@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	authn "github.com/haru-yoshi-5/learning-web-builder/backend/internal/auth"
@@ -20,8 +22,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure frontend origins: %v", err)
 	}
+	trustedProxyHops, err := trustedProxyHopsFor(os.Getenv("APP_ENV"), os.Getenv("TRUSTED_PROXY_HOPS"))
+	if err != nil {
+		log.Fatalf("configure trusted proxies: %v", err)
+	}
 	routerConfig := httpapi.Config{
-		AllowedOrigins: allowedOrigins,
+		AllowedOrigins:   allowedOrigins,
+		TrustedProxyHops: trustedProxyHops,
 	}
 	if secretKey := os.Getenv("CLERK_SECRET_KEY"); secretKey != "" {
 		authenticator, err := authn.NewClerkAuthenticator(secretKey, allowedOrigins, authn.DefaultHTTPClient())
@@ -74,6 +81,18 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// trustedProxyHopsFor は、回数制限で信頼するプロキシの段数を決める。
+//
+// 本番では未設定を許さない。0として動かすと、ゲスト全員がプロキシのIPで1つの枠を分け合ってしまう。
+// 起動に失敗すればRenderはデプロイを止め、それまでの版を動かし続ける(#132)。
+// プロキシを通さない構成なら、明示的に0を設定する。
+func trustedProxyHopsFor(appEnv, rawHops string) (int, error) {
+	if appEnv == "production" && strings.TrimSpace(rawHops) == "" {
+		return 0, errors.New("TRUSTED_PROXY_HOPS must be set in production")
+	}
+	return httpapi.ParseTrustedProxyHops(rawHops)
 }
 
 func envOr(key, fallback string) string {
