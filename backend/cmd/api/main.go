@@ -20,8 +20,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure frontend origins: %v", err)
 	}
+	trustedProxyHops, err := httpapi.ParseTrustedProxyHops(os.Getenv("TRUSTED_PROXY_HOPS"))
+	if err != nil {
+		log.Fatalf("configure trusted proxies: %v", err)
+	}
 	routerConfig := httpapi.Config{
-		AllowedOrigins: allowedOrigins,
+		AllowedOrigins:   allowedOrigins,
+		TrustedProxyHops: trustedProxyHops,
 	}
 	if secretKey := os.Getenv("CLERK_SECRET_KEY"); secretKey != "" {
 		authenticator, err := authn.NewClerkAuthenticator(secretKey, allowedOrigins, authn.DefaultHTTPClient())

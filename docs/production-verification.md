@@ -75,6 +75,10 @@ Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認する�
 - Renderに`FRONTEND_ORIGIN`、`CLERK_SECRET_KEY`、`DATABASE_URL`、`GEMINI_API_KEY`が設定されている
 - `FRONTEND_ORIGIN`に、確認で使うCloudflare PagesのURLがすべて入っている
   （カンマ区切りで複数指定できます。本番URLとdevelop URLの両方を使うなら両方書きます）
+- Renderに`TRUSTED_PROXY_HOPS`が設定されている
+  （Renderの手前にあるプロキシの段数。ゲストの回数制限は、`X-Forwarded-For`を右からこの段数だけ数えた値で数えます。
+  未設定や0のままだと、ゲスト全員がプロキシのIPで1つの枠を分け合います。
+  正しい段数は未確認です。確認方法は後述の「回数制限の単位の確認」を参照してください）
 - Neonへ`db/migrations/001_initial.sql`と`002_learning_record.sql`を適用済み
   （`002`が未適用だと、保存・読み込みのAPIが500を返します。バックエンドをデプロイする前に適用してください）
 
@@ -153,6 +157,28 @@ Invoke-RestMethod `
 
 `status`が`ok`なら合格です。しばらくアクセスが無いと、コールドスタートで
 最初の応答に40秒以上かかることがあります。
+
+### 回数制限の単位の確認
+
+未実施です。`TRUSTED_PROXY_HOPS`の値が合っているかを確かめます。
+題材が空のリクエストは`400`で断られますが、回数制限はその前に数えるため、Geminiを呼ばずに確認できます。
+
+まず、同じ回線から21回以上送り、`429`が返るところまで進めます（上限は1分あたり20回）。
+
+```powershell
+1..21 | ForEach-Object {
+  curl.exe -s -o NUL -w "%{http_code} " -X POST `
+    -H "Content-Type: application/json" -d "{}" `
+    https://learning-web-builder-api.onrender.com/api/v1/generate
+}
+```
+
+続けて1分以内に、次の2つを確かめます。
+
+| 送り方 | 合格値 | 不合格のときの意味 |
+|---|---|---|
+| 同じ回線から、`-H "X-Forwarded-For: 198.51.100.1"`を足して送る | `429` | `400`なら、クライアントが決めた値で数えている。段数が大きすぎる |
+| 別の回線（スマートフォンのテザリングなど）から、ヘッダーを足さずに送る | `400` | `429`なら、別々の利用者を同じ枠で数えている。段数が小さすぎるか未設定 |
 
 ## Neon側の確認
 
