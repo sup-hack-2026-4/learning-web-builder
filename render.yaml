@@ -12,7 +12,8 @@ services:
         value: production
       - key: FRONTEND_ORIGIN
         sync: false
-      # 手前のプロキシの段数。未設定だと、ゲスト全員がプロキシのIPで1つの回数制限を分け合う。
+      # 手前のプロキシの段数。本番では未設定だと起動せず、デプロイが失敗する。
+      # sync: false は新しく作るときにしか値を尋ねないため、既存のサービスにはダッシュボードで設定する。
       - key: TRUSTED_PROXY_HOPS
         sync: false
       - key: DATABASE_URL

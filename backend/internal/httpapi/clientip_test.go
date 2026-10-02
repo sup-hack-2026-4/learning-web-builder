@@ -26,6 +26,16 @@ func TestClientIP(t *testing.T) {
 		{name: "段数より要素が少なければ接続元のIPを使う", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"203.0.113.7"}, hops: 2, want: "10.0.0.1"},
 		{name: "ヘッダーが無ければ接続元のIPを使う", remoteAddr: "10.0.0.1:443", hops: 1, want: "10.0.0.1"},
 		{name: "IPとして読めない値なら接続元のIPを使う", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"unknown"}, hops: 1, want: "10.0.0.1"},
+		// 読めない値のときに左側の別の要素へさかのぼると、クライアントが決めた値を使ってしまう。
+		{name: "選んだ位置が空なら左へさかのぼらない", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"198.51.100.1, "}, hops: 1, want: "10.0.0.1"},
+		{name: "選んだ位置がポート付きなら左へさかのぼらない", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"198.51.100.1, 203.0.113.7:51000"}, hops: 1, want: "10.0.0.1"},
+		{name: "選んだ位置が角かっこ付きのIPv6なら左へさかのぼらない", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"198.51.100.1, [2001:db8::1]:51000"}, hops: 1, want: "10.0.0.1"},
+		// 空の要素を詰めると、右から数えた位置がずれる。
+		{name: "空の要素も1つとして数える", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"198.51.100.1,,203.0.113.7"}, hops: 2, want: "10.0.0.1"},
+		{name: "空の要素より右は通常どおり選ぶ", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"198.51.100.1,,203.0.113.7"}, hops: 1, want: "203.0.113.7"},
+		// 同じアドレスの書き方を変えて、別の枠を得られないようにする。
+		{name: "IPv6の書き方の違いをそろえる", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"2001:DB8:0:0:0:0:0:1"}, hops: 1, want: "2001:db8::1"},
+		{name: "IPv4射影のIPv6はIPv4と同じに扱う", remoteAddr: "10.0.0.1:443", forwardedFor: []string{"::ffff:203.0.113.7"}, hops: 1, want: "203.0.113.7"},
 	}
 
 	for _, test := range tests {
