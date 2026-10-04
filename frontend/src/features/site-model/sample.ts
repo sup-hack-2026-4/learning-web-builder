@@ -29,7 +29,9 @@ export function fitSiteTextLimits(site: SiteModel): SiteModel {
     const value = site[key];
     // 下書きは検証せずに復元するため、文字列でない値も来うる。ここでは触らず、そのまま返す。
     if (typeof value !== "string" || codePointLength(value) <= max) continue;
-    fitted = { ...fitted, [key]: truncateCodePoints(value, max) };
+    // 見本と同じく、前後の空白を除いてから切る。先頭に空白が並んでいると、
+    // そのまま切った結果が空白だけになり、サーバーに空として断られるため。
+    fitted = { ...fitted, [key]: truncateCodePoints(value.trim(), max) };
   }
   return fitted;
 }

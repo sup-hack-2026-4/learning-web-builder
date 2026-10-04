@@ -262,6 +262,12 @@ export function sectionFieldProblem(field: SectionField, value: string): string 
   return lengthProblem(label, value, max);
 }
 
+const siteTextLimits = [
+  ["topic", "題材", MAX_TOPIC_LENGTH],
+  ["siteTitle", "サイト名", MAX_SITE_TITLE_LENGTH],
+  ["tagline", "キャッチコピー", MAX_TAGLINE_LENGTH],
+] as const;
+
 // 保存する前に、作品がスキーマを満たすかを確かめる。どのセクションのどの項目を直せばよいかを返す。
 export function siteModelProblem(site: SiteModel): string | null {
   for (const section of site.sections) {
@@ -272,11 +278,12 @@ export function siteModelProblem(site: SiteModel): string | null {
     }
   }
   // 題材・サイト名・キャッチコピーは画面に編集欄が無い。項目名を出さないと、どこの話か分からない(#130)。
-  const siteTextProblem =
-    lengthProblem("題材", site.topic, MAX_TOPIC_LENGTH) ??
-    lengthProblem("サイト名", site.siteTitle, MAX_SITE_TITLE_LENGTH) ??
-    lengthProblem("キャッチコピー", site.tagline, MAX_TAGLINE_LENGTH);
-  if (siteTextProblem) return siteTextProblem;
+  for (const [key, label, max] of siteTextLimits) {
+    // 下書きは検証せずに復元するため、文字列でない値も来うる。その場合は下のスキーマの検証に任せる。
+    const value: unknown = site[key];
+    const problem = typeof value === "string" ? lengthProblem(label, value, max) : null;
+    if (problem) return problem;
+  }
   const parsed = siteModelSchema.safeParse(site);
   if (parsed.success) return null;
   // 画像の枚数・容量のように全体で決まる問題は、スキーマに日本語の説明を書いてある。

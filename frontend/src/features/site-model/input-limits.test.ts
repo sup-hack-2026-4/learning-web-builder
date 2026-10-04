@@ -9,6 +9,7 @@ import {
   siteModelProblem,
   siteModelSchema,
   topicProblem,
+  type SiteModel,
 } from "./schema";
 
 describe("見本のサイトと文字数の上限(#117)", () => {
@@ -54,6 +55,16 @@ describe("編集欄の無い項目を上限に収める(#130)", () => {
     expect(fitted.siteTitle).toBe("🌸".repeat(MAX_SITE_TITLE_LENGTH));
     expect(fitted.tagline).toBe("あ".repeat(MAX_TAGLINE_LENGTH));
     expect(fitted.sections).toBe(oversized.sections);
+  });
+
+  // そのまま切ると空白だけが残り、サーバーに空として断られる。
+  it("先頭に空白が並んでいても、空白を除いてから切り、中身を残す", () => {
+    const site = { ...createSampleSite(), topic: `${" ".repeat(MAX_TOPIC_LENGTH)}植物園`, siteTitle: `${"　".repeat(MAX_SITE_TITLE_LENGTH)}植物園` };
+
+    const fitted = fitSiteTextLimits(site);
+
+    expect(fitted.topic).toBe("植物園");
+    expect(fitted.siteTitle).toBe("植物園");
   });
 
   it("上限に収まっていれば、同じサイトを返す", () => {
@@ -134,6 +145,14 @@ describe("保存前の検証", () => {
     ["キャッチコピー", { tagline: "あ".repeat(MAX_TAGLINE_LENGTH + 1) }, "キャッチコピーは160文字以内で入力してください（いま161文字）。"],
   ])("%sが上限を超えていれば、項目名と一緒に伝える", (_label, values, message) => {
     expect(siteModelProblem({ ...createSampleSite(), ...values })).toBe(message);
+  });
+
+  // 下書きは検証せずに復元するため、壊れた値も来うる。例外にすると、保存できない理由を伝えられない。
+  it.each(["topic", "siteTitle", "tagline"] as const)("%sが文字列でなくても例外にせず、保存できないと伝える", (key) => {
+    const site = { ...createSampleSite(), [key]: null } as unknown as SiteModel;
+
+    expect(fitSiteTextLimits(site)).toBe(site);
+    expect(siteModelProblem(site)).toBe("作品に保存できない内容があります。");
   });
 
   it("画像の枚数のように全体で決まる問題は、スキーマの説明で伝える", () => {
