@@ -20,6 +20,8 @@ function isNotBlank(value: string): boolean {
 // 利用者が入力する項目の上限。サーバー側(backend/internal/site/validate.go、httpapi/router.go)と同じ値を持つ。
 // 画面の入力欄でも同じ値でエラーを出すため、スキーマと共有する。
 export const MAX_TOPIC_LENGTH = 100;
+export const MAX_SITE_TITLE_LENGTH = 80;
+export const MAX_TAGLINE_LENGTH = 160;
 export const MAX_SECTION_TITLE_LENGTH = 80;
 export const MAX_SECTION_BODY_LENGTH = 800;
 export const MAX_IMAGE_ALT_LENGTH = 160;
@@ -78,8 +80,8 @@ export const siteModelSchema = z.object({
   siteTitle: z
     .string()
     .min(1)
-    .refine(maxCodePoints(80), maxCodePointsMessage(80)),
-  tagline: z.string().refine(maxCodePoints(160), maxCodePointsMessage(160)),
+    .refine(maxCodePoints(MAX_SITE_TITLE_LENGTH), maxCodePointsMessage(MAX_SITE_TITLE_LENGTH)),
+  tagline: z.string().refine(maxCodePoints(MAX_TAGLINE_LENGTH), maxCodePointsMessage(MAX_TAGLINE_LENGTH)),
   theme: z.object({
     primary: z.string().regex(/^#[0-9a-fA-F]{6}$/),
     background: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -269,6 +271,12 @@ export function siteModelProblem(site: SiteModel): string | null {
       if (problem) return `「${section.title.trim() || section.id}」のセクション: ${problem}`;
     }
   }
+  // 題材・サイト名・キャッチコピーは画面に編集欄が無い。項目名を出さないと、どこの話か分からない(#130)。
+  const siteTextProblem =
+    lengthProblem("題材", site.topic, MAX_TOPIC_LENGTH) ??
+    lengthProblem("サイト名", site.siteTitle, MAX_SITE_TITLE_LENGTH) ??
+    lengthProblem("キャッチコピー", site.tagline, MAX_TAGLINE_LENGTH);
+  if (siteTextProblem) return siteTextProblem;
   const parsed = siteModelSchema.safeParse(site);
   if (parsed.success) return null;
   // 画像の枚数・容量のように全体で決まる問題は、スキーマに日本語の説明を書いてある。

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createSampleSite } from "./sample";
+import { createSampleSite, fitSiteTextLimits } from "./sample";
 import {
   MAX_SECTION_TITLE_LENGTH,
+  MAX_SITE_TITLE_LENGTH,
+  MAX_TAGLINE_LENGTH,
   MAX_TOPIC_LENGTH,
   sectionFieldProblem,
   siteModelProblem,
@@ -31,6 +33,33 @@ describe("見本のサイトと文字数の上限(#117)", () => {
 
     expect([...site.siteTitle]).toHaveLength(MAX_SECTION_TITLE_LENGTH);
     expect(site.siteTitle).toBe("🌸".repeat(MAX_SECTION_TITLE_LENGTH));
+  });
+});
+
+describe("編集欄の無い項目を上限に収める(#130)", () => {
+  it("題材・サイト名・キャッチコピーを切り、見出しや本文には触らない", () => {
+    const heroTitle = "あ".repeat(MAX_SECTION_TITLE_LENGTH + 1);
+    const site = createSampleSite();
+    const oversized = {
+      ...site,
+      topic: "あ".repeat(MAX_TOPIC_LENGTH + 1),
+      siteTitle: "🌸".repeat(MAX_SITE_TITLE_LENGTH + 1),
+      tagline: "あ".repeat(MAX_TAGLINE_LENGTH + 1),
+      sections: site.sections.map((section) => (section.id === "hero" ? { ...section, title: heroTitle } : section)),
+    };
+
+    const fitted = fitSiteTextLimits(oversized);
+
+    expect(fitted.topic).toBe("あ".repeat(MAX_TOPIC_LENGTH));
+    expect(fitted.siteTitle).toBe("🌸".repeat(MAX_SITE_TITLE_LENGTH));
+    expect(fitted.tagline).toBe("あ".repeat(MAX_TAGLINE_LENGTH));
+    expect(fitted.sections).toBe(oversized.sections);
+  });
+
+  it("上限に収まっていれば、同じサイトを返す", () => {
+    const site = createSampleSite("あ".repeat(MAX_TOPIC_LENGTH));
+
+    expect(fitSiteTextLimits(site)).toBe(site);
   });
 });
 
@@ -96,6 +125,15 @@ describe("保存前の検証", () => {
     site.sections = site.sections.map((section) => (section.id === "about" ? { ...section, title: "　 " } : section));
 
     expect(siteModelProblem(site)).toBe("「about」のセクション: 見出しを入力してください。");
+  });
+
+  // これらは画面に編集欄が無い。項目名が無いと、どこの話か分からない(#130)。
+  it.each([
+    ["題材", { topic: "あ".repeat(MAX_TOPIC_LENGTH + 1) }, "題材は100文字以内で入力してください（いま101文字）。"],
+    ["サイト名", { siteTitle: "あ".repeat(MAX_SITE_TITLE_LENGTH + 1) }, "サイト名は80文字以内で入力してください（いま81文字）。"],
+    ["キャッチコピー", { tagline: "あ".repeat(MAX_TAGLINE_LENGTH + 1) }, "キャッチコピーは160文字以内で入力してください（いま161文字）。"],
+  ])("%sが上限を超えていれば、項目名と一緒に伝える", (_label, values, message) => {
+    expect(siteModelProblem({ ...createSampleSite(), ...values })).toBe(message);
   });
 
   it("画像の枚数のように全体で決まる問題は、スキーマの説明で伝える", () => {

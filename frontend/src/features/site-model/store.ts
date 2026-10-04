@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { createSampleSite } from "./sample";
+import { createSampleSite, fitSiteTextLimits } from "./sample";
 import { createSection, maxSections, minSections, type SectionKind } from "./sections";
 import type { AiUsage, LearningNote, LearningRecord, SectionImage, SiteModel, SiteSection } from "./schema";
 import { conceptStateSchema, emptyDraft, trimHistory, type ChatMessage, type ConceptDraft } from "@/features/concept/schema";
@@ -303,7 +303,9 @@ export const useBuilderStore = create<BuilderState>()(
       // 以前の保存内容で、初期サンプルが基準として残ってしまう。
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<BuilderState> & { tracking?: unknown };
-        const merged = { ...current, ...saved };
+        const restored = { ...current, ...saved };
+        // 以前の版の下書きには、編集欄の無い項目が上限を超えたまま残っていることがある(#130)。
+        const merged = { ...restored, site: restored.site ? fitSiteTextLimits(restored.site) : restored.site };
         // 別のタブで作品が差し替わっていたら、このタブでも作業が切り替わったものとして世代を進める。
         // 差し替えのidを持たない以前の保存内容は、サイトのidで代わりに見分ける。
         const workspaceId = typeof saved.workspaceId === "string" ? saved.workspaceId : crypto.randomUUID();
