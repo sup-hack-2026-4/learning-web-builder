@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import JSZip from "jszip";
+import { buildSiteArtifacts } from "../src/features/artifacts/build-site-artifacts";
+import { evaluateQuality } from "../src/features/quality/evaluate-quality";
+import { createSampleSite } from "../src/features/site-model/sample";
 
 test("題材を入力し、静的フォールバックでサイトを生成できる", async ({ page }) => {
   await page.goto("/");
@@ -1372,6 +1375,34 @@ test("生成サイトの見出しに長いURLを入れても、プレビュー�
   await expect(frame.locator("[data-builder-id='hero'] h1")).toHaveText(longUrl(80));
 
   expect(await frame.locator("html").evaluate(overflowsHorizontally)).toBe(false);
+});
+
+// 品質判定は、生成CSSに折り返しの指定があることだけを見て「モバイル表示」を合格にする(#121)。
+// 指定が実際に効いているかは、スマートフォンの幅で描いて測らないと分からない。
+// サイト名とキャッチコピーには編集欄が無いため、提出物と同じHTML・CSSを直接描く。
+test("生成サイトのすべての文字に上限いっぱいの長いURLが入っても、スマートフォンの幅で横にはみ出さない", async ({ page }) => {
+  const site = createSampleSite();
+  site.siteTitle = longUrl(80);
+  site.tagline = longUrl(160);
+  for (const section of site.sections) {
+    section.title = longUrl(80);
+    section.body = longUrl(800);
+  }
+  expect(evaluateQuality(site).find((item) => item.id === "mobile")?.passed).toBe(true);
+
+  const artifacts = buildSiteArtifacts(site);
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.setContent(
+    artifacts.html
+      .replace('<link rel="stylesheet" href="style.css">', `<style>${artifacts.css}</style>`)
+      .replace('<script src="script.js"></script>', ""),
+  );
+  await expect(page.locator("h1")).toHaveText(longUrl(80));
+
+  expect(await page.locator("html").evaluate(overflowsHorizontally)).toBe(false);
+  for (const element of await page.locator("header, header > *, section, h1, h2, p").all()) {
+    expect(await element.evaluate(overflowsHorizontally)).toBe(false);
+  }
 });
 
 // 要素自身の中身がはみ出さず、親の枠からも画面の右端からも出ていないか。

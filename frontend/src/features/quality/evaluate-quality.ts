@@ -1,17 +1,20 @@
-import { buildSiteArtifacts } from "../artifacts/build-site-artifacts";
-import type { QualityCheck, SiteModel } from "../site-model/schema";
+import { buildSiteArtifacts, isHeroSection } from "../artifacts/build-site-artifacts";
+import type { QualityCheck, SiteModel, SiteSection } from "../site-model/schema";
 
 const VIEWPORT_META = '<meta name="viewport" content="width=device-width, initial-scale=1.0">';
 const MOBILE_BREAKPOINT_QUERY = "@media (max-width: 640px)";
+// 空白のない長い文字列を、必要なときだけ途中で折り返す指定。これがあれば長い文字列は横に溢れない。
+const WRAP_ANYWHERE_RULE = "overflow-wrap: anywhere";
 
 // 375px幅のモバイル画面を実際にレンダリングして計測する代わりに、
 // 「改行できない文字が長く連続していないか」で横溢れの可能性を判定する簡易ヒューリスティック。
 // 日本語(ひらがな・カタカナ・漢字・全角記号)は文字単位で改行できるため対象外とし、
 // 半角英数字や記号が連続するケース(長いURLなど)だけを検出する。
+// 実際に溢れるかどうかは生成CSSの折り返し指定で決まるため、見つけただけでは不合格にしない。
 const MAX_NON_WRAPPING_RUN_LENGTH = 40;
 const NON_WRAPPING_RUN = new RegExp(`[^\\s\\u3000-\\u30ff\\u3400-\\u9fff\\uff00-\\uffef]{${MAX_NON_WRAPPING_RUN_LENGTH + 1},}`, "gu");
 
-function findOverflowingText(model: SiteModel): string[] {
+function findLongUnbrokenText(model: SiteModel): string[] {
   const texts = [
     model.siteTitle,
     model.tagline,
@@ -27,9 +30,30 @@ function findOverflowingText(model: SiteModel): string[] {
   return [...offenders];
 }
 
+// 見出しの判定。h1になるセクションは、HTMLの生成と同じ基準(isHeroSection)で数える。
+// ヒーローの数だけを数えると、先頭がヒーローでないときに生成したHTMLと食い違う(#121)。
+function evaluateHeadings(visibleSections: SiteSection[]): Pick<QualityCheck, "passed" | "detail"> {
+  const h1Sections = visibleSections.filter(isHeroSection);
+
+  if (visibleSections.length === 0) {
+    return { passed: false, detail: "表示中のセクションがありません。合計2つ以上のセクションを表示してください。" };
+  }
+  if (h1Sections.length > 1) {
+    const titles = h1Sections.map((section) => `「${section.title}」`).join("");
+    return {
+      passed: false,
+      // ヒーローが無くても合格するため、「ヒーローを1つ置く」ではなく、h1を減らす操作を案内する。
+      detail: `h1が${h1Sections.length}つあります(${titles})。表示中の先頭のセクションとヒーローは、どちらもh1になります。表示中の先頭以外にあるヒーローを、非表示にするか削除してください。ヒーローが1つなら、表示中の先頭へ移しても直せます。`,
+    };
+  }
+  if (visibleSections.length < 2) {
+    return { passed: false, detail: "セクションが1つだけです。h1のあとにh2が続くよう、合計2つ以上のセクションを表示してください。" };
+  }
+  return { passed: true, detail: "h1が1つ、その後にh2が続く構造です。" };
+}
+
 export function evaluateQuality(model: SiteModel): QualityCheck[] {
   const visibleSections = model.sections.filter((section) => section.visible);
-  const heroCount = visibleSections.filter((section) => section.kind === "hero").length;
   const missingAlt = visibleSections.filter(
     (section) => section.kind !== "contact" && !section.imageAlt.trim(),
   );
@@ -37,14 +61,17 @@ export function evaluateQuality(model: SiteModel): QualityCheck[] {
   const artifacts = buildSiteArtifacts(model);
   const hasViewportMeta = artifacts.html.includes(VIEWPORT_META);
   const hasMobileBreakpoint = artifacts.css.includes(MOBILE_BREAKPOINT_QUERY);
-  const overflowingText = findOverflowingText(model);
-  const mobilePassed = hasViewportMeta && hasMobileBreakpoint && overflowingText.length === 0;
+  const wrapsLongText = artifacts.css.includes(WRAP_ANYWHERE_RULE);
+  const longText = findLongUnbrokenText(model);
+  const mobilePassed = hasViewportMeta && hasMobileBreakpoint && (wrapsLongText || longText.length === 0);
 
   const mobileDetail = (() => {
     if (!hasViewportMeta) return "viewportの指定が見つかりません。";
     if (!hasMobileBreakpoint) return "640px以下の画面向けのレイアウト調整が見つかりません。";
-    if (overflowingText.length > 0) {
-      return `空白を含まない長い文字列(例:「${overflowingText[0]}」)が、モバイル幅で横に溢れる可能性があります。`;
+    if (longText.length > 0) {
+      return wrapsLongText
+        ? `viewport設定と640px以下のレイアウト調整があります。空白を含まない長い文字列(例:「${longText[0]}」)には、必要なときに途中で折り返す指定があります。`
+        : `空白を含まない長い文字列(例:「${longText[0]}」)が、モバイル幅で横に溢れる可能性があります。`;
     }
     return "viewport設定と640px以下のレイアウト調整があり、横に溢れる長い文字列もありません。";
   })();
@@ -53,11 +80,7 @@ export function evaluateQuality(model: SiteModel): QualityCheck[] {
     {
       id: "headings",
       label: "見出し構造",
-      passed: heroCount === 1 && visibleSections.length >= 2,
-      detail:
-        heroCount === 1 && visibleSections.length >= 2
-          ? "h1が1つ、その後にh2が続く構造です。"
-          : "ヒーローを1つ表示し、合計2つ以上のセクションを用意してください。",
+      ...evaluateHeadings(visibleSections),
     },
     {
       id: "alt",
