@@ -29,7 +29,7 @@ describe("evaluateQuality", () => {
     const result = evaluateQuality(site);
     const mobile = result.find((item) => item.id === "mobile");
     expect(mobile?.passed).toBe(true);
-    expect(mobile?.detail).toContain("途中で折り返される");
+    expect(mobile?.detail).toContain("途中で折り返す指定");
   });
 
   it("40文字ちょうどの連続文字列は、折り返しの説明を出さない境界値", () => {
@@ -37,7 +37,7 @@ describe("evaluateQuality", () => {
     site.sections[0].body = "a".repeat(40);
     const mobile = evaluateQuality(site).find((item) => item.id === "mobile");
     expect(mobile?.passed).toBe(true);
-    expect(mobile?.detail).not.toContain("途中で折り返される");
+    expect(mobile?.detail).not.toContain("途中で折り返す指定");
   });
 
   it("非表示のセクションの長い文字列は判定に含めない", () => {
@@ -46,7 +46,7 @@ describe("evaluateQuality", () => {
     site.sections[0].visible = false;
     const mobile = evaluateQuality(site).find((item) => item.id === "mobile");
     expect(mobile?.passed).toBe(true);
-    expect(mobile?.detail).not.toContain("途中で折り返される");
+    expect(mobile?.detail).not.toContain("途中で折り返す指定");
   });
 
   it("スペースの無い長い日本語文は長い文字列として扱わない(文字単位で改行できるため)", () => {
@@ -54,7 +54,7 @@ describe("evaluateQuality", () => {
     site.sections[0].body = "あ".repeat(60);
     const mobile = evaluateQuality(site).find((item) => item.id === "mobile");
     expect(mobile?.passed).toBe(true);
-    expect(mobile?.detail).not.toContain("途中で折り返される");
+    expect(mobile?.detail).not.toContain("途中で折り返す指定");
   });
 });
 
@@ -83,6 +83,7 @@ describe("evaluateQualityの見出し構造", () => {
     expect(result?.passed).toBe(false);
     expect(result?.detail).toContain("h1が2つあります");
     expect(result?.detail).toContain("「私たちについて」「もう1つのヒーロー」");
+    expect(result?.detail).toContain("表示中の先頭以外にあるヒーローを、非表示にするか削除してください");
   });
 
   it("先頭のヒーローを非表示にして末尾にヒーローを追加しても、h1が2つになり不合格になる", () => {

@@ -42,7 +42,8 @@ function evaluateHeadings(visibleSections: SiteSection[]): Pick<QualityCheck, "p
     const titles = h1Sections.map((section) => `「${section.title}」`).join("");
     return {
       passed: false,
-      detail: `h1が${h1Sections.length}つあります(${titles})。先頭のセクションとヒーローはどちらもh1になるため、ヒーローは先頭の1つだけにしてください。`,
+      // ヒーローが無くても合格するため、「ヒーローを1つ置く」ではなく、h1を減らす操作を案内する。
+      detail: `h1が${h1Sections.length}つあります(${titles})。表示中の先頭のセクションとヒーローは、どちらもh1になります。表示中の先頭以外にあるヒーローを、非表示にするか削除してください。ヒーローが1つなら、表示中の先頭へ移しても直せます。`,
     };
   }
   if (visibleSections.length < 2) {
@@ -69,7 +70,7 @@ export function evaluateQuality(model: SiteModel): QualityCheck[] {
     if (!hasMobileBreakpoint) return "640px以下の画面向けのレイアウト調整が見つかりません。";
     if (longText.length > 0) {
       return wrapsLongText
-        ? `viewport設定と640px以下のレイアウト調整があります。空白を含まない長い文字列(例:「${longText[0]}」)は、途中で折り返されるため横に溢れません。`
+        ? `viewport設定と640px以下のレイアウト調整があります。空白を含まない長い文字列(例:「${longText[0]}」)には、必要なときに途中で折り返す指定があります。`
         : `空白を含まない長い文字列(例:「${longText[0]}」)が、モバイル幅で横に溢れる可能性があります。`;
     }
     return "viewport設定と640px以下のレイアウト調整があり、横に溢れる長い文字列もありません。";
