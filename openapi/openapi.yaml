@@ -88,11 +88,11 @@ paths:
         "403":
           $ref: "#/components/responses/OriginNotAllowed"
         "429":
-          description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
+          description: 利用量の上限を超えた（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
         "500":
           description: Site generation failed
         "503":
-          description: 同時実行の上限に達した（Retry-Afterに待ち時間を返す）
+          description: 同時実行の上限に達した（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
   /concept/chat:
     post:
       operationId: conceptChat
@@ -164,9 +164,9 @@ paths:
         "403":
           $ref: "#/components/responses/OriginNotAllowed"
         "429":
-          description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
+          description: 利用量の上限を超えた（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
         "503":
-          description: 同時実行の上限に達した（Retry-Afterに待ち時間を返す）
+          description: 同時実行の上限に達した（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
   /projects:
     get:
       operationId: listProjects

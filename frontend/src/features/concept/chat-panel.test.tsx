@@ -1,14 +1,18 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TokenProviderContext } from "@/features/auth/token-provider";
-import { conceptChat, type TokenProvider } from "@/lib/api";
+import { AiBusyError, conceptChat, type TokenProvider } from "@/lib/api";
 import { useBuilderStore } from "@/features/site-model/store";
 import { ConceptChatPanel } from "./chat-panel";
 import { emptyDraft, type ConceptReply } from "./schema";
 
-vi.mock("@/lib/api", () => ({ conceptChat: vi.fn() }));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  // 一時的な断りを表すエラーの型は、本物を使う。
+  AiBusyError: (await importOriginal<typeof import("@/lib/api")>()).AiBusyError,
+  conceptChat: vi.fn(),
+}));
 
 // getTokenを渡すと、ログイン機能のある環境（AppProvidersがトークンの取得関数を配る状態）を再現する。
 function renderPanel(getToken?: TokenProvider) {
@@ -88,5 +92,43 @@ describe("ConceptChatPanel", () => {
     await startAndSend("パン屋");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("相談を利用できませんでした");
+  });
+
+  it("回数制限や混雑で断られたら、待ち時間を伝え、同じ枠で断られる題材入力へは案内しない(#133)", async () => {
+    vi.mocked(conceptChat).mockRejectedValue(new AiBusyError("いまAIが混み合っています。約5秒待ってから、もう一度お試しください。"));
+    renderPanel();
+
+    await startAndSend("パン屋");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("いまAIが混み合っています。約5秒待ってから、もう一度お試しください。");
+    expect(alert).not.toHaveTextContent("題材入力");
+    // 送り直せるよう、入力した文面は残す。
+    expect(screen.getByLabelText("返事を書く")).toHaveValue("パン屋");
+  });
+
+  it("送信に失敗したら、画面に足した発言を取り消す", async () => {
+    vi.mocked(conceptChat).mockRejectedValue(new Error("失敗"));
+    renderPanel();
+
+    await startAndSend("パン屋");
+
+    await screen.findByRole("alert");
+    expect(within(screen.getByRole("log")).queryByText("パン屋")).not.toBeInTheDocument();
+  });
+
+  it("やり直したあとに古い送信の失敗が届いても、新しい相談の発言を消さない", async () => {
+    let failFirst: (reason: Error) => void = () => {};
+    vi.mocked(conceptChat)
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { failFirst = reject; }))
+      .mockReturnValueOnce(new Promise(() => {}));
+    renderPanel();
+
+    await startAndSend("パン屋");
+    await userEvent.click(screen.getByRole("button", { name: "やり直す" }));
+    await startAndSend("カフェ");
+    await act(async () => failFirst(new Error("失敗")));
+
+    expect(within(screen.getByRole("log")).getByText("カフェ")).toBeInTheDocument();
   });
 });

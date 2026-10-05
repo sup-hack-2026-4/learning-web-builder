@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { MessageCircle, Send, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { conceptChat } from "@/lib/api";
+import { AiBusyError, conceptChat } from "@/lib/api";
 import { useTokenProvider } from "@/features/auth/token-provider";
 import { useBuilderStore } from "@/features/site-model/store";
 import {
@@ -67,7 +67,11 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
       setConceptReply(reply.draft, reply.choices);
       setInput("");
     },
-    onError: () => {
+    // 失敗したときにも、どの相談への送信だったかを確かめられるようにする。
+    onMutate: () => ({ generation: conceptGeneration }),
+    onError: (_error, _text, context) => {
+      // やり直したあとに古い送信の失敗が届いたら、新しい相談の発言を消してしまう。
+      if (context?.generation !== useBuilderStore.getState().conceptGeneration) return;
       // 楽観的に足した発言を残すと、再送のたびに同じ文が積み上がる。
       // 入力欄には文面が残っているので、そのまま送り直せる。
       dropLastChatMessage();
@@ -158,12 +162,15 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
             {chat.isPending && "考えています…"}
           </p>
 
-          {/* エラー状態。相談できなくても、題材を直接入力すれば生成には進める。 */}
+          {/* エラー状態。相談できなくても、題材を直接入力すれば生成には進める。
+              回数制限や混雑のときは、生成も同じ枠で断られるため、題材入力へは案内せず待ち時間だけを伝える(#133)。 */}
           {chat.isError && (
             <p role="alert" className="mt-2 flex gap-2 text-xs text-danger" data-testid="concept-chat-error">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <span className="leading-5">
-                相談を利用できませんでした。もう一度送信するか、下の題材入力から直接たたき台を作れます。
+                {chat.error instanceof AiBusyError
+                  ? chat.error.message
+                  : "相談を利用できませんでした。もう一度送信するか、下の題材入力から直接たたき台を作れます。"}
               </span>
             </p>
           )}
