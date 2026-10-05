@@ -6,14 +6,14 @@ import { createSampleSite } from "@/features/site-model/sample";
 import type { SiteModel } from "@/features/site-model/schema";
 import { useBuilderStore } from "@/features/site-model/store";
 import { TokenProviderContext } from "@/features/auth/token-provider";
-import { GenerateInputError, generateSite, type TokenProvider } from "@/lib/api";
+import { AiBusyError, GenerateInputError, generateSite, type TokenProvider } from "@/lib/api";
 import { useSiteGeneration } from "./use-site-generation";
 
-vi.mock("@/lib/api", async (importOriginal) => ({
-  // 入力の誤りを表すエラーの型は、本物を使う。
-  GenerateInputError: (await importOriginal<typeof import("@/lib/api")>()).GenerateInputError,
-  generateSite: vi.fn(),
-}));
+vi.mock("@/lib/api", async (importOriginal) => {
+  // エラーの型は、本物を使う。
+  const { AiBusyError, GenerateInputError } = await importOriginal<typeof import("@/lib/api")>();
+  return { AiBusyError, GenerateInputError, generateSite: vi.fn() };
+});
 
 type Generated = { site: SiteModel; provider: "gemini" | "static-sample" };
 
@@ -84,6 +84,19 @@ describe("useSiteGeneration", () => {
     await waitFor(() => expect(showNotice.mock.calls.map(([message, tone]) => [message, tone])).toContainEqual(
       ["題材またはコンセプトの内容を確認してください。", "error"],
     ));
+    expect(useBuilderStore.getState().site.id).toBe(before);
+    expect(onSiteReplaced).not.toHaveBeenCalled();
+  });
+
+  it("回数制限や混雑で断られたら、見本に置き換えずに待ち時間を伝える(#133)", async () => {
+    const message = "短い時間に続けて利用したため、いまは受け付けられません。約40秒待ってから、もう一度お試しください。";
+    vi.mocked(generateSite).mockRejectedValue(new AiBusyError(message));
+    const before = useBuilderStore.getState().site.id;
+    const { result, showNotice, onSiteReplaced } = setup();
+
+    submit(result, "植物園");
+
+    await waitFor(() => expect(showNotice.mock.calls.map(([text, tone]) => [text, tone])).toContainEqual([message, "error"]));
     expect(useBuilderStore.getState().site.id).toBe(before);
     expect(onSiteReplaced).not.toHaveBeenCalled();
   });

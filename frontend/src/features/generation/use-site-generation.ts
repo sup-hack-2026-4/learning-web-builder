@@ -6,7 +6,7 @@ import { captureFocusOrigin, type ShowNotice } from "@/features/notice/notice";
 import { createSampleSite } from "@/features/site-model/sample";
 import { topicProblem } from "@/features/site-model/schema";
 import { captureSiteGeneration, useBuilderStore } from "@/features/site-model/store";
-import { GenerateInputError, generateSite } from "@/lib/api";
+import { AiBusyError, GenerateInputError, generateSite } from "@/lib/api";
 
 type UseSiteGenerationOptions = {
   showNotice: ShowNotice;
@@ -33,6 +33,8 @@ export function useSiteGeneration({ showNotice, onSiteReplaced }: UseSiteGenerat
       } catch (error) {
         // 入力の誤りは見本で隠さず、直してもらう。通信やサーバーの障害のときだけ見本で作業を続ける(#117)。
         if (error instanceof GenerateInputError) throw error;
+        // 回数制限や混雑は、少し待てばAIで生成できる。見本に置き換えると、いまの作品を見本で上書きしてしまう(#133)。
+        if (error instanceof AiBusyError) throw error;
         return { site: createSampleSite(nextTopic), provider: "static-sample" as const, concept };
       }
     },

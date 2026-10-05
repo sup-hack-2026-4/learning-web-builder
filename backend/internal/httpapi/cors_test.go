@@ -44,6 +44,18 @@ func TestCORSAllowsConfiguredOrigin(t *testing.T) {
 	}
 }
 
+// 公開しないと、別オリジンの画面はRetry-Afterを読めず、待ち時間を伝えられない(#133)。
+func TestCORSExposesRetryAfterToConfiguredOrigin(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	request.Header.Set("Origin", "https://example.pages.dev")
+	response := httptest.NewRecorder()
+	NewRouter(Config{AllowedOrigins: []string{"https://example.pages.dev"}}).ServeHTTP(response, request)
+
+	if value := response.Header().Get("Access-Control-Expose-Headers"); value != "Retry-After" {
+		t.Fatalf("expected Retry-After to be exposed, got %q", value)
+	}
+}
+
 func TestCORSRejectsUnconfiguredOrigin(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	request.Header.Set("Origin", "https://attacker.example")

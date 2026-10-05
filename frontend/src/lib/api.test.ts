@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
 import { emptyDraft } from "@/features/concept/schema";
-import { conceptChat, deleteProject, GenerateInputError, generateSite, getProject, getSession, listProjects, OPTIONAL_TOKEN_TIMEOUT_MS, requestApi, saveProject, type TokenProvider } from "./api";
+import { AiBusyError, conceptChat, deleteProject, GenerateInputError, generateSite, getProject, getSession, listProjects, OPTIONAL_TOKEN_TIMEOUT_MS, requestApi, saveProject, type TokenProvider } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -213,6 +213,61 @@ describe("generateSite", () => {
     const error = await generateSite("植物園", guest).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(GenerateInputError);
+  });
+});
+
+// 回数制限や混雑は少し待てば使える。障害と同じ扱いにすると、待てばよいことが利用者に伝わらない(#133)。
+describe("AIを呼ぶAPIが一時的に断られたとき(#133)", () => {
+  const run = {
+    generate: () => generateSite("植物園", guest),
+    chat: () => conceptChat([{ role: "user", text: "植物園" }], emptyDraft, guest),
+  };
+  const refused = (status: number, retryAfter?: string) =>
+    new Response(null, { status, headers: retryAfter === undefined ? {} : { "Retry-After": retryAfter } });
+
+  it.each([
+    ["生成", run.generate],
+    ["相談", run.chat],
+  ])("回数制限(429)で%sを断られたら、待ち時間を伝えるエラーにする", async (_label, call) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(429, "40")));
+
+    const error = await call().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AiBusyError);
+    expect((error as Error).message).toBe("短い時間に続けて利用したため、いまは受け付けられません。約40秒待ってから、もう一度お試しください。");
+  });
+
+  it.each([
+    ["生成", run.generate],
+    ["相談", run.chat],
+  ])("混雑(503)で%sを断られたら、待ち時間を伝えるエラーにする", async (_label, call) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(503, "5")));
+
+    const error = await call().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AiBusyError);
+    expect((error as Error).message).toBe("いまAIが混み合っています。約5秒待ってから、もう一度お試しください。");
+  });
+
+  it.each([
+    ["無い", undefined],
+    ["秒数でない", "Wed, 07 Oct 2026 07:28:00 GMT"],
+  ])("429でRetry-Afterが%sときは、秒数を出さずに待つよう伝える", async (_label, retryAfter) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(429, retryAfter)));
+
+    const error = await run.generate().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AiBusyError);
+    expect((error as Error).message).toBe("短い時間に続けて利用したため、いまは受け付けられません。しばらく待ってから、もう一度お試しください。");
+  });
+
+  // Retry-Afterの無い503は、手前の基盤の障害や起動待ち。いつ使えるか分からないため、障害として扱う。
+  it.each([
+    ["生成", run.generate],
+    ["相談", run.chat],
+  ])("Retry-Afterの無い503で%sに失敗したら、一時的な断りとは扱わない", async (_label, call) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(503)));
+
+    const error = await call().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(AiBusyError);
   });
 });
 

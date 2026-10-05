@@ -93,6 +93,30 @@ export async function getSession(getToken: TokenProvider): Promise<SessionStatus
 export class GenerateInputError extends Error {}
 
 /**
+ * 回数制限(429)や混雑(503)で、AIの呼び出しが一時的に断られたことを表す。
+ * 少し待てば使えるため、通信やサーバーの障害とは区別する。メッセージには待ち時間を入れ、そのまま画面へ出せる(#133)。
+ */
+export class AiBusyError extends Error {}
+
+function retryAfterSeconds(response: Response): number | null {
+  const value = response.headers.get("Retry-After")?.trim();
+  if (!value || !/^\d+$/.test(value)) return null;
+  return Math.max(1, Number(value));
+}
+
+// 一時的に断られた応答なら、待ち時間を伝えるエラーを返す。それ以外はnull。
+function aiBusyError(response: Response): AiBusyError | null {
+  if (response.status !== 429 && response.status !== 503) return null;
+  const seconds = retryAfterSeconds(response);
+  // このAPIが混雑で断るときは、必ずRetry-Afterを付ける。
+  // 付いていない503は手前の基盤の障害や起動待ちで、いつ使えるか分からないため、障害として扱う。
+  if (response.status === 503 && seconds === null) return null;
+  const reason = response.status === 429 ? "短い時間に続けて利用したため、いまは受け付けられません。" : "いまAIが混み合っています。";
+  const wait = seconds === null ? "しばらく" : `約${seconds}秒`;
+  return new AiBusyError(`${reason}${wait}待ってから、もう一度お試しください。`);
+}
+
+/**
  * 題材からたたき台を生成する。
  *
  * concept は相談で固めたコンセプト。省略できるため、相談を使わずに
@@ -115,6 +139,8 @@ export async function generateSite(
   if (response.status === 400) {
     throw new GenerateInputError("題材またはコンセプトの内容を確認してください。題材は1〜100文字で入力してください。");
   }
+  const busy = aiBusyError(response);
+  if (busy) throw busy;
   if (!response.ok) {
     throw new Error("サイト生成APIを利用できません。");
   }
@@ -143,6 +169,8 @@ export async function conceptChat(messages: ChatMessage[], draft: ConceptDraft, 
     body: JSON.stringify({ messages: trimHistory(messages), draft }),
   });
 
+  const busy = aiBusyError(response);
+  if (busy) throw busy;
   if (!response.ok) {
     throw new Error("コンセプト相談を利用できません。");
   }
