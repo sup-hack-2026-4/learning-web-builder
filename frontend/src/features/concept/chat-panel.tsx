@@ -67,7 +67,11 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
       setConceptReply(reply.draft, reply.choices);
       setInput("");
     },
-    onError: () => {
+    // 失敗したときにも、どの相談への送信だったかを確かめられるようにする。
+    onMutate: () => ({ generation: conceptGeneration }),
+    onError: (_error, _text, context) => {
+      // やり直したあとに古い送信の失敗が届いたら、新しい相談の発言を消してしまう。
+      if (context?.generation !== useBuilderStore.getState().conceptGeneration) return;
       // 楽観的に足した発言を残すと、再送のたびに同じ文が積み上がる。
       // 入力欄には文面が残っているので、そのまま送り直せる。
       dropLastChatMessage();

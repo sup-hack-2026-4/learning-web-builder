@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TokenProviderContext } from "@/features/auth/token-provider";
@@ -105,5 +105,30 @@ describe("ConceptChatPanel", () => {
     expect(alert).not.toHaveTextContent("題材入力");
     // 送り直せるよう、入力した文面は残す。
     expect(screen.getByLabelText("返事を書く")).toHaveValue("パン屋");
+  });
+
+  it("送信に失敗したら、画面に足した発言を取り消す", async () => {
+    vi.mocked(conceptChat).mockRejectedValue(new Error("失敗"));
+    renderPanel();
+
+    await startAndSend("パン屋");
+
+    await screen.findByRole("alert");
+    expect(within(screen.getByRole("log")).queryByText("パン屋")).not.toBeInTheDocument();
+  });
+
+  it("やり直したあとに古い送信の失敗が届いても、新しい相談の発言を消さない", async () => {
+    let failFirst: (reason: Error) => void = () => {};
+    vi.mocked(conceptChat)
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { failFirst = reject; }))
+      .mockReturnValueOnce(new Promise(() => {}));
+    renderPanel();
+
+    await startAndSend("パン屋");
+    await userEvent.click(screen.getByRole("button", { name: "やり直す" }));
+    await startAndSend("カフェ");
+    await act(async () => failFirst(new Error("失敗")));
+
+    expect(within(screen.getByRole("log")).getByText("カフェ")).toBeInTheDocument();
   });
 });

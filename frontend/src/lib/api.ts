@@ -98,10 +98,25 @@ export class GenerateInputError extends Error {}
  */
 export class AiBusyError extends Error {}
 
-function retryAfterSeconds(response: Response): number | null {
+/**
+ * Retry-Afterから、待つ秒数を読む。
+ *
+ * ヘッダーが無ければundefined、あっても秒数として画面に出せなければnullを返す。
+ * 値は秒数か日付（HTTP-date）のどちらかで、日付はいまとの差を秒に切り上げる。
+ */
+function retryAfterSeconds(response: Response): number | null | undefined {
   const value = response.headers.get("Retry-After")?.trim();
-  if (!value || !/^\d+$/.test(value)) return null;
-  return Math.max(1, Number(value));
+  if (!value) return undefined;
+  let seconds = Number.NaN;
+  if (/^\d+$/.test(value)) {
+    seconds = Number(value);
+  } else if (/GMT$/i.test(value)) {
+    seconds = Math.ceil((Date.parse(value) - Date.now()) / 1000);
+  }
+  // 桁の多すぎる数は無限大になる。そのまま画面に出さない。
+  if (!Number.isSafeInteger(seconds)) return null;
+  // 0や過ぎた日付は「すぐ試せる」の意味。0秒とは書かず、1秒にそろえる。
+  return Math.max(1, seconds);
 }
 
 // 一時的に断られた応答なら、待ち時間を伝えるエラーを返す。それ以外はnull。
@@ -110,9 +125,10 @@ function aiBusyError(response: Response): AiBusyError | null {
   const seconds = retryAfterSeconds(response);
   // このAPIが混雑で断るときは、必ずRetry-Afterを付ける。
   // 付いていない503は手前の基盤の障害や起動待ちで、いつ使えるか分からないため、障害として扱う。
-  if (response.status === 503 && seconds === null) return null;
+  // 付いていれば、秒数を読めなくても一時的な断りとして扱う。
+  if (response.status === 503 && seconds === undefined) return null;
   const reason = response.status === 429 ? "短い時間に続けて利用したため、いまは受け付けられません。" : "いまAIが混み合っています。";
-  const wait = seconds === null ? "しばらく" : `約${seconds}秒`;
+  const wait = seconds == null ? "しばらく" : `約${seconds}秒`;
   return new AiBusyError(`${reason}${wait}待ってから、もう一度お試しください。`);
 }
 

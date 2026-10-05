@@ -45,15 +45,53 @@ func TestCORSAllowsConfiguredOrigin(t *testing.T) {
 }
 
 // 公開しないと、別オリジンの画面はRetry-Afterを読めず、待ち時間を伝えられない(#133)。
-func TestCORSExposesRetryAfterToConfiguredOrigin(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	request.Header.Set("Origin", "https://example.pages.dev")
-	response := httptest.NewRecorder()
-	NewRouter(Config{AllowedOrigins: []string{"https://example.pages.dev"}}).ServeHTTP(response, request)
-
-	if value := response.Header().Get("Access-Control-Expose-Headers"); value != "Retry-After" {
-		t.Fatalf("expected Retry-After to be exposed, got %q", value)
+// 回数制限と混雑で実際に断った応答に、待ち時間と公開の指定がそろって付くことを確かめる。
+func TestCORSExposesRetryAfterOnRefusedAIRequests(t *testing.T) {
+	const origin = "https://example.pages.dev"
+	generate := func(handler http.Handler) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"topic":"植物園"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", origin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
 	}
+	assertReadableRetryAfter := func(t *testing.T, response *httptest.ResponseRecorder, expectedCode int) {
+		t.Helper()
+		if response.Code != expectedCode {
+			t.Fatalf("expected %d, got %d: %s", expectedCode, response.Code, response.Body.String())
+		}
+		if value := response.Header().Get("Retry-After"); value == "" {
+			t.Error("expected Retry-After on the refused response")
+		}
+		if !headerContains(response.Header().Values("Access-Control-Expose-Headers"), "Retry-After") {
+			t.Errorf("expected Retry-After to be exposed, got %v", response.Header().Values("Access-Control-Expose-Headers"))
+		}
+		if value := response.Header().Get("Access-Control-Allow-Origin"); value != origin {
+			t.Errorf("unexpected allowed origin header: %q", value)
+		}
+	}
+
+	t.Run("回数制限(429)", func(t *testing.T) {
+		router := NewRouter(Config{AllowedOrigins: []string{origin}, Generator: &stubGenerator{}})
+		for attempt := 1; attempt <= aiRequestsPerWindow; attempt++ {
+			if response := generate(router); response.Code != http.StatusOK {
+				t.Fatalf("request %d should be within the limit, got %d", attempt, response.Code)
+			}
+		}
+		assertReadableRetryAfter(t, generate(router), http.StatusTooManyRequests)
+	})
+
+	t.Run("混雑(503)", func(t *testing.T) {
+		// 同時実行の枠を埋めておく。
+		slots := make(chan struct{}, 1)
+		slots <- struct{}{}
+		limited := limitAIUsage(newRateLimiter(aiRequestsPerWindow, aiRateLimitWindow), slots, 0)
+		handler := cors([]string{origin})(limited(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("the handler must not run while all slots are in use")
+		})))
+		assertReadableRetryAfter(t, generate(handler), http.StatusServiceUnavailable)
+	})
 }
 
 func TestCORSRejectsUnconfiguredOrigin(t *testing.T) {

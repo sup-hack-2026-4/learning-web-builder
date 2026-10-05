@@ -247,15 +247,60 @@ describe("AIを呼ぶAPIが一時的に断られたとき(#133)", () => {
     expect((error as Error).message).toBe("いまAIが混み合っています。約5秒待ってから、もう一度お試しください。");
   });
 
+  // Retry-Afterは、秒数のほかに日付でも返せる。手前の基盤が日付で返しても、障害と取り違えない。
+  it.each([
+    ["生成", run.generate],
+    ["相談", run.chat],
+  ])("混雑(503)のRetry-Afterが先の日付でも、%sで残りの秒数を伝える", async (_label, call) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-07T07:27:20.500Z"));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(503, "Wed, 07 Oct 2026 07:28:00 GMT")));
+
+    const error = await call().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AiBusyError);
+    // 39.5秒は切り上げる。短く伝えると、待ったのにまた断られる。
+    expect((error as Error).message).toBe("いまAIが混み合っています。約40秒待ってから、もう一度お試しください。");
+  });
+
+  it.each([
+    ["生成", run.generate],
+    ["相談", run.chat],
+  ])("混雑(503)のRetry-Afterが過ぎた日付でも、%sを一時的な断りとして扱う", async (_label, call) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-07T07:30:00Z"));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(503, "Wed, 07 Oct 2026 07:28:00 GMT")));
+
+    const error = await call().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AiBusyError);
+    expect((error as Error).message).toBe("いまAIが混み合っています。約1秒待ってから、もう一度お試しください。");
+  });
+
+  // 桁の多すぎる数は無限大になる。「約Infinity秒」と出さない。
+  const tooLarge = "9".repeat(309);
+
   it.each([
     ["無い", undefined],
-    ["秒数でない", "Wed, 07 Oct 2026 07:28:00 GMT"],
+    ["秒数でも日付でもない", "soon"],
+    ["負の数の", "-5"],
+    ["大きすぎる数の", tooLarge],
   ])("429でRetry-Afterが%sときは、秒数を出さずに待つよう伝える", async (_label, retryAfter) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(429, retryAfter)));
 
     const error = await run.generate().catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(AiBusyError);
     expect((error as Error).message).toBe("短い時間に続けて利用したため、いまは受け付けられません。しばらく待ってから、もう一度お試しください。");
+  });
+
+  // 秒数を読めなくても、Retry-Afterが付いていれば混雑。障害として扱うと、生成が見本に置き換わる。
+  it.each([
+    ["生成", run.generate],
+    ["相談", run.chat],
+  ])("混雑(503)のRetry-Afterを秒数として読めなくても、%sを一時的な断りとして扱う", async (_label, call) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(503, tooLarge)));
+
+    const error = await call().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AiBusyError);
+    expect((error as Error).message).toBe("いまAIが混み合っています。しばらく待ってから、もう一度お試しください。");
   });
 
   // Retry-Afterの無い503は、手前の基盤の障害や起動待ち。いつ使えるか分からないため、障害として扱う。
