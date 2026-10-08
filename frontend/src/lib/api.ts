@@ -227,16 +227,27 @@ export async function deleteProject(projectId: string, getToken: TokenProvider):
 }
 
 /**
+ * 上書き保存しようとしたプロジェクトが、読み込んだあとに別のタブや端末で更新されていたことを表す。
+ * 保存はされていない。もう一度送っても同じ結果になるため、通信やサーバーの障害とは区別し、
+ * 最新を読み込むか別のプロジェクトとして保存するかを、呼び出し側で選んでもらう(#118)。
+ */
+export class ProjectConflictError extends Error {}
+
+/**
  * 作品と学習の記録をまとめて保存する。
  *
  * 記録を作品と別に保存すると、読み込んだときに学習メモやAI利用記録が消え、
  * 提出物ZIPから学習の成果が抜け落ちる。そのため同じリクエストで送る。
+ *
+ * baseVersion は上書き保存でだけ送る、読み込んだ時点（または前回の保存後）のバージョン。
+ * 保存済みのバージョンと違えば、サーバーは保存せずに断る。
  */
 export async function saveProject(
   site: SiteModel,
   record: LearningRecord,
   getToken: TokenProvider,
   projectId?: string | null,
+  baseVersion?: number | null,
 ): Promise<Project> {
   // 送る前に確かめる。サーバーで断られると「保存できません」としか伝えられず、どこを直せばよいか分からない。
   const problem = siteModelProblem(site) ?? learningRecordProblem(record);
@@ -249,9 +260,18 @@ export async function saveProject(
       getToken,
       method: projectId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ site, notes: record.notes, aiUsage: record.aiUsage }),
+      body: JSON.stringify({
+        site,
+        notes: record.notes,
+        aiUsage: record.aiUsage,
+        // 新規保存には付けない。サーバーは新規保存でのバージョン指定を誤りとして断る。
+        ...(projectId && baseVersion != null ? { baseVersion } : {}),
+      }),
     },
   );
+  if (projectId && response.status === 409) {
+    throw new ProjectConflictError("このプロジェクトは、別のタブや端末で更新されています。上書き保存はしていません。");
+  }
   if (!response.ok) {
     throw new Error(projectId ? "プロジェクトを更新できません。" : "プロジェクトを保存できません。");
   }

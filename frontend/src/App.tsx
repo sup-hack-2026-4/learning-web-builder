@@ -43,7 +43,7 @@ const mobileViewLabels: Record<MobileView, string> = {
 export default function App() {
   const { site, notes, aiUsage, siteOrigin, loadSite, selectElement, reset } = useBuilderStore();
   // 作業が切り替わると、保存先のプロジェクトとの対応は自動的に外れる。
-  const { currentProjectId, setCurrentProjectId } = useProjectLink();
+  const { currentProjectId, currentProjectVersion, setCurrentProjectId } = useProjectLink();
   // 最初の案内は操作の結果ではなく、画面の説明として最初から置いておく。
   // 初回の描画から文言が入っているため、ライブ通知としては読み上げられない（通常の内容として読める）。
   const [notice, setNotice] = useState<Notice | null>({
@@ -163,6 +163,7 @@ export default function App() {
             site={site}
             record={learningRecord}
             currentProjectId={currentProjectId}
+            currentProjectVersion={currentProjectVersion}
             onProjectChange={setCurrentProjectId}
             onLoad={loadProject}
             onNotice={showNotice}

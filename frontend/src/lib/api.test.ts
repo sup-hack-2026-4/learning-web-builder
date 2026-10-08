@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
 import { emptyDraft } from "@/features/concept/schema";
-import { AiBusyError, conceptChat, deleteProject, GenerateInputError, generateSite, getProject, getSession, listProjects, OPTIONAL_TOKEN_TIMEOUT_MS, requestApi, saveProject, type TokenProvider } from "./api";
+import { AiBusyError, conceptChat, deleteProject, GenerateInputError, generateSite, getProject, getSession, listProjects, OPTIONAL_TOKEN_TIMEOUT_MS, ProjectConflictError, requestApi, saveProject, type TokenProvider } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -169,6 +169,46 @@ describe("project API", () => {
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/projects/${projectPayload.id}`);
     expect(options.method).toBe("PUT");
+    // バージョンを渡さなければ送らない。サーバーは確かめずに上書きする。
+    expect(JSON.parse(options.body as string)).not.toHaveProperty("baseVersion");
+  });
+
+  it("上書き保存では、読み込んだ時点のバージョンを送る(#118)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ...projectPayload, version: 3 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await saveProject(projectPayload.site, emptyRecord, async () => "session-token", projectPayload.id, 2);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(options.body as string)).toEqual({ site: projectPayload.site, notes: [], aiUsage: [], baseVersion: 2 });
+  });
+
+  it("新規保存では、バージョンを渡されても送らない(#118)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(projectPayload, { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await saveProject(projectPayload.site, emptyRecord, async () => "session-token", null, 2);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(options.body as string)).not.toHaveProperty("baseVersion");
+  });
+
+  it("別の場所で更新されていて断られたら、ほかの失敗と区別できるエラーにする(#118)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      Response.json({ error: "project was updated elsewhere", currentVersion: 3 }, { status: 409 }),
+    ));
+
+    const saving = saveProject(projectPayload.site, emptyRecord, async () => "session-token", projectPayload.id, 2);
+    await expect(saving).rejects.toBeInstanceOf(ProjectConflictError);
+    await expect(saving).rejects.toThrow("上書き保存はしていません。");
+  });
+
+  it("競合以外で上書き保存に失敗したら、競合のエラーにしない", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
+
+    const saving = saveProject(projectPayload.site, emptyRecord, async () => "session-token", projectPayload.id, 2);
+    await expect(saving).rejects.not.toBeInstanceOf(ProjectConflictError);
+    await expect(saving).rejects.toThrow("プロジェクトを更新できません。");
   });
 
   it("削除ではIDをURLエンコードしてDELETEを使う", async () => {

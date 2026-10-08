@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSampleSite } from "@/features/site-model/sample";
 import { useBuilderStore } from "@/features/site-model/store";
-import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
+import { deleteProject, getProject, listProjects, ProjectConflictError, saveProject, type Project } from "@/lib/api";
 import { ProjectControls } from "./project-controls";
 import { useProjectLink } from "./use-project-link";
 
@@ -19,6 +19,8 @@ vi.mock("@clerk/clerk-react", () => ({
 }));
 
 vi.mock("@/lib/api", () => ({
+  // 競合かどうかは instanceof で見分けるため、エラーの型だけは本物と同じ形で用意する。
+  ProjectConflictError: class ProjectConflictError extends Error {},
   listProjects: vi.fn(),
   getProject: vi.fn(),
   saveProject: vi.fn(),
@@ -40,13 +42,14 @@ const onNotice = vi.fn();
 
 // 選択中のプロジェクトは親が持つため、画面と同じ受け渡しをする親を用意する。
 function Harness() {
-  const { currentProjectId, setCurrentProjectId } = useProjectLink();
+  const { currentProjectId, currentProjectVersion, setCurrentProjectId } = useProjectLink();
   return (
     <ProjectControls
       enabled
       site={project.site}
       record={{ notes: project.notes, aiUsage: project.aiUsage }}
       currentProjectId={currentProjectId}
+      currentProjectVersion={currentProjectVersion}
       onProjectChange={setCurrentProjectId}
       onLoad={onLoad}
       onNotice={onNotice}
@@ -99,6 +102,7 @@ describe("ProjectControls", () => {
       project.site,
       { notes: project.notes, aiUsage: project.aiUsage },
       expect.any(Function),
+      null,
       null,
     ));
   });
@@ -302,5 +306,138 @@ describe("処理の途中で作業が切り替わったとき(#115)", () => {
 
     expect(onLoad).not.toHaveBeenCalled();
     expect(onNotice).not.toHaveBeenCalled();
+  });
+});
+
+// saveProjectの最後の呼び出しで渡した、読み込んだ時点のバージョン。
+const lastBaseVersion = () => vi.mocked(saveProject).mock.calls.at(-1)?.[4];
+
+describe("別のタブや端末で更新されていたとき(#118)", () => {
+  const loaded: Project = { ...project, version: 2 };
+
+  beforeEach(() => {
+    auth.userId = "user_1";
+    vi.mocked(listProjects).mockReset().mockResolvedValue([loaded]);
+    vi.mocked(getProject).mockReset().mockResolvedValue(loaded);
+    vi.mocked(saveProject).mockReset();
+    onLoad.mockReset();
+    onNotice.mockReset();
+  });
+
+  // 保存済みのプロジェクトを読み込み、上書き保存を競合で断られるところまで進める。
+  async function saveIntoConflict(user: ReturnType<typeof userEvent.setup>) {
+    vi.mocked(saveProject).mockRejectedValueOnce(new ProjectConflictError("別のタブや端末で更新されています。"));
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+    await user.click(await screen.findByRole("button", { name: "上書き保存" }));
+    return screen.findByRole("alert");
+  }
+
+  it("上書き保存では、読み込んだ時点のバージョンを送る", async () => {
+    vi.mocked(saveProject).mockResolvedValue({ ...loaded, version: 3 });
+    const user = userEvent.setup();
+    renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+    await user.click(await screen.findByRole("button", { name: "上書き保存" }));
+
+    await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(1));
+    expect(lastSavedProjectId()).toBe(project.id);
+    expect(lastBaseVersion()).toBe(2);
+  });
+
+  it("続けて上書き保存するときは、前回の保存後のバージョンを送る", async () => {
+    // 自分の保存でバージョンが進む。読み込んだ時点のまま送ると、自分の保存と競合してしまう。
+    vi.mocked(saveProject).mockResolvedValue({ ...loaded, version: 3 });
+    const user = userEvent.setup();
+    renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+    await user.click(await screen.findByRole("button", { name: "上書き保存" }));
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("プロジェクトを更新しました。", "status", expect.anything()));
+    await user.click(screen.getByRole("button", { name: "上書き保存" }));
+
+    await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(2));
+    expect(lastBaseVersion()).toBe(3);
+  });
+
+  it("競合で断られたら、保存していないことと選択肢を伝える", async () => {
+    const user = userEvent.setup();
+    renderControls();
+
+    const alert = await saveIntoConflict(user);
+
+    expect(alert).toHaveTextContent("別のタブや端末で更新されています。上書き保存はしていません。");
+    expect(screen.getByRole("button", { name: "別のプロジェクトとして保存" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /最新の内容を読み込む/ })).toBeInTheDocument();
+    // 選択肢で伝えるため、同じ内容の通知は重ねない。
+    expect(onNotice).not.toHaveBeenCalledWith(expect.anything(), "error", expect.anything());
+  });
+
+  it("別のプロジェクトとして保存すると、新規保存し、以後はそちらを更新先にする", async () => {
+    const copy: Project = { ...loaded, id: "22222222-2222-4222-8222-222222222222", version: 1 };
+    const user = userEvent.setup();
+    renderControls();
+    await saveIntoConflict(user);
+
+    vi.mocked(saveProject).mockResolvedValue(copy);
+    await user.click(screen.getByRole("button", { name: "別のプロジェクトとして保存" }));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("プロジェクトを保存しました。", "status", expect.anything()));
+    // 新規保存なので、更新先もバージョンも付けない。
+    expect(lastSavedProjectId()).toBeNull();
+    expect(lastBaseVersion()).toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "上書き保存" }));
+    await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(3));
+    expect(lastSavedProjectId()).toBe(copy.id);
+    expect(lastBaseVersion()).toBe(1);
+  });
+
+  it("最新の内容を読み込むと、作品を差し替え、読み込んだバージョンから上書きできる", async () => {
+    const latest: Project = { ...loaded, version: 5 };
+    const user = userEvent.setup();
+    renderControls();
+    await saveIntoConflict(user);
+
+    vi.mocked(getProject).mockResolvedValue(latest);
+    vi.mocked(saveProject).mockResolvedValue({ ...latest, version: 6 });
+    await user.click(screen.getByRole("button", { name: /最新の内容を読み込む/ }));
+
+    await waitFor(() => expect(onLoad).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "上書き保存" }));
+    await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(2));
+    expect(lastSavedProjectId()).toBe(project.id);
+    expect(lastBaseVersion()).toBe(5);
+  });
+
+  it("閉じると選択肢を片付け、保存ボタンへフォーカスを戻す", async () => {
+    const user = userEvent.setup();
+    renderControls();
+    await saveIntoConflict(user);
+
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上書き保存" })).toHaveFocus();
+  });
+
+  it("競合のあとで作業を切り替えたら、選択肢を出したままにしない", async () => {
+    // 切り替え後の作品は、競合したプロジェクトとは関係がない。
+    const user = userEvent.setup();
+    renderControls();
+    await saveIntoConflict(user);
+
+    act(() => useBuilderStore.getState().reset());
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

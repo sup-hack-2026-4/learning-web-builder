@@ -206,7 +206,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request, SiteModel, or learning record
+          description: Invalid request, SiteModel, or learning record. Also returned when baseVersion is sent
         "401":
           description: Authentication is required
         "403":
@@ -272,13 +272,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request, project ID, SiteModel, or learning record
+          description: Invalid request, project ID, SiteModel, learning record, or baseVersion
         "401":
           description: Authentication is required
         "403":
           $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
+        "409":
+          description: >-
+            baseVersionが保存済みのバージョンと一致しない。読み込んだあとに別の場所で更新されている。
+            保存はしていない。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectConflict"
         "500":
           description: Project could not be saved
         "503":
@@ -424,6 +432,14 @@ components:
       properties:
         site:
           $ref: "#/components/schemas/SiteModel"
+        baseVersion:
+          type: [integer, "null"]
+          minimum: 1
+          description: >-
+            上書き保存(PUT)でだけ使う。読み込んだ時点、または前回の保存の応答で受け取ったversion。
+            保存済みのバージョンと一致しなければ、保存せずに409を返す。
+            省略またはnullなら、バージョンを確かめずに上書きする。
+            新規保存(POST)で値を送ると400になる。
         notes:
           type: [array, "null"]
           maxItems: 200
@@ -496,6 +512,18 @@ components:
         updatedAt:
           type: string
           format: date-time
+    ProjectConflict:
+      type: object
+      additionalProperties: false
+      required: [error, currentVersion]
+      description: 上書き保存を競合で断ったときの応答。
+      properties:
+        error:
+          type: string
+        currentVersion:
+          type: integer
+          minimum: 1
+          description: いま保存されているバージョン。
     ProjectSummary:
       type: object
       additionalProperties: false

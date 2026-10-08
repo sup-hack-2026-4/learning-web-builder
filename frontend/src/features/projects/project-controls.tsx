@@ -9,10 +9,14 @@ import { Select } from "@/components/ui/select";
 import { captureFocusOrigin, type NoticeTone } from "@/features/notice/notice";
 import type { LearningRecord, SiteModel } from "@/features/site-model/schema";
 import { captureSiteGeneration } from "@/features/site-model/store";
-import { deleteProject, getProject, listProjects, saveProject, type Project } from "@/lib/api";
+import { deleteProject, getProject, listProjects, ProjectConflictError, saveProject, type Project } from "@/lib/api";
 
 // 保存・読み込みを始めた時点の状況。結果が届いたときに、いまも同じかを確かめる。
 type Work = { isSiteCurrent: () => boolean; isSameUser: () => boolean };
+
+// 保存先。projectIdがnullなら新しいプロジェクトとして保存する。
+// baseVersionは、上書きするプロジェクトを読み込んだ時点（または前回の保存後）のバージョン。
+type SaveTarget = { projectId: string | null; baseVersion: number | null };
 
 type ProjectControlsProps = {
   enabled: boolean;
@@ -20,7 +24,9 @@ type ProjectControlsProps = {
   // 作品と一緒に保存する学習の記録。読み込んだときに学習メモやAI利用記録が消えないようにする。
   record: LearningRecord;
   currentProjectId: string | null;
-  onProjectChange: (projectId: string | null) => void;
+  // 選択中のプロジェクトを読み込んだ時点（または前回の保存後）のバージョン。上書き保存で送り、競合を検知してもらう(#118)。
+  currentProjectVersion: number | null;
+  onProjectChange: (projectId: string | null, version?: number | null) => void;
   onLoad: (site: SiteModel, record: LearningRecord) => void;
   onNotice: (message: string, tone?: NoticeTone, returnFocusTo?: HTMLElement | null) => void;
 };
@@ -37,6 +43,7 @@ function ClerkProjectControls({
   site,
   record,
   currentProjectId,
+  currentProjectVersion,
   onProjectChange,
   onLoad,
   onNotice,
@@ -45,12 +52,17 @@ function ClerkProjectControls({
   const queryClient = useQueryClient();
   // 削除の確認中かどうか。対象は選択中のプロジェクトに限るため、真偽値で足りる。
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // 上書き保存を競合で断られたプロジェクト。断られたあとで選び直したり作業を切り替えたりしたら、
+  // もうその話ではないため、選択中のプロジェクトと同じ間だけ選択肢を出す。
+  const [conflict, setConflict] = useState<{ projectId: string } | null>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
-  // 削除の結果が届いたあとに移すフォーカス先。移す先は処理中は無効になっていて
-  // フォーカスを受け取れないため、処理が終わってから移す。
-  const focusAfterRemoveRef = useRef<HTMLElement | null>(null);
+  const conflictFirstRef = useRef<HTMLButtonElement>(null);
+  // 削除の結果や、競合の選択肢から選んだ結果が届いたあとに移すフォーカス先。押したボタンは確認や選択肢ごと消える。
+  // 移す先は処理中は無効になっていてフォーカスを受け取れないため、処理が終わってから移す。
+  const focusAfterBusyRef = useRef<HTMLElement | null>(null);
 
   // いまログインしているユーザー。保存と読み込みの結果が届いたときに、始めたときと同じ人かを確かめる。
   const userIdRef = useRef(userId);
@@ -76,25 +88,37 @@ function ClerkProjectControls({
   // 保存と読み込みの間に、リセットや生成で作業が切り替わったり、別のユーザーでログインし直したりすることがある。
   // 始めた時点の作業とユーザーかを確かめ、古い結果をいまの作業へ反映しない(#115)。
   // ユーザーが変わっていたら、前のユーザーのプロジェクトの話なので、保存先・作品・通知のどれにも出さない。
-  const save = useMutation<Project, Error, { returnFocusTo: HTMLElement | null; work: Work }>({
-    mutationFn: () => saveProject(site, record, getToken, currentProjectId),
-    onSuccess: async (project, { returnFocusTo, work }) => {
+  const save = useMutation<Project, Error, { target: SaveTarget; returnFocusTo: HTMLElement | null; work: Work }>({
+    mutationFn: ({ target }) => saveProject(site, record, getToken, target.projectId, target.baseVersion),
+    onSuccess: async (project, { target, returnFocusTo, work }) => {
       if (!work.isSameUser()) return;
       setConfirmingDelete(false);
+      setConflict(null);
       // 保存そのものは済んでいる。ただ、切り替え後の作品を保存したプロジェクトへ結び付けると、
       // 次の保存で切り替え前のプロジェクトを上書きしてしまうため、対応は付けない。
       const current = work.isSiteCurrent();
-      if (current) onProjectChange(project.id);
+      // 保存後のバージョンを控える。次の上書き保存は、ここからの続きとして送る。
+      if (current) onProjectChange(project.id, project.version);
       await queryClient.invalidateQueries({ queryKey: ["projects", userId] });
-      const message = currentProjectId ? "プロジェクトを更新しました。" : "プロジェクトを保存しました。";
+      const message = target.projectId ? "プロジェクトを更新しました。" : "プロジェクトを保存しました。";
       onNotice(
         current ? message : `${message}保存中に作業を切り替えたため、いま開いている作品は次に保存すると新しいプロジェクトになります。`,
         "status",
         returnFocusTo,
       );
     },
-    onError: (error: Error, { returnFocusTo, work }) => {
-      if (work.isSameUser()) onNotice(error.message, "error", returnFocusTo);
+    onError: (error: Error, { target, returnFocusTo, work }) => {
+      if (!work.isSameUser()) return;
+      // 競合は、もう一度押しても同じ結果になる。通知で済ませず、どうするかを選べるようにする(#118)。
+      // 作業を切り替えたあとなら、選択肢の「いまの編集」が別の作品を指してしまうため、通知だけにする。
+      if (error instanceof ProjectConflictError && target.projectId && work.isSiteCurrent()) {
+        setConfirmingDelete(false);
+        setConflict({ projectId: target.projectId });
+        // 一覧の「（v2）」を、相手が保存したあとのバージョンに合わせる。
+        void queryClient.invalidateQueries({ queryKey: ["projects", userId] });
+        return;
+      }
+      onNotice(error.message, "error", returnFocusTo);
     },
   });
   const load = useMutation({
@@ -108,7 +132,8 @@ function ClerkProjectControls({
       }
       // 作品を差し替えてから対応を付ける。差し替えで作業の世代が進み、先に付けた対応は外れてしまうため。
       onLoad(project.site, { notes: project.notes, aiUsage: project.aiUsage });
-      onProjectChange(project.id);
+      onProjectChange(project.id, project.version);
+      setConflict(null);
       onNotice("保存済みプロジェクトを読み込みました。", "status", returnFocusTo);
     },
     onError: (error: Error, { returnFocusTo, work }) => {
@@ -122,8 +147,9 @@ function ClerkProjectControls({
     // 押せなくなるため選択欄へ、失敗したら同じものをまた消せるよう削除ボタンへ移す。
     // 通知を閉じたときの戻り先もそろえる。
     onSuccess: async (_deleted, { projectId }) => {
-      focusAfterRemoveRef.current = selectRef.current;
+      focusAfterBusyRef.current = selectRef.current;
       setConfirmingDelete(false);
+      setConflict(null);
       onProjectChange(null);
       // 再取得を待つ前に、消したものを手元の一覧から除く。invalidateQueriesだけだと
       // 再取得に失敗したとき削除済みが選択肢に残り、選ぶと読み込みが404になる。
@@ -135,7 +161,7 @@ function ClerkProjectControls({
       onNotice("プロジェクトを削除しました。次回の保存は新しいプロジェクトとして作成します。", "status", selectRef.current);
     },
     onError: (error: Error) => {
-      focusAfterRemoveRef.current = deleteButtonRef.current;
+      focusAfterBusyRef.current = deleteButtonRef.current;
       setConfirmingDelete(false);
       onNotice(error.message, "error", deleteButtonRef.current);
     },
@@ -143,6 +169,8 @@ function ClerkProjectControls({
 
   const selectedProject = projects.data?.find((project) => project.id === currentProjectId);
   const busy = save.isPending || load.isPending || remove.isPending;
+  const conflictedProjectId = conflict && conflict.projectId === currentProjectId ? conflict.projectId : null;
+  const conflictShown = conflictedProjectId !== null;
   // 取得に失敗したときは、下の「保存一覧エラー」と再試行で伝えるため、ここでは出さない。
   const listStatus = projects.isPending
     ? "保存一覧を読み込み中…"
@@ -151,9 +179,9 @@ function ClerkProjectControls({
       : null;
 
   useEffect(() => {
-    if (busy || !focusAfterRemoveRef.current) return;
-    const target = focusAfterRemoveRef.current;
-    focusAfterRemoveRef.current = null;
+    if (busy || !focusAfterBusyRef.current) return;
+    const target = focusAfterBusyRef.current;
+    focusAfterBusyRef.current = null;
     // 待っている間に利用者が別の場所へ移っていたら、そこから引き戻さない。
     // 確認が消えてフォーカスの行き場が無くなったときだけ移す。
     const active = document.activeElement;
@@ -161,14 +189,45 @@ function ClerkProjectControls({
     target.focus();
   }, [busy]);
 
+  // 競合の選択肢が出たとき、フォーカスの行き場が無くなっていたら、編集を失わない側の選択肢へ移す。
+  // 出たことは role="alert" で読み上げるため、利用者が別の場所にいるなら引き寄せない。
+  useEffect(() => {
+    if (!conflictShown || busy) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    conflictFirstRef.current?.focus();
+  }, [conflictShown, busy]);
+
   // 確認を閉じる。削除ボタンは確認中は無効なので、描画を済ませて押せる状態に戻してから移す。
   const cancelDelete = () => {
     flushSync(() => setConfirmingDelete(false));
     deleteButtonRef.current?.focus();
   };
 
+  // 競合したプロジェクトの最新の内容を読み込む。いまの編集は、読み込んだ内容で置き換わる。
+  const reloadConflicted = (projectId: string) => {
+    focusAfterBusyRef.current = selectRef.current;
+    load.mutate({ projectId, returnFocusTo: selectRef.current, work: captureWork() });
+  };
+
+  // いまの編集を、競合したプロジェクトとは別の新しいプロジェクトとして保存する。相手の編集も自分の編集も残る。
+  const saveAsNewProject = () => {
+    focusAfterBusyRef.current = saveButtonRef.current;
+    save.mutate({
+      target: { projectId: null, baseVersion: null },
+      returnFocusTo: saveButtonRef.current,
+      work: captureWork(),
+    });
+  };
+
+  const dismissConflict = () => {
+    flushSync(() => setConflict(null));
+    saveButtonRef.current?.focus();
+  };
+
   const handleProjectSelection = (projectId: string) => {
     setConfirmingDelete(false);
+    setConflict(null);
     if (!projectId) {
       onProjectChange(null);
       onNotice("次回の保存は新しいプロジェクトとして作成します。");
@@ -212,11 +271,16 @@ function ClerkProjectControls({
               {listStatus}
             </span>
             <Button
+              ref={saveButtonRef}
               variant="secondary"
               disabled={busy || projects.isError}
               loading={save.isPending || load.isPending}
               icon={<Cloud className="size-4" />}
-              onClick={() => save.mutate({ returnFocusTo: captureFocusOrigin(), work: captureWork() })}
+              onClick={() => save.mutate({
+                target: { projectId: currentProjectId, baseVersion: currentProjectVersion },
+                returnFocusTo: captureFocusOrigin(),
+                work: captureWork(),
+              })}
             >
               {currentProjectId ? "上書き保存" : "保存"}
             </Button>
@@ -294,6 +358,43 @@ function ClerkProjectControls({
                   onClick={() => remove.mutate({ projectId: currentProjectId })}
                 >
                   {remove.isPending ? "削除中…" : "削除する"}
+                </Button>
+              </div>
+            </Callout>
+          )}
+
+          {/* 上書き保存を競合で断られたとき。どちらの編集も黙って消さないよう、利用者に選んでもらう(#118)。
+              結果は遅れて届くため、出たことを読み上げで伝える。 */}
+          {conflictedProjectId && (
+            <Callout tone="warning" className="max-w-full p-2">
+              <p role="alert" className="wrap-anywhere">
+                「{selectedProject?.site.siteTitle ?? "選択中のプロジェクト"}」は、別のタブや端末で更新されています。上書き保存はしていません。<br />
+                最新の内容を読み込むと、この画面でのいまの編集は失われます。残したいときは、別のプロジェクトとして保存してください。
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Button
+                  ref={conflictFirstRef}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  loading={save.isPending}
+                  onClick={saveAsNewProject}
+                >
+                  別のプロジェクトとして保存
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  disabled={busy}
+                  loading={load.isPending}
+                  onClick={() => reloadConflicted(conflictedProjectId)}
+                >
+                  最新の内容を読み込む（いまの編集は破棄）
+                </Button>
+                <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={dismissConflict}>
+                  閉じる
                 </Button>
               </div>
             </Callout>
