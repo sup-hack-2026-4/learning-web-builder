@@ -33,6 +33,24 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # リポジトリのSQLを実際のPostgreSQLで確かめるためのDB。テストごとに専用のスキーマを作って消す。
+    # compose.yamlと同じ版にそろえる。
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: learning_web_builder_test
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d learning_web_builder_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://app:app@localhost:5432/learning_web_builder_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       # 仕様書が壊れるとコード生成やモックがすべて失敗するため、最初に検査する。

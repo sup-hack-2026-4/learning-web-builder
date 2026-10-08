@@ -8,11 +8,12 @@ import { Callout } from "@/components/ui/callout";
 import { Select } from "@/components/ui/select";
 import { captureFocusOrigin, type NoticeTone } from "@/features/notice/notice";
 import type { LearningRecord, SiteModel } from "@/features/site-model/schema";
-import { captureSiteGeneration } from "@/features/site-model/store";
+import { captureSiteEdits, captureSiteGeneration } from "@/features/site-model/store";
 import { deleteProject, getProject, listProjects, ProjectConflictError, saveProject, type Project } from "@/lib/api";
 
 // 保存・読み込みを始めた時点の状況。結果が届いたときに、いまも同じかを確かめる。
-type Work = { isSiteCurrent: () => boolean; isSameUser: () => boolean };
+// isUneditedは、始めてから作品や学習の記録に手を入れていないか。作業の切り替えとは別に確かめる。
+type Work = { isSiteCurrent: () => boolean; isUnedited: () => boolean; isSameUser: () => boolean };
 
 // 保存先。projectIdがnullなら新しいプロジェクトとして保存する。
 // baseVersionは、上書きするプロジェクトを読み込んだ時点（または前回の保存後）のバージョン。
@@ -74,8 +75,9 @@ function ClerkProjectControls({
   // 処理を始める時点で呼び、あとで「始めたときの作業とユーザーのままか」を確かめられるようにする。
   const captureWork = (): Work => {
     const isSiteCurrent = captureSiteGeneration();
+    const isUnedited = captureSiteEdits();
     const startedBy = userIdRef.current;
-    return { isSiteCurrent, isSameUser: () => userIdRef.current === startedBy };
+    return { isSiteCurrent, isUnedited, isSameUser: () => userIdRef.current === startedBy };
   };
 
   const projects = useQuery({
@@ -128,6 +130,16 @@ function ClerkProjectControls({
       if (!work.isSameUser()) return;
       if (!work.isSiteCurrent()) {
         onNotice("読み込み中に作業を切り替えたため、読み込んだプロジェクトは反映しませんでした。", "status", returnFocusTo);
+        return;
+      }
+      // 読み込みは作品を丸ごと置き換える。待っている間の編集は、押した時点では無かったもので、
+      // 置き換えると知らせずに消してしまうため、反映しない。競合の選択肢は残り、選び直せる(#118)。
+      if (!work.isUnedited()) {
+        onNotice(
+          "読み込み中に編集したため、読み込んだプロジェクトは反映しませんでした。もう一度読み込むと、いまの編集は置き換わります。",
+          "status",
+          returnFocusTo,
+        );
         return;
       }
       // 作品を差し替えてから対応を付ける。差し替えで作業の世代が進み、先に付けた対応は外れてしまうため。

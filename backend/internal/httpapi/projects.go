@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -303,8 +304,9 @@ func decodeSaveProjectRequest(writer http.ResponseWriter, request *http.Request)
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "site model is invalid"})
 		return saveProjectRequest{}, false
 	}
-	// 保存済みのバージョンは1から始まる。
-	if input.BaseVersion != nil && *input.BaseVersion < 1 {
+	// 保存済みのバージョンは1から始まり、DBではINTEGER（32ビット）で持つ。
+	// 範囲を超える値をそのまま渡すと、DBへ送る段階の失敗になり、入力の誤りが500として返ってしまう。
+	if input.BaseVersion != nil && (*input.BaseVersion < 1 || *input.BaseVersion > math.MaxInt32) {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "baseVersion is invalid"})
 		return saveProjectRequest{}, false
 	}

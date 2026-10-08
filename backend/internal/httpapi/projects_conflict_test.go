@@ -79,6 +79,8 @@ func TestUpdateProjectRejectsInvalidBaseVersion(t *testing.T) {
 		"負の数": `,"baseVersion":-1`,
 		"小数":  `,"baseVersion":1.5`,
 		"文字列": `,"baseVersion":"3"`,
+		// DBのINTEGERに収まらない値。そのまま渡すと500になる。
+		"INTEGERの上限超え": `,"baseVersion":2147483648`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			repository := learningRepository(model, projectpkg.LearningRecord{})
@@ -92,6 +94,33 @@ func TestUpdateProjectRejectsInvalidBaseVersion(t *testing.T) {
 				t.Fatal("expected repository not to be called")
 			}
 		})
+	}
+}
+
+func TestUpdateProjectAcceptsLargestBaseVersion(t *testing.T) {
+	model := site.Sample("学校の写真部")
+	repository := learningRepository(model, projectpkg.LearningRecord{})
+
+	response := serveProjects(repository, updateProjectRequest(t, model, `,"baseVersion":2147483647`))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if repository.baseVersion == nil || *repository.baseVersion != 2147483647 {
+		t.Fatalf("expected base version to reach repository, got %v", repository.baseVersion)
+	}
+}
+
+// nullは省略と同じ扱い。新規保存でも断らない。
+func TestCreateProjectAcceptsNullBaseVersion(t *testing.T) {
+	model := site.Sample("学校の写真部")
+	repository := learningRepository(model, projectpkg.LearningRecord{})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", rawLearningRequestBody(t, model, `,"baseVersion":null`))
+
+	response := serveProjects(repository, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
 	}
 }
 

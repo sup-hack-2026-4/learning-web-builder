@@ -206,7 +206,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request, SiteModel, or learning record. Also returned when baseVersion is sent
+          description: Invalid request, SiteModel, or learning record. Also returned when a non-null baseVersion is sent
         "401":
           description: Authentication is required
         "403":
@@ -435,11 +435,12 @@ components:
         baseVersion:
           type: [integer, "null"]
           minimum: 1
+          maximum: 2147483647
           description: >-
             上書き保存(PUT)でだけ使う。読み込んだ時点、または前回の保存の応答で受け取ったversion。
             保存済みのバージョンと一致しなければ、保存せずに409を返す。
             省略またはnullなら、バージョンを確かめずに上書きする。
-            新規保存(POST)で値を送ると400になる。
+            新規保存(POST)でnull以外の値を送ると400になる（省略とnullは受け付ける）。
         notes:
           type: [array, "null"]
           maxItems: 200

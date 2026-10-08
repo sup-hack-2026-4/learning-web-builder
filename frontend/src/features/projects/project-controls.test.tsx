@@ -259,6 +259,29 @@ describe("処理の途中で作業が切り替わったとき(#115)", () => {
     expect(onLoad).not.toHaveBeenCalled();
   });
 
+  it("読み込み中に編集したら、届いたプロジェクトで編集を置き換えない(#118)", async () => {
+    // 編集では作業の世代が進まない。世代だけを見ていると、待っている間の編集を知らせずに消してしまう。
+    const pendingLoad = deferred<Project>();
+    vi.mocked(getProject).mockReturnValueOnce(pendingLoad.promise);
+    const user = userEvent.setup();
+    renderControls();
+
+    const select = screen.getByLabelText("保存済みプロジェクト");
+    await within(select).findByRole("option", { name: /スミレ即売会/ });
+    await user.selectOptions(select, project.id);
+    act(() => useBuilderStore.getState().previewTheme("primary", "#e11d48"));
+    await act(async () => pendingLoad.resolve(project));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(
+      expect.stringContaining("読み込み中に編集したため、読み込んだプロジェクトは反映しませんでした。"),
+      "status",
+      expect.anything(),
+    ));
+    expect(onLoad).not.toHaveBeenCalled();
+    // 読み込んでいないので、更新先にもしない。
+    expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument();
+  });
+
   it("読み込むと作品を差し替えたあとも、読み込んだプロジェクトを更新先として残す", async () => {
     // 差し替えで作業の世代が進むため、更新先を先に付けると外れてしまう。
     onLoad.mockImplementation((site, record) => useBuilderStore.getState().loadSite(site, record));
@@ -417,6 +440,29 @@ describe("別のタブや端末で更新されていたとき(#118)", () => {
     await waitFor(() => expect(saveProject).toHaveBeenCalledTimes(2));
     expect(lastSavedProjectId()).toBe(project.id);
     expect(lastBaseVersion()).toBe(5);
+  });
+
+  it("最新の内容の読み込み中に編集したら、置き換えずに選択肢を残す", async () => {
+    const pendingLoad = deferred<Project>();
+    const user = userEvent.setup();
+    renderControls();
+    await saveIntoConflict(user);
+
+    vi.mocked(getProject).mockReturnValueOnce(pendingLoad.promise);
+    await user.click(screen.getByRole("button", { name: /最新の内容を読み込む/ }));
+    act(() => useBuilderStore.getState().previewTheme("primary", "#e11d48"));
+    await act(async () => pendingLoad.resolve({ ...loaded, version: 5 }));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith(
+      expect.stringContaining("読み込み中に編集したため"),
+      "status",
+      expect.anything(),
+    ));
+    // 最初に選んだときの1回だけ。待っている間の編集は残る。
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    // まだ解消していないので、もう一度選べる。
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /最新の内容を読み込む/ })).toBeEnabled();
   });
 
   it("閉じると選択肢を片付け、保存ボタンへフォーカスを戻す", async () => {

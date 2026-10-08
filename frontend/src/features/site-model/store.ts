@@ -355,3 +355,14 @@ export function captureSiteGeneration(): () => boolean {
   const generation = useBuilderStore.getState().siteGeneration;
   return () => useBuilderStore.getState().siteGeneration === generation;
 }
+
+// 処理を始める時点で呼び、あとで「その間に作品・学習の記録・記録途中の変更に手を入れていないか」を確かめる関数を受け取る。
+// 編集では作業の世代が進まないため、captureSiteGenerationでは見分けられない。
+// 届いた結果で作品を丸ごと置き換える処理（読み込み）は、待っている間の編集を知らせずに消さないよう、これも確かめる(#118)。
+export function captureSiteEdits(): () => boolean {
+  const { site, notes, aiUsage, tracking } = useBuilderStore.getState();
+  return () => {
+    const now = useBuilderStore.getState();
+    return now.site === site && now.notes === notes && now.aiUsage === aiUsage && now.tracking === tracking;
+  };
+}
