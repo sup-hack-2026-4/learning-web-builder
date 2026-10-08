@@ -48,7 +48,7 @@ func (repository *PostgresRepository) Create(ctx context.Context, ownerID string
 	return scanRecord(row)
 }
 
-func (repository *PostgresRepository) Update(ctx context.Context, ownerID, projectID string, model site.Model, learning *LearningRecord) (Record, error) {
+func (repository *PostgresRepository) Update(ctx context.Context, ownerID, projectID string, model site.Model, learning *LearningRecord, baseVersion *int) (Record, error) {
 	siteJSON, err := json.Marshal(model)
 	if err != nil {
 		return Record{}, fmt.Errorf("marshal site model: %w", err)
@@ -62,11 +62,13 @@ func (repository *PostgresRepository) Update(ctx context.Context, ownerID, proje
 		}
 	}
 
+	// バージョンの照合と更新を1つの文で行う。先に読んでから比べると、その間に入った別の保存を見逃す。
+	// baseVersionがnilならSQLのNULLになり、バージョンを確かめずに上書きする。
 	row := repository.db.QueryRow(
 		ctx,
 		`UPDATE projects
 		 SET title = $3, topic = $4, site_model = $5, learning_record = COALESCE($6::jsonb, learning_record), version = version + 1, updated_at = NOW()
-		 WHERE id = $1 AND clerk_user_id = $2
+		 WHERE id = $1 AND clerk_user_id = $2 AND ($7::integer IS NULL OR version = $7)
 		 RETURNING id, clerk_user_id, site_model, learning_record, version, created_at, updated_at`,
 		projectID,
 		ownerID,
@@ -74,12 +76,35 @@ func (repository *PostgresRepository) Update(ctx context.Context, ownerID, proje
 		model.Topic,
 		siteJSON,
 		learningJSON,
+		baseVersion,
 	)
 	record, err := scanRecord(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Record{}, ErrNotFound
+		if baseVersion == nil {
+			return Record{}, ErrNotFound
+		}
+		return Record{}, repository.conflictOrNotFound(ctx, ownerID, projectID)
 	}
 	return record, err
+}
+
+// conflictOrNotFound は、バージョンを条件にした更新が1件も当たらなかった理由を返す。
+// 所有者のプロジェクトが残っていればバージョンの食い違い、無ければ該当なし。
+func (repository *PostgresRepository) conflictOrNotFound(ctx context.Context, ownerID, projectID string) error {
+	var currentVersion int
+	err := repository.db.QueryRow(
+		ctx,
+		`SELECT version FROM projects WHERE id = $1 AND clerk_user_id = $2`,
+		projectID,
+		ownerID,
+	).Scan(&currentVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check project version: %w", err)
+	}
+	return &ConflictError{CurrentVersion: currentVersion}
 }
 
 func (repository *PostgresRepository) Get(ctx context.Context, ownerID, projectID string) (Record, error) {

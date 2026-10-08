@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -20,10 +21,14 @@ import (
 // 学習の記録(notes, aiUsage)は省略できる。記録を持たない以前の画面からでも、作品は保存できるようにするため。
 // 両方とも省略(またはnull)なら、新規保存では空の記録を作り、上書き保存では保存済みの記録を残す。
 // どちらかを送った場合は、送らなかった方を空として、記録全体を置き換える。
+//
+// baseVersion は上書き保存でだけ使う、読み込んだ時点のバージョン。保存済みのバージョンと違えば409で断る(#118)。
+// 省略(またはnull)なら確かめずに上書きする。バージョンを送らない以前の画面からでも保存できるようにするため。
 type saveProjectRequest struct {
-	Site    site.Model             `json:"site"`
-	Notes   []project.LearningNote `json:"notes"`
-	AIUsage []project.AIUsage      `json:"aiUsage"`
+	Site        site.Model             `json:"site"`
+	Notes       []project.LearningNote `json:"notes"`
+	AIUsage     []project.AIUsage      `json:"aiUsage"`
+	BaseVersion *int                   `json:"baseVersion"`
 	// learningProvided は notes か aiUsage の少なくとも一方に値が入っていたかどうか。
 	learningProvided bool
 }
@@ -108,6 +113,12 @@ type projectListResponse struct {
 	Projects []projectResponse `json:"projects"`
 }
 
+// projectConflictResponse は、上書き保存を競合で断ったときの応答。
+type projectConflictResponse struct {
+	Error          string `json:"error"`
+	CurrentVersion int    `json:"currentVersion"`
+}
+
 func createProject(repository project.Repository) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		identity, ok := requireIdentity(writer, request)
@@ -121,6 +132,11 @@ func createProject(repository project.Repository) http.HandlerFunc {
 
 		input, ok := decodeSaveProjectRequest(writer, request)
 		if !ok {
+			return
+		}
+		// 新規保存には比べる相手が無い。黙って無視すると、上書きのつもりで送った誤りに気づけない。
+		if input.BaseVersion != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "baseVersion is not allowed when creating a project"})
 			return
 		}
 		record, err := repository.Create(request.Context(), identity.UserID, input.Site, input.learningRecord())
@@ -153,9 +169,17 @@ func updateProject(repository project.Repository) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		record, err := repository.Update(request.Context(), identity.UserID, projectID, input.Site, input.learningRecordForUpdate())
+		record, err := repository.Update(request.Context(), identity.UserID, projectID, input.Site, input.learningRecordForUpdate(), input.BaseVersion)
 		if errors.Is(err, project.ErrNotFound) {
 			writeJSON(writer, http.StatusNotFound, map[string]string{"error": "project not found"})
+			return
+		}
+		var conflict *project.ConflictError
+		if errors.As(err, &conflict) {
+			writeJSON(writer, http.StatusConflict, projectConflictResponse{
+				Error:          "project was updated elsewhere",
+				CurrentVersion: conflict.CurrentVersion,
+			})
 			return
 		}
 		if err != nil {
@@ -278,6 +302,12 @@ func decodeSaveProjectRequest(writer http.ResponseWriter, request *http.Request)
 	}
 	if err := site.Validate(input.Site); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "site model is invalid"})
+		return saveProjectRequest{}, false
+	}
+	// 保存済みのバージョンは1から始まり、DBではINTEGER（32ビット）で持つ。
+	// 範囲を超える値をそのまま渡すと、DBへ送る段階の失敗になり、入力の誤りが500として返ってしまう。
+	if input.BaseVersion != nil && (*input.BaseVersion < 1 || *input.BaseVersion > math.MaxInt32) {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "baseVersion is invalid"})
 		return saveProjectRequest{}, false
 	}
 	input.learningProvided = presence.learningProvided()
