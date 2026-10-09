@@ -27,7 +27,8 @@ const fileTabs = (Object.keys(fileLabels) as FileKey[]).map((key) => ({ key, lab
 // 読みやすさのための色分け。役割ごとに色を割り当てる。
 const tokenClasses: Record<TokenKind, string> = {
   plain: "text-slate-800",
-  comment: "text-slate-500 italic",
+  // 選んだ要素や未記録の変更の行は背景に色が付く。その上でも読める濃さにする。
+  comment: "text-slate-600 italic",
   tag: "text-sky-800",
   attribute: "text-violet-800",
   string: "text-emerald-800",
