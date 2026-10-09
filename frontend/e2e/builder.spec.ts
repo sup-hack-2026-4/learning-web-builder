@@ -779,24 +779,61 @@ test("デザインを変えると、コード上に未記録の変更として�
   await expect(codeView).not.toContainText("未記録の変更");
 });
 
-// 行の状態は読み上げ用の文字で伝えるが、コードを写し取るときには混ざってはいけない。
-test("コードを範囲コピーしても、行の状態を伝える読み上げ用の文字は含まれない", async ({ page }) => {
+// 行の状態は読み上げ用の文字と記号で伝えるが、コードを写し取るときには混ざってはいけない。
+test("コードを範囲コピーしても、行番号・行の状態の記号・読み上げ用の文字は含まれない", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
 
+  // 選んだ要素・未記録の変更・削除の3種類の行がそろう状態にする。
+  await page.frameLocator("iframe[title='生成サイトのプレビュー']").locator("[data-builder-id='hero']").click();
   const codeView = page.getByRole("region", { name: "生成されたコード" });
   await codeView.getByRole("tab", { name: "style.css" }).click();
   await page.getByLabel("なぜこの変更をしますか？").fill("元気な印象にしたいから");
   await page.getByLabel("メインカラー").fill("#e11d48");
   await expect(codeView.locator("li[data-changed='true']").first()).toBeVisible();
+  await expect(codeView.locator("li[data-selected='true']").first()).toBeVisible();
 
-  const copied = await codeView.getByRole("tabpanel").evaluate((panel) => {
+  const { copied, expected, shownOnly } = await codeView.getByRole("tabpanel").evaluate((panel) => {
     const selection = window.getSelection()!;
     selection.selectAllChildren(panel);
-    return selection.toString();
+    // 写し取れるはずの文字は、各行のコード本文から読み上げ専用の文字を除いたもの。
+    const codeTexts = [...panel.querySelectorAll("li > code")].map((code) => {
+      const clone = code.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll(".sr-only").forEach((node) => node.remove());
+      return clone.textContent ?? "";
+    });
+    return {
+      copied: selection.toString().split("\n"),
+      expected: codeTexts,
+      shownOnly: [...panel.querySelectorAll("li > [aria-hidden]")].map((node) => node.textContent ?? "").join(""),
+    };
   });
-  expect(copied).toContain("#e11d48");
-  expect(copied).not.toMatch(/の行: |削除された行: /);
+  // 記号はコード本文にも出るため、記号の有無ではなく、コード本文との一致で確かめる。
+  expect(copied).toEqual(expected);
+  // 画面には3種類の記号が出ていて、それでも写し取った文字には入っていないこと。
+  expect(shownOnly).toMatch(/\+/);
+  expect(shownOnly).toMatch(/>/);
+  expect(shownOnly).toMatch(/-/);
+  expect(copied.join("\n")).toContain("#e11d48");
+});
+
+// 選んだ要素の行が画面の外にあると、理由を書くときに探しに行くことになる。
+test("画面の外にある要素を選ぶと、その行が見える位置までコードが送られる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const panel = codeView.getByRole("tabpanel");
+  // 最後のセクションは、初期表示ではコードの表示範囲より下にある。
+  const lastSectionLine = panel.locator("li").filter({ hasText: 'data-builder-id="contact"' });
+  await expect(lastSectionLine).not.toBeInViewport();
+
+  await page.frameLocator("iframe[title='生成サイトのプレビュー']").locator("[data-builder-id='contact']").click();
+
+  await expect(lastSectionLine).toHaveAttribute("data-selected", "true");
+  await expect(lastSectionLine).toBeInViewport();
+  // 行番号と記号の列は左端にある。横には送らず、見えたままにする。
+  expect(await panel.evaluate((element) => element.scrollLeft)).toBe(0);
 });
 
 test("コードを隠すとプレビューが縦に広がる", async ({ page }) => {
@@ -838,6 +875,34 @@ test("モバイルのプレビュー画面でもコードを一緒に見られ�
 
   await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
   await expect(page.getByRole("region", { name: "生成されたコード" })).toBeVisible();
+});
+
+// コードは折り返さないため、狭い画面では必ず幅が足りなくなる。はみ出しはコードの枠の中で受ける。
+test("モバイルでは、長いコードの行はコードの枠の中で横に送れて、ページは横にはみ出さない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const panel = page.getByRole("region", { name: "生成されたコード" }).getByRole("tabpanel");
+  await expect(panel).toBeVisible();
+
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  expect(await panel.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+
+  // 行番号と記号の列は、横に送る前は枠の左右に収まっている。
+  // コードの枠はページの下のほうにあるため、縦の位置ではなく横の位置だけを測る。
+  const gutterFitsInPanel = await panel.evaluate((element) => {
+    const frame = element.getBoundingClientRect();
+    return [...element.querySelectorAll("li:first-child > [aria-hidden]")].every((cell) => {
+      const box = cell.getBoundingClientRect();
+      return box.left >= frame.left && box.right <= frame.right;
+    });
+  });
+  expect(gutterFitsInPanel).toBe(true);
+
+  // 枠の中だけが横に動き、ページは動かない。
+  await panel.evaluate((element) => element.scrollTo({ left: 200 }));
+  expect(await panel.evaluate((element) => element.scrollLeft)).toBe(200);
+  expect(await page.evaluate(() => window.scrollX)).toBe(0);
 });
 
 // 「理由を書けた＝理解できている」とは限らないという指摘への対応。
@@ -1492,6 +1557,31 @@ test("キーボードだけで、一覧からセクションを選んで編集�
   await expect(page.getByRole("heading", { name: /^選択中: / })).toBeFocused();
   await expect(heroButton).toHaveAttribute("aria-current", "true");
   await expect(editButton).not.toHaveAttribute("aria-current");
+});
+
+// 背景と枠の色だけでは、色を見分けにくい人に、どの行を選んでいるかが伝わらない。
+test("一覧で選んでいる行は、色だけでなく、太字と左の太い線でも見分けられる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "私たちについてを編集" }).click();
+
+  // 色に頼らない手がかりだけを測る。タイトルの太さと、左の線の太さ。
+  const cuesOf = (title: string) =>
+    page.getByRole("listitem").filter({ has: page.getByRole("button", { name: `${title}を編集` }) }).evaluate((row) => ({
+      titleWeight: Number(getComputedStyle(row.querySelector("label > span")!).fontWeight),
+      leftLineWidth: getComputedStyle(row).borderLeftWidth,
+      titleLeft: row.querySelector("label > span")!.getBoundingClientRect().left,
+    }));
+  const selected = await cuesOf("私たちについて");
+  const other = await cuesOf("3つの魅力");
+
+  expect(selected.titleWeight).toBeGreaterThanOrEqual(700);
+  expect(other.titleWeight).toBeLessThan(700);
+  expect(selected.leftLineWidth).toBe("4px");
+  expect(other.leftLineWidth).toBe("1px");
+  // 線を太くしても、タイトルの書き出しの位置は他の行とそろったままにする。
+  expect(selected.titleLeft).toBeCloseTo(other.titleLeft, 0);
 });
 
 test("モバイルで一覧から編集を始めると、調整と学習の表示へ切り替わる", async ({ page }) => {

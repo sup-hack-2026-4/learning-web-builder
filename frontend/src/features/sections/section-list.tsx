@@ -81,17 +81,24 @@ export function SectionList({ tracking, onEdit, headingRef, showNotice }: Sectio
   return (
     <>
       <h2 ref={headingRef} tabIndex={-1} className="mb-1 text-sm font-black">
-        セクション <span className="font-normal text-slate-400">{site.sections.length} / {maxSections}</span>
+        セクション <span className="font-normal text-slate-600">{site.sections.length} / {maxSections}</span>
       </h2>
       <p className="mb-2 text-[11px] leading-4 text-slate-500">
         チェックを外すと非表示になります。使わないと決めたものは削除できます。
       </p>
       <ul className="space-y-2">
         {site.sections.map((section) => (
-          <li key={section.id} className={`rounded-xl border px-3 py-2 text-sm ${section.id === selectedElementId ? "border-blue-300 bg-blue-50" : "border-slate-200"}`}>
+          <li
+            key={section.id}
+            data-selected={section.id === selectedElementId}
+            // 左の線が3px太くなる分、左の余白を詰めて、タイトルの位置を他の行とそろえる。
+            className={`rounded-xl border py-2 pr-3 text-sm ${section.id === selectedElementId ? "border-blue-300 border-l-4 border-l-blue-600 bg-blue-50 pl-[9px]" : "border-slate-200 pl-3"}`}
+          >
             <div className="flex items-center gap-2">
               <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2">
-                <span className="truncate">{section.title}</span>
+                {/* 選んでいる行は、色を見分けにくい人にも分かるよう、太字と左の太い線でも示す。
+                    一覧は幅が狭く、文字の目印を足すとタイトルが読めなくなるため、幅を使わない形にする。 */}
+                <span className={`truncate ${section.id === selectedElementId ? "font-bold" : ""}`}>{section.title}</span>
                 <input id={sectionToggleId(section.id)} type="checkbox" checked={section.visible} onChange={(event) => tracking.toggleSection(section.id, event.target.checked)} />
               </label>
               {/* プレビュー内のクリックに代わる選び方。どれを選んでいるかはaria-currentで伝える。 */}
