@@ -10,9 +10,10 @@ const variants = {
   // 取り消せない操作。確認の中など、押す直前の場面で使う。
   danger: "text-danger enabled:hover:bg-danger-hover",
   // 一覧の行に並ぶアイコンなど、普段は目立たせず、触れたときに役割が分かればよいもの。
-  quiet: "text-slate-400 enabled:hover:bg-slate-100 enabled:hover:text-slate-700",
+  // 目立たせないといっても、白・灰色・選択中の背景でアイコンを見分けられる濃さ（3:1以上）は保つ。
+  quiet: "text-slate-500 enabled:hover:bg-slate-100 enabled:hover:text-slate-700",
   // quietの削除版。ゴミ箱アイコンのように、触れたときに危険な操作だと分かるようにする。
-  "quiet-danger": "text-slate-400 enabled:hover:bg-danger-subtle enabled:hover:text-danger",
+  "quiet-danger": "text-slate-500 enabled:hover:bg-danger-subtle enabled:hover:text-danger",
 } as const;
 
 // 高さはここでだけ決め、呼び出し側では上書きしない。

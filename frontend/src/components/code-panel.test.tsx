@@ -21,9 +21,32 @@ describe("CodePanel", () => {
     const selectedRow = rows.find((row) => row.dataset.selected === "true" && row.dataset.changed === "false");
     const plainRow = rows.find((row) => row.dataset.selected === "false" && row.dataset.changed === "false");
 
-    expect(changedRow).toHaveTextContent(/^\d*未記録の変更(・選んだ要素)?の行: /);
-    expect(selectedRow).toHaveTextContent(/^\d*選んだ要素の行: /);
+    expect(changedRow).toHaveTextContent(/^\d+\+>?未記録の変更(・選んだ要素)?の行: /);
+    expect(selectedRow).toHaveTextContent(/^\d+>選んだ要素の行: /);
     expect(plainRow?.textContent).not.toMatch(/未記録の変更|選んだ要素/);
+  });
+
+  it("行の状態を、色だけでなく行番号の横の記号でも示し、凡例に同じ記号を出す", async () => {
+    const baselineSite = createSampleSite();
+    const site = { ...baselineSite, theme: { ...baselineSite.theme, primary: "#e11d48" } };
+    render(<CodePanel site={site} baselineSite={baselineSite} selectedElementId="hero" />);
+    await userEvent.click(screen.getByRole("tab", { name: "style.css" }));
+
+    const rows = within(screen.getByRole("tabpanel")).getAllByRole("listitem");
+    const changedRow = rows.find((row) => row.dataset.changed === "true" && row.dataset.selected === "false");
+    const selectedRow = rows.find((row) => row.dataset.selected === "true" && row.dataset.changed === "false");
+    const plainRow = rows.find((row) => row.dataset.selected === "false" && row.dataset.changed === "false");
+    const removedRow = rows.find((row) => row.textContent?.includes("削除された行: "));
+
+    expect(changedRow?.textContent).toMatch(/^\d+\+未記録の変更/);
+    expect(selectedRow?.textContent).toMatch(/^\d+>選んだ要素/);
+    expect(plainRow?.textContent).not.toMatch(/^\d+[+>-]/);
+    expect(removedRow?.textContent).toMatch(/^-削除された行: /);
+
+    const legend = screen.getByRole("region", { name: "生成されたコード" });
+    expect(legend).toHaveTextContent(/>\s*選んだ要素: /);
+    expect(legend).toHaveTextContent(/\+\s*未記録の変更/);
+    expect(legend).toHaveTextContent(/-\s*うち削除/);
   });
 
   it("変更した行が選んだ要素の行でもあるときは、両方の状態を伝える", () => {
@@ -41,6 +64,6 @@ describe("CodePanel", () => {
 
     expect(bothRow).toHaveAttribute("data-changed", "true");
     expect(bothRow).toHaveAttribute("data-selected", "true");
-    expect(bothRow).toHaveTextContent(/^\d*未記録の変更・選んだ要素の行: /);
+    expect(bothRow).toHaveTextContent(/^\d+\+>未記録の変更・選んだ要素の行: /);
   });
 });

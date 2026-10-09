@@ -81,7 +81,7 @@ export function SectionList({ tracking, onEdit, headingRef, showNotice }: Sectio
   return (
     <>
       <h2 ref={headingRef} tabIndex={-1} className="mb-1 text-sm font-black">
-        セクション <span className="font-normal text-slate-400">{site.sections.length} / {maxSections}</span>
+        セクション <span className="font-normal text-slate-600">{site.sections.length} / {maxSections}</span>
       </h2>
       <p className="mb-2 text-[11px] leading-4 text-slate-500">
         チェックを外すと非表示になります。使わないと決めたものは削除できます。

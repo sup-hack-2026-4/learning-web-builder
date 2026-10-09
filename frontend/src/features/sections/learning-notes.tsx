@@ -5,7 +5,7 @@ export function LearningNotes() {
   const notes = useBuilderStore((state) => state.notes);
   return (
     <>
-      <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-400">{notes.length}</span></h2>
+      <h2 className="mb-2 mt-6 text-sm font-black">学習メモ <span className="text-slate-600">{notes.length}</span></h2>
       {/* 内側でスクロールさせない。列のスクロールと二重になり、どちらを動かせばよいか分からなくなる。 */}
       <div className="space-y-2">
         {notes.length === 0 ? <p className="text-xs text-slate-500">変更理由はまだありません。</p> : notes.slice().reverse().map((note) => (
