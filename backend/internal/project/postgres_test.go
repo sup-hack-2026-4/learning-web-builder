@@ -4,81 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/site"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/haru-yoshi-5/learning-web-builder/backend/internal/testdb"
 )
 
 // 実際のPostgreSQLで、リポジトリのSQLを確かめる。
 // 上書き保存の競合検知(#118)は、照合と更新を1つのSQLで行うことに頼っているため、スタブでは確かめられない。
 //
-// TEST_DATABASE_URL が無ければ飛ばす。CIではbackendジョブがPostgreSQLを用意して設定する。
-// 手元では compose.yaml のPostgreSQLを起動してから、次のように実行する。
-//
-//	TEST_DATABASE_URL=postgres://app:app@localhost:5432/learning_web_builder go test ./internal/project/
-//
-// テストごとに専用のスキーマを作ってマイグレーションを適用し、終わったら消す。既存のテーブルには触らない。
+// データベースの用意のしかたと、手元での実行方法は internal/testdb を参照。
 func newTestRepository(t *testing.T) *PostgresRepository {
 	t.Helper()
-	databaseURL := os.Getenv("TEST_DATABASE_URL")
-	if databaseURL == "" {
-		// CIで設定が外れると、テストが黙って飛ばされたまま合格になる。
-		if os.Getenv("CI") != "" {
-			t.Fatal("TEST_DATABASE_URL is required in CI")
-		}
-		t.Skip("TEST_DATABASE_URL is not set")
-	}
-
-	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("connect to test database: %v", err)
-	}
-	schema := fmt.Sprintf("project_test_%d", time.Now().UnixNano())
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatalf("create test schema: %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := admin.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop test schema: %v", err)
-		}
-		_ = admin.Close(ctx)
-	})
-
-	config, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		t.Fatalf("parse test database url: %v", err)
-	}
-	config.ConnConfig.RuntimeParams["search_path"] = schema
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatalf("open test pool: %v", err)
-	}
-	// スキーマを消す前に、接続を閉じる。
-	t.Cleanup(pool.Close)
-
-	migrations, err := filepath.Glob(filepath.Join("..", "..", "..", "db", "migrations", "*.sql"))
-	if err != nil || len(migrations) == 0 {
-		t.Fatalf("find migrations: %v (found %d)", err, len(migrations))
-	}
-	sort.Strings(migrations)
-	for _, path := range migrations {
-		statements, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read migration %s: %v", path, err)
-		}
-		if _, err := pool.Exec(ctx, string(statements)); err != nil {
-			t.Fatalf("apply migration %s: %v", path, err)
-		}
-	}
-	return NewPostgresRepository(pool)
+	return NewPostgresRepository(testdb.NewPool(t))
 }
 
 func titledSite(title string) site.Model {

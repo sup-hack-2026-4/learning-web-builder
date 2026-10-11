@@ -159,6 +159,15 @@ go test ./...
 go vet ./...
 ```
 
+保存・復元のテストは実際のPostgreSQLを使うため、`TEST_DATABASE_URL`が無いと飛ばされます（CIでは必ず実行します）。
+手元で実行する場合は、PostgreSQLを起動してから接続先を渡します。テストごとに専用のスキーマを作って消すため、既存のテーブルには触りません。
+
+```powershell
+docker compose up -d postgres
+$env:TEST_DATABASE_URL = "postgres://app:app@localhost:5432/learning_web_builder?sslmode=disable"
+go test ./...
+```
+
 E2Eを実行する場合は、初回だけブラウザを取得します。`test:e2e`はビルドとプレビュー起動まで自動で行うため、開発サーバーを別途起動する必要はありません。
 
 ```powershell
