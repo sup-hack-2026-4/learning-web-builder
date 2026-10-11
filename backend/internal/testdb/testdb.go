@@ -54,6 +54,12 @@ func NewEmptyPool(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("connect to test database: %v", err)
 	}
+	// スキーマを作れなかったときも接続を残さないよう、先に登録する。
+	// あとから登録する片付けのほうが先に動くため、スキーマを消してから閉じる順になる。
+	// 片付けで取ったロックは、接続を閉じると外れる。
+	t.Cleanup(func() {
+		_ = admin.Close(ctx)
+	})
 	// 時刻だけで名前を付けると、並行に走る別のパッケージのテストと重なりうる。
 	schema := "test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
@@ -67,8 +73,6 @@ func NewEmptyPool(t *testing.T) *pgxpool.Pool {
 		if _, err := admin.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
 			t.Errorf("drop test schema: %v", err)
 		}
-		// ロックは接続を閉じると外れる。
-		_ = admin.Close(ctx)
 	})
 
 	config, err := pgxpool.ParseConfig(databaseURL)

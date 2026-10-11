@@ -259,8 +259,11 @@ func TestPostgresListReturnsOnlyOwnersProjectsNewestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list projects after update: %v", err)
 	}
-	if len(records) != 3 || records[0].ID != oldest.ID {
-		t.Fatalf("expected the updated project first among three, got %d projects starting with %q", len(records), records[0].Site.SiteTitle)
+	if len(records) != 3 {
+		t.Fatalf("expected three projects after the update, got %d", len(records))
+	}
+	if records[0].ID != oldest.ID {
+		t.Fatalf("expected the updated project first, got %q", records[0].Site.SiteTitle)
 	}
 
 	if strangers, err := repository.List(ctx, "user_3"); err != nil || len(strangers) != 0 {
@@ -394,6 +397,45 @@ func TestPostgresQualityResultsRoundTrip(t *testing.T) {
 		expected, exists := savedByID[result.ID]
 		if !exists || expected.CheckKey != result.CheckKey || expected.Passed != result.Passed || expected.Detail != result.Detail || !expected.CheckedAt.Equal(result.CheckedAt) {
 			t.Errorf("expected the listed result to match what was saved, got %+v", result)
+		}
+	}
+}
+
+// 一覧は、所有者を確かめたあとにプロジェクトで絞り込む。絞り込みが外れると、
+// 自分のプロジェクトを指定しただけで、他人やほかの作品の結果まで返してしまう。
+func TestPostgresListQualityResultsReturnsOnlyTheProjectsOwnResults(t *testing.T) {
+	repository := newTestRepository(t)
+	ctx := context.Background()
+	projects := map[string]struct {
+		ownerID string
+		input   QualityResultInput
+	}{}
+	for _, target := range []struct {
+		ownerID string
+		input   QualityResultInput
+	}{
+		{"user_1", QualityResultInput{CheckKey: "alt", Passed: false, Detail: "利用者1の1つ目の作品の結果"}},
+		{"user_1", QualityResultInput{CheckKey: "alt", Passed: true, Detail: "利用者1の2つ目の作品の結果"}},
+		{"user_2", QualityResultInput{CheckKey: "alt", Passed: true, Detail: "利用者2の作品の結果"}},
+	} {
+		created := mustCreate(t, repository, target.ownerID, titledSite("最初の内容"), LearningRecord{})
+		if _, err := repository.SaveQualityResults(ctx, target.ownerID, created.ID, []QualityResultInput{target.input}); err != nil {
+			t.Fatalf("save quality results: %v", err)
+		}
+		projects[created.ID] = target
+	}
+
+	for projectID, target := range projects {
+		results, err := repository.ListQualityResults(ctx, target.ownerID, projectID)
+		if err != nil {
+			t.Fatalf("list quality results: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("%s: expected only the project's own result, got %+v", target.input.Detail, results)
+			continue
+		}
+		if got := (QualityResultInput{CheckKey: results[0].CheckKey, Passed: results[0].Passed, Detail: results[0].Detail}); got != target.input || results[0].ProjectID != projectID {
+			t.Errorf("%s: expected the project's own result, got %+v", target.input.Detail, results[0])
 		}
 	}
 }
