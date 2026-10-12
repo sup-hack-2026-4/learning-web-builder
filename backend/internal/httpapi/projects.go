@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"math"
 	"net/http"
@@ -278,20 +277,10 @@ func listProjects(repository project.Repository) http.HandlerFunc {
 
 func decodeSaveProjectRequest(writer http.ResponseWriter, request *http.Request) (saveProjectRequest, bool) {
 	request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
-	// 項目の有無の検査でもう一度読むため、先に本文をまとめて読み込む。
-	body, err := io.ReadAll(request.Body)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return saveProjectRequest{}, false
-	}
 	var input saveProjectRequest
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return saveProjectRequest{}, false
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	// 項目の有無の検査でもう一度読むため、読んだ本文を受け取っておく。
+	body, err := decodeRequestJSON(request, &input)
+	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return saveProjectRequest{}, false
 	}

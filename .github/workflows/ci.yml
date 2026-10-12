@@ -54,11 +54,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # 仕様書が壊れるとコード生成やモックがすべて失敗するため、最初に検査する。
-      - name: OpenAPI仕様書をパースできるか検証する
+      # YAMLとして読めるかに加えて、OpenAPI 3.1の文書として正しいか(必須の項目、参照切れ)を確かめる。
+      # 実装との食い違いは、go test の中の契約テスト(openapi_contract_test.go)で確かめる。
+      - name: OpenAPI仕様書が妥当か検証する
         working-directory: .
         run: |
-          python3 -m pip install --quiet pyyaml
-          python3 -c "import yaml, io; yaml.safe_load(io.open('openapi/openapi.yaml', encoding='utf-8'))"
+          python3 -m pip install --quiet openapi-spec-validator==0.9.0
+          python3 -m openapi_spec_validator openapi/openapi.yaml
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"

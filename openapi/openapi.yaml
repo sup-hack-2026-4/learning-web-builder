@@ -15,6 +15,7 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [service, status, version]
                 properties:
                   service: { type: string }
@@ -35,6 +36,7 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [authenticated, mode]
                 properties:
                   authenticated: { type: boolean }
@@ -77,6 +79,7 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [site, provider]
                 properties:
                   provider: { type: string, enum: [gemini, static-sample] }
@@ -140,6 +143,7 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [reply, choices, draft, missing, ready, provider]
                 properties:
                   reply: { type: string, minLength: 1, maxLength: 400 }
@@ -616,6 +620,8 @@ components:
             $ref: "#/components/schemas/QualityResult"
     SiteModel:
       type: object
+      # 保存APIは、theme・セクションの中も含めて、ここに無い項目を送ると400にする。
+      additionalProperties: false
       required: [id, topic, siteTitle, tagline, theme, sections]
       properties:
         id: { type: string, minLength: 1 }
@@ -624,6 +630,7 @@ components:
         tagline: { type: string, maxLength: 160 }
         theme:
           type: object
+          additionalProperties: false
           required: [primary, background, text, fontFamily, spacing]
           properties:
             primary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
@@ -639,6 +646,7 @@ components:
           maxItems: 8
           items:
             type: object
+            additionalProperties: false
             required: [id, kind, title, body, imageAlt, visible]
             properties:
               id: { type: string, minLength: 1 }
