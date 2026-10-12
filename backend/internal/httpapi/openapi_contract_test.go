@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,10 +100,18 @@ func (contract openAPIContract) lookup(tokens ...string) (any, string, bool) {
 		}
 		current = next
 		location += pointer(token)
-		if referenced, ok := current.(map[string]any); ok {
-			if reference, ok := referenced["$ref"].(string); ok && token != "schema" {
-				current, location = contract.dereference(reference)
+		// スキーマの中の $ref は検証器が解決するため、ここではたどらない。
+		// それ以外(応答など)は、参照の先がまた参照でも最後までたどる。
+		for token != "schema" {
+			referenced, ok := current.(map[string]any)
+			if !ok {
+				break
 			}
+			reference, ok := referenced["$ref"].(string)
+			if !ok {
+				break
+			}
+			current, location = contract.dereference(reference)
 		}
 	}
 	return current, location, true
@@ -246,7 +255,22 @@ func TestOpenAPISchemasCompile(t *testing.T) {
 	}
 }
 
-// 実装はリクエストの未知の項目を、入れ子の中も含めて DisallowUnknownFields で断る。
+// isObjectSchema は、オブジェクトを表すスキーマかどうか。
+// properties を書かずに type: object だけを書いたものも、何でも送れてしまうため含める。
+func isObjectSchema(node map[string]any) bool {
+	if _, ok := node["properties"].(map[string]any); ok {
+		return true
+	}
+	switch kind := node["type"].(type) {
+	case string:
+		return kind == "object"
+	case []any:
+		return slices.Contains(kind, any("object"))
+	}
+	return false
+}
+
+// 実装はリクエストの未知の項目を、入れ子の中も含めて断る。
 // 仕様書の側で additionalProperties: false を書き忘れると、仕様では送れて実装では400になる。
 // 応答も、書かれていない項目を返さないことを同じ書き方で示す。
 func TestOpenAPIObjectSchemasForbidUndeclaredProperties(t *testing.T) {
@@ -256,7 +280,7 @@ func TestOpenAPIObjectSchemasForbidUndeclaredProperties(t *testing.T) {
 	visit = func(location string, node any) {
 		switch value := node.(type) {
 		case map[string]any:
-			if _, isObjectSchema := value["properties"].(map[string]any); isObjectSchema {
+			if isObjectSchema(value) {
 				if allowed, declared := value["additionalProperties"].(bool); !declared || allowed {
 					t.Errorf("%s must declare additionalProperties: false", location)
 				}
@@ -433,8 +457,12 @@ func TestRequestsAndResponsesMatchOpenAPI(t *testing.T) {
 			if !documented {
 				t.Fatalf("expected OpenAPI to describe status %d of %s %s", response.Code, call.method, call.path)
 			}
-			// 本文のスキーマを書いていない応答(エラーや204)は、ステータスが書かれていることだけを確かめる。
+			// 本文のスキーマを書いていなくてよいのは、エラーと、本文を返さない応答(204)だけ。
+			// それらは、ステータスが書かれていることだけを確かめる。
 			if schema == nil {
+				if response.Code < http.StatusMultipleChoices && response.Body.Len() > 0 {
+					t.Fatalf("expected OpenAPI to describe the body of status %d of %s %s: %s", response.Code, call.method, call.path, response.Body.String())
+				}
 				return
 			}
 			if err := schema.Validate(decodeJSON(t, response.Body.Bytes())); err != nil {
@@ -462,6 +490,32 @@ func eachObject(location string, value any, visit func(location string, object m
 			eachObject(fmt.Sprintf("%s[%d]", location, index), child, visit)
 		}
 	}
+}
+
+// undeclaredFields は、オブジェクトへ足して試す、仕様書に無い項目名を返す。
+// まったく知らない名前に加えて、既にある項目の大文字違いも足す。encoding/json は項目名の
+// 大文字と小文字を区別せずに突き合わせるため、DisallowUnknownFields だけでは後者を断れない。
+func undeclaredFields(object map[string]any) []string {
+	names := []string{"unknownField"}
+	for key := range object {
+		if upper := strings.ToUpper(key); upper != key {
+			names = append(names, upper)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// addUndeclaredField は、項目を足す。既にある項目の大文字違いには元の値を入れ、
+// 値の型が合わないことを理由に断られないようにする。
+func addUndeclaredField(object map[string]any, name string) {
+	var value any = true
+	for key, existing := range object {
+		if key != name && strings.ToUpper(key) == name {
+			value = existing
+		}
+	}
+	object[name] = value
 }
 
 // 受け付けるリクエストのどの階層に未知の項目を足しても、仕様書と実装がそろって断ることを確かめる。
@@ -501,30 +555,34 @@ func TestUnknownFieldsAreRejectedByBothOpenAPIAndTheServer(t *testing.T) {
 				t.Fatalf("expected the server to accept the unmodified request with %d, got %d: %s", call.status, response.Code, response.Body.String())
 			}
 
-			objects := 0
-			eachObject("$", decodeJSON(t, []byte(call.body)), func(string, map[string]any) { objects++ })
-			for target := 0; target < objects; target++ {
-				body := decodeJSON(t, []byte(call.body))
-				index, location := 0, ""
-				eachObject("$", body, func(current string, object map[string]any) {
-					if index == target {
-						object["unknownField"] = true
-						location = current
-					}
-					index++
-				})
-				t.Run(location, func(t *testing.T) {
-					if err := schema.Validate(body); err == nil {
-						t.Errorf("expected OpenAPI to reject an unknown field at %s", location)
-					}
-					encoded, err := json.Marshal(body)
-					if err != nil {
-						t.Fatalf("marshal request: %v", err)
-					}
-					if response := call.serve(string(encoded)); response.Code != http.StatusBadRequest {
-						t.Errorf("expected the server to reject an unknown field at %s with 400, got %d: %s", location, response.Code, response.Body.String())
-					}
-				})
+			var additions [][]string
+			eachObject("$", decodeJSON(t, []byte(call.body)), func(_ string, object map[string]any) {
+				additions = append(additions, undeclaredFields(object))
+			})
+			for target, names := range additions {
+				for _, name := range names {
+					body := decodeJSON(t, []byte(call.body))
+					index, location := 0, ""
+					eachObject("$", body, func(current string, object map[string]any) {
+						if index == target {
+							addUndeclaredField(object, name)
+							location = current + "." + name
+						}
+						index++
+					})
+					t.Run(location, func(t *testing.T) {
+						if err := schema.Validate(body); err == nil {
+							t.Errorf("expected OpenAPI to reject the undeclared field %s", location)
+						}
+						encoded, err := json.Marshal(body)
+						if err != nil {
+							t.Fatalf("marshal request: %v", err)
+						}
+						if response := call.serve(string(encoded)); response.Code != http.StatusBadRequest {
+							t.Errorf("expected the server to reject the undeclared field %s with 400, got %d: %s", location, response.Code, response.Body.String())
+						}
+					})
+				}
 			}
 		})
 	}

@@ -3,8 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -44,7 +42,7 @@ type ConceptAdvisor interface {
 type generateRequest struct {
 	Topic string `json:"topic"`
 	// 相談で固めたコンセプト。省略できる。
-	// DisallowUnknownFields があるため、フィールドを足すだけで後方互換を保てる。
+	// decodeRequestJSON が未知の項目を断るため、フィールドを足すだけで後方互換を保てる。
 	Concept concept.Draft `json:"concept"`
 }
 
@@ -108,13 +106,7 @@ func generate(generator SiteGenerator) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
 		var input generateRequest
-		decoder := json.NewDecoder(request.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&input); err != nil {
-			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if _, err := decodeRequestJSON(request, &input); err != nil {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 			return
 		}

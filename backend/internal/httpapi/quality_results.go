@@ -1,9 +1,7 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -126,13 +124,7 @@ func validatedProjectID(writer http.ResponseWriter, request *http.Request) (stri
 func decodeQualityResultsRequest(writer http.ResponseWriter, request *http.Request) ([]project.QualityResultInput, bool) {
 	request.Body = http.MaxBytesReader(writer, request.Body, 64<<10)
 	var input saveQualityResultsRequest
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return nil, false
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if _, err := decodeRequestJSON(request, &input); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return nil, false
 	}
