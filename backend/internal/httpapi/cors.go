@@ -70,6 +70,9 @@ func cors(allowedOrigins []string) func(http.Handler) http.Handler {
 
 			writer.Header().Set("Access-Control-Allow-Origin", normalizedOrigin)
 			if !isPreflight(request) {
+				// 別オリジンの画面は、公開したヘッダーしか読めない。
+				// 回数制限や混雑で断ったときの待ち時間を、画面から伝えられるようにする(#133)。
+				writer.Header().Set("Access-Control-Expose-Headers", "Retry-After")
 				next.ServeHTTP(writer, request)
 				return
 			}

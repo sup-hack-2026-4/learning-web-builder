@@ -87,14 +87,19 @@ go run ./cmd/api
 
 ```powershell
 psql $env:DATABASE_URL -f db/migrations/001_initial.sql
+psql $env:DATABASE_URL -f db/migrations/002_learning_record.sql
 ```
+
+`db/migrations`のファイルは番号順にすべて適用してください。
+`002`を適用する前のDBでは、保存・読み込みのAPIが500を返します。
 
 その後、バックエンドの`DATABASE_URL`と`CLERK_SECRET_KEY`を環境変数として渡してください（[環境変数](#環境変数)を参照）。
 
-- `POST /api/v1/projects`: 認証ユーザーのプロジェクトを新規保存
+- `POST /api/v1/projects`: 認証ユーザーのプロジェクトを新規保存（作品と一緒に、学習メモ・変更コード・AI利用記録も保存する）
 - `GET /api/v1/projects`: 認証ユーザーの保存済みプロジェクトを更新日時順で一覧取得
-- `GET /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを再取得
-- `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新
+- `GET /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを、学習の記録も含めて再取得
+- `PUT /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを更新（学習の記録を送らなければ、保存済みの記録を残す）
+- `DELETE /api/v1/projects/{projectId}`: 所有者本人のプロジェクトを削除（学習メモ・品質チェック結果も一緒に消える）
 - `POST /api/v1/projects/{projectId}/quality-results`: 品質チェック結果を一括保存
 - `GET /api/v1/projects/{projectId}/quality-results`: 品質チェック履歴を新しい順で取得
 - DB未設定時も生成・ゲスト機能は起動し、保存APIだけが`503`を返します
@@ -152,6 +157,15 @@ npm.cmd run build
 cd ../backend
 go test ./...
 go vet ./...
+```
+
+保存・復元のテストは実際のPostgreSQLを使うため、`TEST_DATABASE_URL`が無いと飛ばされます（CIでは必ず実行します）。
+手元で実行する場合は、PostgreSQLを起動してから接続先を渡します。テストごとに専用のスキーマを作って消すため、既存のテーブルには触りません。
+
+```powershell
+docker compose up -d postgres
+$env:TEST_DATABASE_URL = "postgres://app:app@localhost:5432/learning_web_builder?sslmode=disable"
+go test ./...
 ```
 
 E2Eを実行する場合は、初回だけブラウザを取得します。`test:e2e`はビルドとプレビュー起動まで自動で行うため、開発サーバーを別途起動する必要はありません。

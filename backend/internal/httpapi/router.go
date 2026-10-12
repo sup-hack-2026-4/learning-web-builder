@@ -3,8 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -24,6 +22,8 @@ type Config struct {
 	Generator      SiteGenerator
 	Advisor        ConceptAdvisor
 	Projects       project.Repository
+	// 手前にある信頼できるプロキシの段数。0ならX-Forwarded-Forを見ず、接続元のIPで数える。
+	TrustedProxyHops int
 }
 
 type SessionAuthenticator interface {
@@ -42,14 +42,13 @@ type ConceptAdvisor interface {
 type generateRequest struct {
 	Topic string `json:"topic"`
 	// 相談で固めたコンセプト。省略できる。
-	// DisallowUnknownFields があるため、フィールドを足すだけで後方互換を保てる。
+	// decodeRequestJSON が未知の項目を断るため、フィールドを足すだけで後方互換を保てる。
 	Concept concept.Draft `json:"concept"`
 }
 
 func NewRouter(config Config) http.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
 	router.Use(cors(config.AllowedOrigins))
@@ -58,7 +57,7 @@ func NewRouter(config Config) http.Handler {
 	// 画面が動かなくなる範囲が広がりすぎる。
 	aiLimiter := newRateLimiter(aiRequestsPerWindow, aiRateLimitWindow)
 	aiSlots := make(chan struct{}, aiConcurrencyLimit)
-	limitAI := limitAIUsage(aiLimiter, aiSlots)
+	limitAI := limitAIUsage(aiLimiter, aiSlots, config.TrustedProxyHops)
 
 	router.Route("/api/v1", func(api chi.Router) {
 		api.Get("/health", func(writer http.ResponseWriter, _ *http.Request) {
@@ -73,6 +72,7 @@ func NewRouter(config Config) http.Handler {
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects", listProjects(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}", getProject(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Put("/projects/{projectId}", updateProject(config.Projects))
+		api.With(optionalAuthentication(config.Authenticator)).Delete("/projects/{projectId}", deleteProject(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Post("/projects/{projectId}/quality-results", saveQualityResults(config.Projects))
 		api.With(optionalAuthentication(config.Authenticator)).Get("/projects/{projectId}/quality-results", listQualityResults(config.Projects))
 	})
@@ -106,13 +106,7 @@ func generate(generator SiteGenerator) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
 		var input generateRequest
-		decoder := json.NewDecoder(request.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&input); err != nil {
-			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if _, err := decodeRequestJSON(request, &input); err != nil {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 			return
 		}

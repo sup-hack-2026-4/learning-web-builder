@@ -3,7 +3,8 @@ import { useMutation } from "@tanstack/react-query";
 import { MessageCircle, Send, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { conceptChat } from "@/lib/api";
+import { AiBusyError, conceptChat } from "@/lib/api";
+import { useTokenProvider } from "@/features/auth/token-provider";
 import { useBuilderStore } from "@/features/site-model/store";
 import {
   isDraftReady,
@@ -38,6 +39,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
   const dropLastChatMessage = useBuilderStore((state) => state.dropLastChatMessage);
   const setConceptReply = useBuilderStore((state) => state.setConceptReply);
   const resetConcept = useBuilderStore((state) => state.resetConcept);
+  const getToken = useTokenProvider();
 
   const [input, setInput] = useState("");
 
@@ -55,7 +57,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
       appendChatMessage(next);
       // どの相談に対する応答かを覚えておく。返るころにやり直されていたら捨てる。
       const generation = conceptGeneration;
-      const reply = await conceptChat([...chatMessages, next], conceptDraft);
+      const reply = await conceptChat([...chatMessages, next], conceptDraft, getToken);
       return { reply, generation };
     },
     onSuccess: ({ reply, generation }) => {
@@ -65,7 +67,11 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
       setConceptReply(reply.draft, reply.choices);
       setInput("");
     },
-    onError: () => {
+    // 失敗したときにも、どの相談への送信だったかを確かめられるようにする。
+    onMutate: () => ({ generation: conceptGeneration }),
+    onError: (_error, _text, context) => {
+      // やり直したあとに古い送信の失敗が届いたら、新しい相談の発言を消してしまう。
+      if (context?.generation !== useBuilderStore.getState().conceptGeneration) return;
       // 楽観的に足した発言を残すと、再送のたびに同じ文が積み上がる。
       // 入力欄には文面が残っているので、そのまま送り直せる。
       dropLastChatMessage();
@@ -124,9 +130,12 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
         </div>
       )}
 
-      {started && (
-        <>
-          <ol className="mt-3 space-y-2" data-testid="concept-chat-log">
+      {/* 新しい応答が届いたことを読み上げで伝える。ライブ領域は中身より先に存在しないと
+          追加を検知できないため、相談を始める前から置いておき、最初の問いかけも読み上げさせる。 */}
+      <div role="log" aria-label="相談のやりとり">
+        {started && (
+          // 自由入力とAIの出力は、空白のない長いURLなどを含みうる。枠の中で折り返させる。
+          <ol className="mt-3 space-y-2 wrap-anywhere" data-testid="concept-chat-log">
             {chatMessages.map((message, index) => (
               <li
                 key={`${message.role}-${index}`}
@@ -141,20 +150,27 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
               </li>
             ))}
           </ol>
+        )}
+      </div>
 
-          {/* ローディング状態 */}
-          {chat.isPending && (
-            <p className="mt-2 text-xs text-slate-500" data-testid="concept-chat-loading">
-              考えています…
-            </p>
-          )}
+      {started && (
+        <>
+          {/* ローディング状態。送信のたびに出入りするので、領域は置いたまま中身だけ切り替える。
+              空の間も非表示（display:none）にはしない。読み上げの対象から外れ、追加を検知できなくなるため。
+              空のpは高さ0なので、余白だけを待機中に付ける。 */}
+          <p role="status" className={`text-xs text-slate-500 ${chat.isPending ? "mt-2" : ""}`} data-testid="concept-chat-loading">
+            {chat.isPending && "考えています…"}
+          </p>
 
-          {/* エラー状態。相談できなくても、題材を直接入力すれば生成には進める。 */}
+          {/* エラー状態。相談できなくても、題材を直接入力すれば生成には進める。
+              回数制限や混雑のときは、生成も同じ枠で断られるため、題材入力へは案内せず待ち時間だけを伝える(#133)。 */}
           {chat.isError && (
-            <p className="mt-2 flex gap-2 text-xs text-red-700" data-testid="concept-chat-error">
+            <p role="alert" className="mt-2 flex gap-2 text-xs text-danger" data-testid="concept-chat-error">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <span className="leading-5">
-                相談を利用できませんでした。もう一度送信するか、下の題材入力から直接たたき台を作れます。
+                {chat.error instanceof AiBusyError
+                  ? chat.error.message
+                  : "相談を利用できませんでした。もう一度送信するか、下の題材入力から直接たたき台を作れます。"}
               </span>
             </p>
           )}
@@ -163,8 +179,8 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
           {!chat.isPending && conceptChoices.length > 0 && (
             <ul className="mt-2 flex flex-wrap gap-2">
               {conceptChoices.map((choice) => (
-                <li key={choice}>
-                  <Button variant="secondary" className="text-xs" onClick={() => send(choice)}>
+                <li key={choice} className="max-w-full">
+                  <Button variant="secondary" className="max-w-full text-xs wrap-anywhere" onClick={() => send(choice)}>
                     {choice}
                   </Button>
                 </li>
@@ -185,8 +201,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
               placeholder="例：近所の家族連れに来てほしい"
             />
             {/* 左パネルは狭く、横並びにすると「送信」が2行に割れる。縦に積んで文字を折らせない。 */}
-            <Button className="w-full whitespace-nowrap" disabled={!input.trim() || chat.isPending}>
-              <Send className="mr-2 size-4" />
+            <Button className="w-full whitespace-nowrap" disabled={!input.trim()} loading={chat.isPending} icon={<Send className="size-4" />}>
               送信
             </Button>
             <Button type="button" variant="ghost" className="w-full whitespace-nowrap" onClick={startOver}>
@@ -199,7 +214,7 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
               {decided.map((item) => (
                 <div key={item.label} className="flex gap-2">
                   <dt className="shrink-0 font-bold text-slate-500">{item.label}</dt>
-                  <dd className="text-slate-800">{item.value}</dd>
+                  <dd className="min-w-0 text-slate-800 wrap-anywhere">{item.value}</dd>
                 </div>
               ))}
             </dl>
@@ -216,11 +231,12 @@ export function ConceptChatPanel({ onGenerate, generating }: ConceptChatPanelPro
                まだ反映されていない内容でたたき台ができてしまう。 */
             <Button
               className="mt-3 w-full"
-              disabled={generating || chat.isPending}
+              disabled={chat.isPending}
+              loading={generating}
+              icon={<Sparkles className="size-4" />}
               onClick={() => onGenerate(conceptDraft)}
               data-testid="generate-from-concept"
             >
-              <Sparkles className="mr-2 size-4" />
               {generating ? "生成中…" : "このコンセプトで生成"}
             </Button>
           )}

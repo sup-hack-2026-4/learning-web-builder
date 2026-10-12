@@ -7,9 +7,12 @@ export type SiteArtifacts = {
   html: string;
   /** 提出物(ZIP)に入れるCSS。編集用のスタイルは含めない。 */
   css: string;
+  /** 提出物(ZIP)に入れるJavaScript。編集用の処理は含めない。 */
   javascript: string;
   /** 編集画面のプレビュー用。cssに選択枠などを上乗せしたもの。 */
   editorCss: string;
+  /** 編集画面のプレビュー用。要素の選択を親画面へ伝え、テーマ更新を受け取る。 */
+  editorJavascript: string;
   srcdoc: string;
   /**
    * 提出物ZIPへ同梱する画像。表示中のセクションで実際に使われているものだけを入れる。
@@ -103,7 +106,7 @@ function buildSectionImageHtml(section: SiteSection): string {
   if (section.image) {
     return `<img class="section-image" src="${escapeHtml(sectionImagePath(section.image))}" alt="${escapeHtml(section.imageAlt)}">`;
   }
-  return `<div class="image-placeholder" role="img" aria-label="${escapeHtml(section.imageAlt)}"><span>IMAGE</span></div>`;
+  return `<div class="image-placeholder" role="img" aria-label="${escapeHtml(section.imageAlt)}"><span>画像</span></div>`;
 }
 
 export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {
@@ -171,7 +174,8 @@ export function buildSiteArtifacts(model: SiteModel): SiteArtifacts {
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; color: var(--text); background: var(--background); line-height: 1.75; }
+/* 見出しや本文には、空白のない長いURLなども入りうる。狭い画面で横にはみ出さないよう、必要なときだけ単語の途中でも折り返す。 */
+body { margin: 0; color: var(--text); background: var(--background); line-height: 1.75; overflow-wrap: anywhere; }
 .site-header { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: calc(var(--space) * 0.9) clamp(20px, 6vw, 80px); color: var(--text); background: var(--surface); border-bottom: 1px solid var(--border); }
 .logo { color: var(--primary); font-weight: 800; text-decoration: none; }
 .site-header span { color: var(--text-muted); font-size: 13px; }
@@ -191,7 +195,15 @@ footer { padding: calc(var(--space) * 1.4); text-align: center; color: var(--tex
   .section-hero { min-height: 54vh; }
 }`;
 
-  const javascript = `document.querySelectorAll('[data-builder-id]').forEach((element) => {
+  // 生成するサイトはHTMLとCSSだけで動くため、提出物のスクリプトには処理を入れない。
+  // ファイル自体は残し、あとから自分で動きを書き足せる場所として渡す。
+  const javascript = `// このサイトは、いまのところJavaScriptを使っていません。
+// ボタンを押したときの動きなどを足したくなったら、ここに書きます。
+`;
+
+  // 編集画面でだけ使うスクリプト。クリックを選択として扱うためリンクの移動を止めるので、
+  // 提出物へ入れるとロゴから本文へのリンク(#main)が動かなくなる。
+  const editorJavascript = `document.querySelectorAll('[data-builder-id]').forEach((element) => {
   element.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -223,9 +235,9 @@ window.addEventListener('message', (event) => {
   const srcdoc = inlineSectionImages(
     html
       .replace('<link rel="stylesheet" href="style.css">', `<style id="builder-theme">${editorCss}</style>`)
-      .replace('<script src="script.js"></script>', `<script>${javascript}</script>`),
+      .replace('<script src="script.js"></script>', `<script>${editorJavascript}</script>`),
     images,
   );
 
-  return { html, css, javascript, editorCss, srcdoc, images };
+  return { html, css, javascript, editorCss, editorJavascript, srcdoc, images };
 }

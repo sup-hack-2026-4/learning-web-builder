@@ -1,9 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"log"
 	"net/http"
 
@@ -27,13 +24,7 @@ func conceptChat(advisor ConceptAdvisor) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		request.Body = http.MaxBytesReader(writer, request.Body, maxConceptChatBodySize)
 		var input conceptChatRequest
-		decoder := json.NewDecoder(request.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&input); err != nil {
-			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if _, err := decodeRequestJSON(request, &input); err != nil {
 			writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 			return
 		}

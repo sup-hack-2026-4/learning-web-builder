@@ -127,8 +127,9 @@ export function toAxeFindings(violations: RawAxeViolation[]): AxeFinding[] {
       return {
         ruleId: violation.id,
         impact: toImpact(violation.impact),
-        summary: guide?.summary ?? violation.help ?? "自動チェックで問題が見つかりました。",
-        why: guide?.why ?? "axeの検査項目です。詳しくはルールID（英語）で調べられます。",
+        // 辞書に無いルールでも、axeの英語の原文は出さない。ルールIDを手がかりとして示す。
+        summary: guide?.summary ?? `自動チェックで問題が見つかりました（ルールID: ${violation.id}）。`,
+        why: guide?.why ?? "この項目の日本語の説明はまだありません。ルールIDで検索すると、直し方を調べられます（英語の資料です）。",
         target: toTarget(violation),
         count: violation.nodes?.length ?? 1,
       };
@@ -138,13 +139,13 @@ export function toAxeFindings(violations: RawAxeViolation[]): AxeFinding[] {
 
 /** 品質レポート・保存APIへ渡す1件のチェック結果にまとめる。 */
 export function summarizeAxeFindings(findings: AxeFinding[]): QualityCheck {
-  const label = "アクセシビリティ（axe）";
+  const label = "アクセシビリティの自動チェック";
   if (findings.length === 0) {
     return {
       id: "axe",
       label,
       passed: true,
-      detail: "axeの自動チェックで見つかる問題はありませんでした。",
+      detail: "自動チェックで見つかる問題はありませんでした。",
     };
   }
 

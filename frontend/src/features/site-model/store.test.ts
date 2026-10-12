@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useBuilderStore } from "./store";
+import { captureSiteGeneration, useBuilderStore } from "./store";
 import { createSampleSite } from "./sample";
 import { emptyDraft } from "@/features/concept/schema";
 import { maxSections, minSections } from "./sections";
@@ -27,6 +27,8 @@ function seedConversation() {
 beforeEach(() => {
   useBuilderStore.getState().resetConcept();
   useBuilderStore.setState({ notes: [], aiUsage: [], site: createSampleSite(), selectedElementId: "hero" });
+  // 前のテストの変更記録を持ち越さないよう、差し替えたサイトを基準にし直す。
+  useBuilderStore.getState().discardTracking();
 });
 
 describe("相談の履歴", () => {
@@ -87,7 +89,7 @@ describe("サイトの差し替えと相談の関係", () => {
     seedConversation();
     const before = useBuilderStore.getState().conceptGeneration;
 
-    useBuilderStore.getState().loadSite(createSampleSite("別の題材"));
+    useBuilderStore.getState().loadSite(createSampleSite("別の題材"), { notes: [], aiUsage: [] });
 
     const state = useBuilderStore.getState();
     expect(state.chatMessages).toEqual([]);
@@ -99,9 +101,27 @@ describe("サイトの差し替えと相談の関係", () => {
     const site = createSampleSite("別の題材");
     site.sections = site.sections.filter((section) => section.id !== "hero");
 
-    useBuilderStore.getState().loadSite(site);
+    useBuilderStore.getState().loadSite(site, { notes: [], aiUsage: [] });
 
     expect(useBuilderStore.getState().selectedElementId).toBe(site.sections[0].id);
+  });
+
+  it("プロジェクトを読み込むと、保存していた学習の記録を戻す", () => {
+    // 記録を空にすると、保存→読み込み→ZIP出力で学習の成果が抜け落ちる(#114)。
+    useBuilderStore.getState().addNote("いまの題材のメモ", "読み込むと置き換わる");
+    const notes = [{
+      id: "note-1",
+      target: "内容変更（活動紹介）",
+      reason: "活動の様子が伝わるよう写真の説明を足した",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      codeChanges: ["<p>毎週金曜に撮影会をしています</p>"],
+    }];
+    const aiUsage = [{ provider: "gemini" as const, purpose: "サイト構成と仮文章の生成", generatedAt: "2026-09-01T00:00:00.000Z" }];
+
+    useBuilderStore.getState().loadSite(createSampleSite("別の題材"), { notes, aiUsage });
+
+    expect(useBuilderStore.getState().notes).toEqual(notes);
+    expect(useBuilderStore.getState().aiUsage).toEqual(aiUsage);
   });
 
   it("全体をリセットすると相談も消える", () => {
@@ -232,5 +252,64 @@ describe("セクションの画像", () => {
   it("画像を設定してもスキーマ検証を通る", () => {
     useBuilderStore.getState().setSectionImage("about", image);
     expect(() => siteModelSchema.parse(useBuilderStore.getState().site)).not.toThrow();
+  });
+});
+
+describe("作業の世代(#115)", () => {
+  it("生成・読み込み・リセットのたびに進み、始めた時点の作業ではなくなったと分かる", () => {
+    const store = useBuilderStore.getState();
+    for (const replace of [
+      () => store.setSite(createSampleSite("植物園"), "gemini"),
+      () => store.loadSite(createSampleSite("別の題材"), { notes: [], aiUsage: [] }),
+      () => store.reset(),
+    ]) {
+      const before = useBuilderStore.getState().siteGeneration;
+      const isCurrent = captureSiteGeneration();
+
+      replace();
+
+      expect(useBuilderStore.getState().siteGeneration).toBe(before + 1);
+      expect(isCurrent()).toBe(false);
+    }
+  });
+
+  it("作品の中身の編集では進まない", () => {
+    const isCurrent = captureSiteGeneration();
+
+    useBuilderStore.getState().updateSection("about", { body: "書き換えた本文" });
+    useBuilderStore.getState().previewTheme("primary", "#e11d48");
+    useBuilderStore.getState().addSection("gallery");
+    useBuilderStore.getState().addNote("内容変更", "理由");
+
+    expect(isCurrent()).toBe(true);
+  });
+
+  it("リセットの直後に生成しても、それぞれで世代が進む", () => {
+    const before = useBuilderStore.getState().siteGeneration;
+
+    useBuilderStore.getState().reset();
+    useBuilderStore.getState().setSite(createSampleSite("植物園"), "gemini");
+
+    expect(useBuilderStore.getState().siteGeneration).toBe(before + 2);
+  });
+
+  it("作品を差し替えるたびに差し替えのidと出どころが変わり、編集では変わらない", () => {
+    const store = useBuilderStore.getState();
+    const ids = new Set<string>();
+    const expectations: Array<[() => void, string]> = [
+      [() => store.setSite(createSampleSite("植物園"), "gemini"), "generated"],
+      [() => store.loadSite(createSampleSite("別の題材"), { notes: [], aiUsage: [] }), "project"],
+      [() => store.reset(), "sample"],
+    ];
+    for (const [replace, origin] of expectations) {
+      replace();
+      ids.add(useBuilderStore.getState().workspaceId);
+      expect(useBuilderStore.getState().siteOrigin).toBe(origin);
+    }
+    expect(ids.size).toBe(expectations.length);
+
+    const workspaceId = useBuilderStore.getState().workspaceId;
+    useBuilderStore.getState().updateSection("about", { body: "書き換えた本文" });
+    expect(useBuilderStore.getState().workspaceId).toBe(workspaceId);
   });
 });

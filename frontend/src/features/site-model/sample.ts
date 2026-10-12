@@ -1,12 +1,51 @@
-import type { SiteModel } from "./schema";
+import {
+  MAX_SECTION_TITLE_LENGTH,
+  MAX_SITE_TITLE_LENGTH,
+  MAX_TAGLINE_LENGTH,
+  MAX_TOPIC_LENGTH,
+  codePointLength,
+  type SiteModel,
+} from "./schema";
 
+// 文字数の上限はコードポイントで数えるため、切るときもコードポイント単位で切る。
+// UTF-16の単位で切ると、絵文字などを途中で割ってしまう。
+function truncateCodePoints(value: string, max: number): string {
+  return [...value].slice(0, max).join("");
+}
+
+const siteTextLimits = [
+  ["topic", MAX_TOPIC_LENGTH],
+  ["siteTitle", MAX_SITE_TITLE_LENGTH],
+  ["tagline", MAX_TAGLINE_LENGTH],
+] as const;
+
+// 題材・サイト名・キャッチコピーを、上限に収める。超えていなければ同じサイトを返す。
+// 以前の版の見本は題材を切らずにこれらへ使っていた。画面に編集欄が無いため、
+// 超えたまま復元すると、利用者には直す手段が無く保存できない(#130)。
+// 見出しや本文は編集欄で直せるので、ここでは触らない。
+export function fitSiteTextLimits(site: SiteModel): SiteModel {
+  let fitted = site;
+  for (const [key, max] of siteTextLimits) {
+    const value = site[key];
+    // 下書きは検証せずに復元するため、文字列でない値も来うる。ここでは触らず、そのまま返す。
+    if (typeof value !== "string" || codePointLength(value) <= max) continue;
+    // 見本と同じく、前後の空白を除いてから切る。先頭に空白が並んでいると、
+    // そのまま切った結果が空白だけになり、サーバーに空として断られるため。
+    fitted = { ...fitted, [key]: truncateCodePoints(value.trim(), max) };
+  }
+  return fitted;
+}
+
+// 生成を使えないときの見本。題材が長くても、スキーマの上限を守る(#117)。
+// サーバー側の見本(backend/internal/site/sample.go)と同じく、サイト名と最初の見出しは見出しの上限で切る。
 export function createSampleSite(topic = "地域の小さな植物園"): SiteModel {
-  const cleanTopic = topic.trim() || "地域の小さな植物園";
+  const cleanTopic = truncateCodePoints(topic.trim(), MAX_TOPIC_LENGTH) || "地域の小さな植物園";
+  const title = truncateCodePoints(cleanTopic, MAX_SECTION_TITLE_LENGTH);
 
   return {
     id: crypto.randomUUID(),
     topic: cleanTopic,
-    siteTitle: cleanTopic,
+    siteTitle: title,
     tagline: `${cleanTopic}の魅力を、初めての方にも分かりやすく紹介します。`,
     theme: {
       primary: "#2563eb",
@@ -19,7 +58,7 @@ export function createSampleSite(topic = "地域の小さな植物園"): SiteMod
       {
         id: "hero",
         kind: "hero",
-        title: cleanTopic,
+        title,
         body: "ここはAIが生成した仮の紹介文です。公開前に、根拠のある事実情報へ自分で書き換えてください。",
         imageAlt: "",
         visible: true,

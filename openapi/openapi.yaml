@@ -15,11 +15,14 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [service, status, version]
                 properties:
                   service: { type: string }
                   status: { type: string, const: ok }
                   version: { type: string }
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
   /session:
     get:
       operationId: getSession
@@ -33,6 +36,7 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [authenticated, mode]
                 properties:
                   authenticated: { type: boolean }
@@ -40,11 +44,17 @@ paths:
                   userId: { type: string, minLength: 1 }
         "401":
           description: Invalid or expired authentication token
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
   /generate:
     post:
       operationId: generateSite
+      security:
+        - {}
+        - clerkBearer: []
       requestBody:
         required: true
+        description: 本文は16 KiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -52,7 +62,13 @@ paths:
               additionalProperties: false
               required: [topic]
               properties:
-                topic: { type: string, minLength: 1, maxLength: 100 }
+                topic:
+                  type: string
+                  description: >-
+                    前後の空白を除いてから文字数を数える。
+                    空白だけの文字列は400になる。
+                  minLength: 1
+                  maxLength: 100
                 concept:
                   # topicはリクエスト直下の値が正となり、ここに書いた値は上書きされる。
                   $ref: "#/components/schemas/ConceptDraft"
@@ -63,16 +79,23 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [site, provider]
                 properties:
                   provider: { type: string, enum: [gemini, static-sample] }
                   site: { $ref: "#/components/schemas/SiteModel" }
         "400":
           description: Invalid input
+        "401":
+          description: Invalid or expired authentication token
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "429":
-          description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
+          description: 利用量の上限を超えた（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
+        "500":
+          description: Site generation failed
         "503":
-          description: 同時実行の上限に達した（Retry-Afterに待ち時間を返す）
+          description: 同時実行の上限に達した（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
   /concept/chat:
     post:
       operationId: conceptChat
@@ -80,8 +103,12 @@ paths:
       description: >-
         会話履歴はサーバーに保存しない。呼び出す側が毎回まとめて送る。
         Geminiを利用できないときは、静的な質問テンプレートを返して画面を止めない。
+      security:
+        - {}
+        - clerkBearer: []
       requestBody:
         required: true
+        description: 本文は64 KiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -91,6 +118,9 @@ paths:
               properties:
                 messages:
                   type: array
+                  description: >-
+                    userとmodelが交互に並び、末尾は必ずuserの発言にする。
+                    同じroleが続く履歴や、modelの発言で終わる履歴は400になる。
                   minItems: 1
                   maxItems: 24
                   items:
@@ -99,7 +129,11 @@ paths:
                     required: [role, text]
                     properties:
                       role: { type: string, enum: [user, model] }
-                      text: { type: string, minLength: 1, maxLength: 500 }
+                      text:
+                        type: string
+                        description: 空白だけの文字列は400になる。
+                        minLength: 1
+                        maxLength: 500
                 draft:
                   $ref: "#/components/schemas/ConceptDraft"
       responses:
@@ -109,6 +143,7 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [reply, choices, draft, missing, ready, provider]
                 properties:
                   reply: { type: string, minLength: 1, maxLength: 400 }
@@ -128,10 +163,14 @@ paths:
                   provider: { type: string, enum: [gemini, static-sample] }
         "400":
           description: Invalid input
+        "401":
+          description: Invalid or expired authentication token
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "429":
-          description: 利用量の上限を超えた（Retry-Afterに待ち時間を返す）
+          description: 利用量の上限を超えた（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
         "503":
-          description: 同時実行の上限に達した（Retry-Afterに待ち時間を返す）
+          description: 同時実行の上限に達した（Retry-Afterに待ち時間の秒数を返す。別オリジンからも読めるよう公開している）
   /projects:
     get:
       operationId: listProjects
@@ -146,6 +185,10 @@ paths:
                 $ref: "#/components/schemas/ProjectList"
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
+        "500":
+          description: Projects could not be loaded
         "503":
           description: Project persistence is not configured
     post:
@@ -154,6 +197,7 @@ paths:
         - clerkBearer: []
       requestBody:
         required: true
+        description: 本文は1 MiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -166,9 +210,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request or SiteModel
+          description: Invalid request, SiteModel, or learning record. Also returned when a non-null baseVersion is sent
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
+        "500":
+          description: Project could not be saved
         "503":
           description: Project persistence is not configured
   /projects/{projectId}:
@@ -194,8 +242,12 @@ paths:
           description: Invalid project ID
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Project could not be loaded
         "503":
           description: Project persistence is not configured
     put:
@@ -211,6 +263,7 @@ paths:
             format: uuid
       requestBody:
         required: true
+        description: 本文は1 MiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -223,11 +276,52 @@ paths:
               schema:
                 $ref: "#/components/schemas/Project"
         "400":
-          description: Invalid request, project ID, or SiteModel
+          description: Invalid request, project ID, SiteModel, learning record, or baseVersion
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
+        "409":
+          description: >-
+            baseVersionが保存済みのバージョンと一致しない。読み込んだあとに別の場所で更新されている。
+            保存はしていない。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectConflict"
+        "500":
+          description: Project could not be saved
+        "503":
+          description: Project persistence is not configured
+    delete:
+      operationId: deleteProject
+      description: >-
+        Deletes the project and, through ON DELETE CASCADE, its learning notes,
+        quality results, and AI usage events.
+      security:
+        - clerkBearer: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Project was deleted
+        "400":
+          description: Invalid project ID
+        "401":
+          description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
+        "404":
+          description: Project was not found for the authenticated owner
+        "500":
+          description: Project could not be deleted
         "503":
           description: Project persistence is not configured
   /projects/{projectId}/quality-results:
@@ -253,8 +347,12 @@ paths:
           description: Invalid project ID
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Quality results could not be loaded
         "503":
           description: Project persistence is not configured
     post:
@@ -270,6 +368,7 @@ paths:
             format: uuid
       requestBody:
         required: true
+        description: 本文は64 KiBまで。超えると400になる。
         content:
           application/json:
             schema:
@@ -285,11 +384,22 @@ paths:
           description: Invalid project ID or quality results
         "401":
           description: Authentication is required
+        "403":
+          $ref: "#/components/responses/OriginNotAllowed"
         "404":
           description: Project was not found for the authenticated owner
+        "500":
+          description: Quality results could not be saved
         "503":
           description: Project persistence is not configured
 components:
+  responses:
+    OriginNotAllowed:
+      description: >-
+        Originヘッダの形式が不正、または許可リストにない。
+        全エンドポイント共通のCORS検証で、認証・利用制限・入力検証より先に判定するため、
+        不正なトークンや不正な入力を送っていても403が優先される。
+        Originヘッダがないリクエスト（ブラウザ以外からの呼び出しなど）は検証されない。
   securitySchemes:
     clerkBearer:
       type: http
@@ -315,13 +425,117 @@ components:
       type: object
       additionalProperties: false
       required: [site]
+      description: >-
+        作品と学習の記録をまとめて保存する。notesとaiUsageは省略またはnullにできる。
+        両方とも省略(またはnull)のとき、新規保存(POST)では空の記録を作り、
+        上書き保存(PUT)では保存済みの記録をそのまま残す。
+        どちらか一方でも値を送った場合は、送らなかった方を空として記録全体を置き換える
+        （記録を空にするには、notesとaiUsageに空の配列を送る）。
+        notesとaiUsageの値(送られたJSONそのもの)の合計は300 KiB(307200バイト)まで。
+        超えると400になる。
       properties:
         site:
           $ref: "#/components/schemas/SiteModel"
+        baseVersion:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 2147483647
+          description: >-
+            上書き保存(PUT)でだけ使う。読み込んだ時点、または前回の保存の応答で受け取ったversion。
+            保存済みのバージョンと一致しなければ、保存せずに409を返す。
+            省略またはnullなら、バージョンを確かめずに上書きする。
+            新規保存(POST)でnull以外の値を送ると400になる（省略とnullは受け付ける）。
+        notes:
+          type: [array, "null"]
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/LearningNote"
+        aiUsage:
+          type: [array, "null"]
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/AiUsage"
+    LearningTimestamp:
+      type: string
+      format: date-time
+      description: >-
+        RFC 3339の日時。秒は必須、小数秒は任意、オフセットはZか±hh:mm。
+        暦の上で実在しない日付（2月30日など）は受け付けない。
+        画面が付けた日時を、表記を変えずにそのまま返す。
+      pattern: '^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$'
+    LearningNote:
+      type: object
+      additionalProperties: false
+      required: [id, target, reason, createdAt]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 100 }
+        target: { type: string, minLength: 1, maxLength: 2000 }
+        reason: { type: string, minLength: 1, maxLength: 10000 }
+        createdAt:
+          $ref: "#/components/schemas/LearningTimestamp"
+        codeChanges:
+          type: array
+          description: 省略と空の配列は区別して保存し、そのまま返す。
+          maxItems: 200
+          items: { type: string, maxLength: 10000 }
+    AiUsage:
+      type: object
+      additionalProperties: false
+      required: [provider, purpose, generatedAt]
+      properties:
+        provider:
+          type: string
+          enum: [gemini, static-sample]
+        purpose: { type: string, minLength: 1, maxLength: 200 }
+        generatedAt:
+          $ref: "#/components/schemas/LearningTimestamp"
     Project:
       type: object
       additionalProperties: false
+      required: [id, site, notes, aiUsage, version, createdAt, updatedAt]
+      description: 個別の取得と保存の結果。学習の記録を含む（記録が無ければ空の配列）。
+      properties:
+        id:
+          type: string
+          format: uuid
+        site:
+          $ref: "#/components/schemas/SiteModel"
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LearningNote"
+        aiUsage:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiUsage"
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProjectConflict:
+      type: object
+      additionalProperties: false
+      required: [error, currentVersion]
+      description: 上書き保存を競合で断ったときの応答。
+      properties:
+        error:
+          type: string
+        currentVersion:
+          type: integer
+          minimum: 1
+          description: いま保存されているバージョン。
+    ProjectSummary:
+      type: object
+      additionalProperties: false
       required: [id, site, version, createdAt, updatedAt]
+      description: >-
+        一覧の1件。選択用の見出しを出すためのもので、学習の記録(notes, aiUsage)は含まない。
+        転送量を抑えるため、siteの各セクションの画像(image)も省く。
       properties:
         id:
           type: string
@@ -345,7 +559,7 @@ components:
         projects:
           type: array
           items:
-            $ref: "#/components/schemas/Project"
+            $ref: "#/components/schemas/ProjectSummary"
     SaveQualityResultsRequest:
       type: object
       additionalProperties: false
@@ -353,6 +567,8 @@ components:
       properties:
         results:
           type: array
+          description: >-
+            checkKeyはresultsの中で重複させない。同じcheckKeyが2件以上あると400になる。
           minItems: 1
           maxItems: 4
           items:
@@ -367,6 +583,9 @@ components:
                 type: boolean
               detail:
                 type: string
+                description: >-
+                  前後の空白を除いてから文字数を数え、除いた値を保存する。
+                  空白だけの文字列は400になる。
                 minLength: 1
                 maxLength: 1000
     QualityResult:
@@ -401,6 +620,8 @@ components:
             $ref: "#/components/schemas/QualityResult"
     SiteModel:
       type: object
+      # 保存APIは、theme・セクションの中も含めて、ここに無い項目を送ると400にする。
+      additionalProperties: false
       required: [id, topic, siteTitle, tagline, theme, sections]
       properties:
         id: { type: string, minLength: 1 }
@@ -409,6 +630,7 @@ components:
         tagline: { type: string, maxLength: 160 }
         theme:
           type: object
+          additionalProperties: false
           required: [primary, background, text, fontFamily, spacing]
           properties:
             primary: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
@@ -424,6 +646,7 @@ components:
           maxItems: 8
           items:
             type: object
+            additionalProperties: false
             required: [id, kind, title, body, imageAlt, visible]
             properties:
               id: { type: string, minLength: 1 }
@@ -444,6 +667,6 @@ components:
                     type: string
                     pattern: "^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$"
                     maxLength: 204823
-                  fileName: { type: string, pattern: "^[a-z0-9-]{1,40}\.jpg$" }
+                  fileName: { type: string, pattern: '^[a-z0-9-]{1,40}\.jpg$' }
               visible: { type: boolean }
 

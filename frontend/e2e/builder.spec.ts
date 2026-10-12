@@ -1,11 +1,20 @@
-import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { expect, test, type Page } from "@playwright/test";
+import JSZip from "jszip";
+import { buildSiteArtifacts } from "../src/features/artifacts/build-site-artifacts";
+import { evaluateQuality } from "../src/features/quality/evaluate-quality";
+import { createSampleSite } from "../src/features/site-model/sample";
 
 test("題材を入力し、静的フォールバックでサイトを生成できる", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
   await expect(page.getByRole("heading", { name: "学校の写真部", exact: true })).toBeVisible();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+  // プレビューの見出しも、プレビュー内の画像の仮表示も日本語で出す。
+  await expect(page.locator("#view-preview").getByText("プレビュー", { exact: true })).toBeVisible();
+  await expect(page.frameLocator("iframe").first().getByText("画像", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("LIVE PREVIEW")).toHaveCount(0);
 });
 
 test("リセットすると未記録のテーマ変更と理由を破棄する", async ({ page }) => {
@@ -82,7 +91,7 @@ test("サイトを再生成すると未記録のテーマ変更と理由を破�
 
   await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
   await page.getByRole("button", { name: "たたき台を生成" }).click();
-  await expect(page.getByText("APIを利用できないため、静的サンプルを生成しました。")).toBeVisible();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
 
   await expect(page.getByLabel("なぜこの変更をしますか？")).toHaveValue("");
   // 生成後のサイトに対しては未変更なので、初期値が変更として記録されることはない。
@@ -138,12 +147,106 @@ test("提出物ZIPをダウンロードできる", async ({ page }) => {
   const download = await downloadPromise;
 
   expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+  // 出力できたことが通知で伝わり、ボタンは次の出力のために元へ戻る。
+  await expect(page.getByTestId("notice-bar").getByRole("status")).toContainText("提出物ZIPを作成しました。");
+  await expect(page.getByRole("button", { name: "提出物ZIP" })).toBeEnabled();
+});
+
+// 編集用のスクリプトが提出物に入ると、クリックが止められてリンクが動かなくなる。
+// ZIPの中身をそのまま別のオリジンで配信し、編集画面の外で開いた状態を再現して確かめる。
+test("提出物ZIPを単独で開くと、ロゴから本文へのリンクが動く", async ({ page, context }) => {
+  await page.goto("/");
+  await page.getByLabel("紹介サイトの題材").fill("スミレ即売会");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByRole("heading", { name: "スミレ即売会", exact: true })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "提出物ZIP" }).click();
+  const download = await downloadPromise;
+  const zip = await JSZip.loadAsync(await readFile(await download.path()));
+
+  const contentTypes: Record<string, string> = {
+    "index.html": "text/html; charset=utf-8",
+    "style.css": "text/css; charset=utf-8",
+    "script.js": "text/javascript; charset=utf-8",
+  };
+  // ファイルが欠けていても、リンクはHTMLだけで動いてしまう。提出物としてそろっていることを先に確かめる。
+  for (const fileName of Object.keys(contentTypes)) {
+    expect(zip.file(fileName), `${fileName}がZIPに入っている`).not.toBeNull();
+  }
+
+  const submissionOrigin = "http://submission.test";
+  await context.route(`${submissionOrigin}/**`, async (route) => {
+    const fileName = new URL(route.request().url()).pathname.slice(1);
+    const file = zip.file(fileName);
+    if (!file || !contentTypes[fileName]) return route.fulfill({ status: 404 });
+    return route.fulfill({ contentType: contentTypes[fileName], body: await file.async("string") });
+  });
+
+  const submission = await context.newPage();
+  const pageErrors: Error[] = [];
+  submission.on("pageerror", (error) => pageErrors.push(error));
+  // 読み込みの失敗(404)はページのエラーにならないため、応答の状態を別に集める。
+  const responseStatuses = new Map<string, number>();
+  submission.on("response", (response) => {
+    responseStatuses.set(new URL(response.url()).pathname.slice(1), response.status());
+  });
+  await submission.goto(`${submissionOrigin}/index.html`);
+  await expect(submission.getByRole("heading", { level: 1 })).toBeVisible();
+  // HTMLが参照するCSSとJavaScriptも、同じ場所から読み込めている。
+  for (const fileName of Object.keys(contentTypes)) {
+    expect(responseStatuses.get(fileName), `${fileName}を読み込めている`).toBe(200);
+  }
+
+  await submission.getByRole("link", { name: "スミレ即売会" }).click();
+  await expect(submission).toHaveURL(`${submissionOrigin}/index.html#main`);
+  expect(pageErrors).toEqual([]);
+});
+
+test("オフラインでも提出物ZIPを作成できる", async ({ page }) => {
+  await page.goto("/");
+  // ZIPはブラウザの中だけで作るため、通信が切れていても「作成中」のまま止まらない。
+  await page.context().setOffline(true);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "提出物ZIP" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+  await expect(page.getByRole("button", { name: "提出物ZIP" })).toBeEnabled();
+});
+
+test("提出物ZIPの作成に失敗すると理由を伝え、そのまま再試行できる", async ({ page }) => {
+  await page.goto("/");
+  // ZIPのダウンロード用URLの作成を、1回目だけ失敗させる。2回目からは本来の処理に戻す。
+  // 画面のほかの処理もこの関数を使うため、ZIPのときに限る。
+  await page.evaluate(() => {
+    const original = URL.createObjectURL.bind(URL);
+    let failed = false;
+    URL.createObjectURL = (object: Blob | MediaSource) => {
+      if (!failed && object instanceof Blob && object.type === "application/zip") {
+        failed = true;
+        throw new Error("テスト用の失敗");
+      }
+      return original(object);
+    };
+  });
+
+  const exportButton = page.getByRole("button", { name: "提出物ZIP" });
+  await exportButton.click();
+  await expect(page.getByTestId("notice-bar").getByRole("alert")).toContainText("提出物ZIPを作成できませんでした。");
+  await expect(exportButton).toBeEnabled();
+
+  const downloadPromise = page.waitForEvent("download");
+  await exportButton.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/-site\.zip$/);
+  await expect(page.getByTestId("notice-bar").getByRole("status")).toContainText("提出物ZIPを作成しました。");
 });
 
 test("Clerk未設定時はプロジェクト保存を実行できない", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("保存にはClerk設定が必要です")).toBeVisible();
+  await expect(page.getByText("ゲストモードではアカウントに保存できません。作品は提出物ZIPで書き出せます")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存", exact: true })).toHaveCount(0);
 });
 
@@ -170,6 +273,23 @@ test("デスクトップでは左右カラムを畳んでプレビューを広�
   expect(await widthOf()).toBeCloseTo(initial, 0);
 });
 
+test("右パネルを畳む・開くと、隠れたボタンの代わりにもう一方のボタンへフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const collapseButton = page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" });
+  const openButton = page.getByRole("button", { name: "パネルを開く" });
+
+  await collapseButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(collapseButton).toBeHidden();
+  await expect(openButton).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(openButton).toBeHidden();
+  await expect(collapseButton).toBeFocused();
+});
+
 test("デスクトップでタブを再クリックしてもパネルは畳まれない", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -194,6 +314,46 @@ test("デスクトップでタブを再クリックしてもパネルは畳ま�
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
 });
 
+// 表示中の見出しの階層を文書順に返す。読み上げ用に見た目だけ隠した見出し（sr-only）も含める。
+const visibleHeadingLevels = (page: Page) =>
+  page.locator("h1, h2, h3, h4, h5, h6").evaluateAll((headings) =>
+    headings
+      .filter((heading) => heading.checkVisibility())
+      .map((heading) => Number(heading.tagName.slice(1))),
+  );
+
+const expectNoSkippedHeadingLevel = (levels: number[]) => {
+  expect(levels[0]).toBe(1);
+  levels.slice(1).forEach((level, index) => {
+    expect(level, `見出しの並び ${levels.join(" → ")}`).toBeLessThanOrEqual(levels[index] + 1);
+  });
+};
+
+test("領域はランドマークのまま、下部バーのタブが指すタブパネルを内側に持つ", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await expect(page.getByRole("main").getByRole("tabpanel", { name: "プレビュー" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "題材・メモ" }).getByRole("tabpanel", { name: "題材・メモ" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "調整と学習" }).getByRole("tabpanel", { name: "調整と学習" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "表示の切り替え" }).getByRole("tablist")).toBeVisible();
+});
+
+test("どの表示に切り替えても見出しの階層が飛ばない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  expectNoSkippedHeadingLevel(await visibleHeadingLevels(page));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const view of ["プレビュー", "題材・メモ", "調整と学習"]) {
+    await page.getByRole("tab", { name: view }).click();
+    await expect(page.getByRole("tab", { name: view })).toHaveAttribute("aria-selected", "true");
+    expectNoSkippedHeadingLevel(await visibleHeadingLevels(page));
+  }
+});
+
 test("モバイルでは3つの画面を下部バーで切り替えられる", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
@@ -209,6 +369,180 @@ test("モバイルでは3つの画面を下部バーで切り替えられる", a
   await page.getByRole("tab", { name: "調整と学習" }).click();
   await expect(page.getByText("なぜこの変更をしますか？")).toBeVisible();
   await expect(page.getByLabel("紹介サイトの題材")).toBeHidden();
+});
+
+// 通知がプレビューの中にしかないと、モバイルで他の表示を見ている間は結果を確かめられなかった。
+test("モバイルでプレビュー以外を表示していても操作結果の通知が見える", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  const status = page.getByRole("status").filter({ hasText: "見本のたたき台を用意しました。" });
+  await expect(status).toBeVisible();
+  await expect(status).toBeInViewport();
+
+  // 操作を止めた知らせは、読み上げ環境でもすぐ伝わるよう alert で出す。
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  const alert = page.getByRole("alert").filter({ hasText: "先に色・余白・フォントを変更してください。" });
+  await expect(alert).toBeVisible();
+  await expect(alert).toBeInViewport();
+});
+
+test("通知を閉じても、次の操作結果はまた表示される", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("見本のサイトで開始しています。")).toBeVisible();
+
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(page.getByText("見本のサイトで開始しています。")).toBeHidden();
+  await expect(page.getByRole("button", { name: "通知を閉じる" })).toBeHidden();
+
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+});
+
+// 閉じるボタンは押すと消えるため、フォーカスを見えていて意味のある要素へ移す。
+test("通知を閉じると、通知のきっかけになった操作へフォーカスが戻る", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  const recordButton = page.getByRole("button", { name: "デザイン変更の理由を記録" });
+  await recordButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeHidden();
+  await expect(recordButton).toBeFocused();
+});
+
+test("きっかけの操作がない通知を閉じると、通知の直後の操作要素へフォーカスが移る", async ({ page }) => {
+  // 最初の案内は操作から出たものではないため、戻す先がない。
+  await page.goto("/");
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  // デスクトップ幅では、通知の直後にある左カラムの折りたたみボタンが最初の操作要素になる。
+  await expect(page.getByRole("button", { name: "題材・メモを畳んでプレビューを広げる" })).toBeFocused();
+});
+
+test("モバイルできっかけの操作が別の表示に隠れていたら、今の表示の操作要素へフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  await page.getByRole("button", { name: "たたき台を生成" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+
+  // 戻り先の生成ボタンは開始時に記録されるが、「題材・メモ」の中にあり、プレビューへ切り替えると見えなくなる。
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "コードを隠す" })).toBeFocused();
+});
+
+// 生成の応答を止めておき、結果が遅れて届く通知でも戻り先が開始時の操作になることを確かめる。
+async function holdGeneration(page: Page) {
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/generate", async (route) => {
+    await released;
+    // APIを使えない扱いにして、静的サンプルへのフォールバックで完了させる。
+    await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+  });
+  return release;
+}
+
+test("結果が遅れて届く通知を閉じると、操作を始めた生成ボタンへフォーカスが戻る", async ({ page }) => {
+  await page.goto("/");
+  const release = await holdGeneration(page);
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  const generateButton = page.getByRole("button", { name: "たたき台を生成" });
+  await generateButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+
+  release();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+  await page.getByRole("button", { name: "通知を閉じる" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(generateButton).toBeFocused();
+});
+
+test("処理中に閉じるボタンへフォーカスを移していても、閉じると生成ボタンへ戻る", async ({ page }) => {
+  await page.goto("/");
+  const release = await holdGeneration(page);
+  await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+  const generateButton = page.getByRole("button", { name: "たたき台を生成" });
+  await generateButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+
+  // 完了の瞬間にフォーカスが最初の案内の閉じるボタンにあっても、それを戻り先にしない。
+  const closeButton = page.getByRole("button", { name: "通知を閉じる" });
+  await closeButton.focus();
+  release();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+  await expect(closeButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(generateButton).toBeFocused();
+});
+
+test("マウスで通知を閉じても、読んでいた位置からスクロールしない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  const recordButton = page.getByRole("button", { name: "デザイン変更の理由を記録" });
+  await recordButton.click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeVisible();
+
+  // ページの先頭へ戻って読み直し、記録ボタンが画面の下へ外れた状態で閉じる。
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(recordButton).not.toBeInViewport();
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(page.getByText("先に色・余白・フォントを変更してください。")).toBeHidden();
+  await expect(recordButton).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+});
+
+// 読み上げ環境は、中身が変わる前からあるライブリージョンの更新しか読み上げない。
+// そのため、閉じている間も領域が残ること、同じ文言でも中身が差し替わることを確かめる。
+test("通知のライブリージョンは常に残り、同じ文言や種類の切り替えでも中身が差し替わる", async ({ page }) => {
+  await page.goto("/");
+  const statusRegion = page.getByTestId("notice-bar").getByRole("status");
+  const alertRegion = page.getByTestId("notice-bar").getByRole("alert");
+
+  // 閉じている間も、両方の領域がDOMに残る。
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(statusRegion).toBeAttached();
+  await expect(alertRegion).toBeAttached();
+  await expect(statusRegion).toHaveText("");
+  await expect(alertRegion).toHaveText("");
+
+  // 同じ失敗を2回続けても、文言の要素が差し替わる。
+  // ここで確かめられるのはDOMの差し替えまでで、実際に読み上げられるかは支援技術での確認が要る。
+  const message = "先に色・余白・フォントを変更してください。";
+  await page.getByLabel("なぜこの変更をしますか？").fill("明るい印象にしたいから");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(alertRegion).toHaveText(message);
+  const firstMessage = await alertRegion.locator("span").elementHandle();
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(alertRegion).toHaveText(message);
+  expect(await firstMessage?.evaluate((element) => element.isConnected)).toBe(false);
+
+  // 失敗のあとに成功すると、alert は空になり、status に文言が入る。
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await page.getByRole("button", { name: "デザイン変更の理由を記録" }).click();
+  await expect(statusRegion).toContainText("デザイン変更の内容と理由を学習メモへ記録しました。");
+  await expect(alertRegion).toHaveText("");
 });
 
 test("モバイルで選択中タブを再クリックしても選択状態と表示が食い違わない", async ({ page }) => {
@@ -301,7 +635,8 @@ test("内側タブは左右キーでフォーカスと選択が循環移動す�
   await expect(tabList.locator(":scope > :not([role='tab'])")).toHaveCount(0);
   const designTab = page.getByRole("tab", { name: "調整", exact: true });
   const explanationTab = page.getByRole("tab", { name: "解説", exact: true });
-  const qualityTab = page.getByRole("tab", { name: "品質", exact: true });
+  // 品質に問題があると、タブ名の後ろに「（問題あり）」が付く。
+  const qualityTab = page.getByRole("tab", { name: /^品質/ });
 
   // 選択中だけがタブ順に含まれる。
   await expect(designTab).toHaveAttribute("tabindex", "0");
@@ -444,6 +779,63 @@ test("デザインを変えると、コード上に未記録の変更として�
   await expect(codeView).not.toContainText("未記録の変更");
 });
 
+// 行の状態は読み上げ用の文字と記号で伝えるが、コードを写し取るときには混ざってはいけない。
+test("コードを範囲コピーしても、行番号・行の状態の記号・読み上げ用の文字は含まれない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 選んだ要素・未記録の変更・削除の3種類の行がそろう状態にする。
+  await page.frameLocator("iframe[title='生成サイトのプレビュー']").locator("[data-builder-id='hero']").click();
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  await codeView.getByRole("tab", { name: "style.css" }).click();
+  await page.getByLabel("なぜこの変更をしますか？").fill("元気な印象にしたいから");
+  await page.getByLabel("メインカラー").fill("#e11d48");
+  await expect(codeView.locator("li[data-changed='true']").first()).toBeVisible();
+  await expect(codeView.locator("li[data-selected='true']").first()).toBeVisible();
+
+  const { copied, expected, shownOnly } = await codeView.getByRole("tabpanel").evaluate((panel) => {
+    const selection = window.getSelection()!;
+    selection.selectAllChildren(panel);
+    // 写し取れるはずの文字は、各行のコード本文から読み上げ専用の文字を除いたもの。
+    const codeTexts = [...panel.querySelectorAll("li > code")].map((code) => {
+      const clone = code.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll(".sr-only").forEach((node) => node.remove());
+      return clone.textContent ?? "";
+    });
+    return {
+      copied: selection.toString().split("\n"),
+      expected: codeTexts,
+      shownOnly: [...panel.querySelectorAll("li > [aria-hidden]")].map((node) => node.textContent ?? "").join(""),
+    };
+  });
+  // 記号はコード本文にも出るため、記号の有無ではなく、コード本文との一致で確かめる。
+  expect(copied).toEqual(expected);
+  // 画面には3種類の記号が出ていて、それでも写し取った文字には入っていないこと。
+  expect(shownOnly).toMatch(/\+/);
+  expect(shownOnly).toMatch(/>/);
+  expect(shownOnly).toMatch(/-/);
+  expect(copied.join("\n")).toContain("#e11d48");
+});
+
+// 選んだ要素の行が画面の外にあると、理由を書くときに探しに行くことになる。
+test("画面の外にある要素を選ぶと、その行が見える位置までコードが送られる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const codeView = page.getByRole("region", { name: "生成されたコード" });
+  const panel = codeView.getByRole("tabpanel");
+  // 最後のセクションは、初期表示ではコードの表示範囲より下にある。
+  const lastSectionLine = panel.locator("li").filter({ hasText: 'data-builder-id="contact"' });
+  await expect(lastSectionLine).not.toBeInViewport();
+
+  await page.frameLocator("iframe[title='生成サイトのプレビュー']").locator("[data-builder-id='contact']").click();
+
+  await expect(lastSectionLine).toHaveAttribute("data-selected", "true");
+  await expect(lastSectionLine).toBeInViewport();
+  // 行番号と記号の列は左端にある。横には送らず、見えたままにする。
+  expect(await panel.evaluate((element) => element.scrollLeft)).toBe(0);
+});
+
 test("コードを隠すとプレビューが縦に広がる", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -483,6 +875,34 @@ test("モバイルのプレビュー画面でもコードを一緒に見られ�
 
   await expect(page.locator("iframe[title='生成サイトのプレビュー']")).toBeVisible();
   await expect(page.getByRole("region", { name: "生成されたコード" })).toBeVisible();
+});
+
+// コードは折り返さないため、狭い画面では必ず幅が足りなくなる。はみ出しはコードの枠の中で受ける。
+test("モバイルでは、長いコードの行はコードの枠の中で横に送れて、ページは横にはみ出さない", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const panel = page.getByRole("region", { name: "生成されたコード" }).getByRole("tabpanel");
+  await expect(panel).toBeVisible();
+
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  expect(await panel.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+
+  // 行番号と記号の列は、横に送る前は枠の左右に収まっている。
+  // コードの枠はページの下のほうにあるため、縦の位置ではなく横の位置だけを測る。
+  const gutterFitsInPanel = await panel.evaluate((element) => {
+    const frame = element.getBoundingClientRect();
+    return [...element.querySelectorAll("li:first-child > [aria-hidden]")].every((cell) => {
+      const box = cell.getBoundingClientRect();
+      return box.left >= frame.left && box.right <= frame.right;
+    });
+  });
+  expect(gutterFitsInPanel).toBe(true);
+
+  // 枠の中だけが横に動き、ページは動かない。
+  await panel.evaluate((element) => element.scrollTo({ left: 200 }));
+  expect(await panel.evaluate((element) => element.scrollLeft)).toBe(200);
+  expect(await page.evaluate(() => window.scrollX)).toBe(0);
 });
 
 // 「理由を書けた＝理解できている」とは限らないという指摘への対応。
@@ -719,6 +1139,56 @@ test("削除は確認を挟み、まず非表示にする道を示す", async ({
   await expect(note).toContainText("- <h2>3つの魅力</h2>");
 });
 
+test("削除の確認を開くと確認の中へ、閉じると削除ボタンへフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const removeButton = page.getByRole("button", { name: "3つの魅力を削除" });
+
+  // 開いたら、引き返す側の「やめる」に入る。
+  await removeButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "やめる" })).toBeFocused();
+
+  // やめたら、確認を開いた削除ボタンへ戻る。
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("削除すると元に戻せません。")).toBeHidden();
+  await expect(removeButton).toBeFocused();
+
+  // 非表示にして閉じた場合も同じ。
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "まず非表示にする" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).not.toBeChecked();
+  await expect(removeButton).toBeFocused();
+});
+
+test("セクションを削除すると、次の行（末尾なら前の行）へフォーカスが移る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  // 途中の行を消すと、次の行へ。
+  await page.getByRole("button", { name: "3つの魅力を削除" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "削除する" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("checkbox", { name: "3つの魅力" })).toBeHidden();
+  const nextRow = page.getByRole("checkbox", { name: "基本情報" });
+  await expect(nextRow).toBeFocused();
+
+  // 通知を閉じても、消えた「削除する」ではなく移した先へ戻る。
+  await page.getByRole("button", { name: "通知を閉じる" }).click();
+  await expect(nextRow).toBeFocused();
+
+  // 末尾の行を消すと、前の行へ。
+  await page.getByRole("button", { name: "基本情報を削除" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "削除する" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("checkbox", { name: "基本情報" })).toBeHidden();
+  await expect(page.getByRole("checkbox", { name: "私たちについて" })).toBeFocused();
+});
+
 test("上限と下限に達すると、追加も削除もできなくなる", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -842,8 +1312,31 @@ test("扱えない形式の画像は理由を示して受け付けない", async
     buffer: Buffer.from("これは画像ではありません"),
   });
 
-  await expect(page.getByRole("alert")).toContainText("JPEG・PNG・WebPの画像を選んでください。");
+  // 操作結果の通知も読み上げ用の alert 領域を常に持つため、文言で絞り込む。
+  await expect(page.getByRole("alert").filter({ hasText: "JPEG・PNG・WebPの画像を選んでください。" })).toBeVisible();
   await expect(page.getByTestId("section-image-preview")).toHaveCount(0);
+});
+
+test("画像のファイル入力は名前を持ち、Tabでは隣のボタンだけにフォーカスが当たる", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='about']").click();
+
+  const fileInput = page.getByLabel("画像ファイル", { exact: true });
+  await expect(fileInput).toHaveAttribute("type", "file");
+  await expect(fileInput).toHaveAttribute("tabindex", "-1");
+
+  // inputはボタンの直前にあるため、Tab順に残っているとShift+Tabで空振りする。
+  const chooseButton = page.getByRole("button", { name: "画像を選ぶ" });
+  await chooseButton.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(fileInput).not.toBeFocused();
+  // 否定だけでは想定外の場所へ飛んでも通るため、1つ前の操作要素（本文の欄）へ移ったことを確かめる。
+  await expect(page.getByRole("textbox", { name: "本文", exact: true })).toBeFocused();
+  // 通常のTab操作でも、入力を飛ばしてボタンへ戻れる。
+  await page.keyboard.press("Tab");
+  await expect(chooseButton).toBeFocused();
 });
 
 test("基本情報のセクションには画像欄を出さない", async ({ page }) => {
@@ -892,4 +1385,361 @@ test("提出物ZIPへ画像を同梱し、HTMLは相対パスで参照する", a
 
   expect(archive).toContain("images/about.jpg");
   expect(archive).toContain('src="images/about.jpg"');
+});
+
+// 空白を含まない長い文字列。はみ出すかどうかは、URLのように途中で折り返す位置がない文字列で決まる。
+const longUrl = (length: number) => `https://example.com/${"a".repeat(length - "https://example.com/".length)}`;
+
+// 横にはみ出していれば、中身の幅（scrollWidth）が枠の幅（clientWidth）を超える。
+const overflowsHorizontally = (element: Element) => element.scrollWidth > element.clientWidth;
+
+test("相談の吹き出し・選択肢・決定事項に長いURLが入っても、枠の中で折り返す", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/concept/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        reply: `参考にしたいページは ${longUrl(120)} ですね。誰に読んでほしいですか？`,
+        choices: [longUrl(40)],
+        draft: { topic: longUrl(100), audience: "", goal: "", tone: "", mustInclude: [] },
+        missing: ["audience", "goal"],
+        ready: false,
+        provider: "static-sample",
+      }),
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+
+  await page.getByRole("button", { name: "相談をはじめる" }).click();
+  // 待機の通知は、送信する前から読み上げの対象に入っていないと追加を読み上げられない。
+  // 空の間に非表示（display:none）だと、ここで見つからなくなる。
+  await expect(page.locator("section[aria-labelledby='concept-chat-heading']").getByRole("status")).toHaveCount(1);
+  await page.getByLabel("返事を書く").fill(longUrl(200));
+  await page.getByRole("button", { name: "送信" }).click();
+
+  const draft = page.getByTestId("concept-draft");
+  await expect(draft).toContainText(longUrl(100));
+  expect(await draft.evaluate(overflowsHorizontally)).toBe(false);
+  expect(await draft.locator("dd").first().evaluate(overflowsHorizontally)).toBe(false);
+  for (const message of await page.getByTestId("concept-chat-log").locator("li").all()) {
+    expect(await message.evaluate(overflowsHorizontally)).toBe(false);
+  }
+  expect(await page.getByRole("button", { name: longUrl(40) }).evaluate(overflowsHorizontally)).toBe(false);
+  expect(await page.locator("section[aria-labelledby='concept-chat-heading']").evaluate(overflowsHorizontally)).toBe(false);
+});
+
+test("生成サイトの見出しに長いURLを入れても、プレビューが横にはみ出さない", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByLabel("見出し", { exact: true }).fill(longUrl(80));
+  await expect(frame.locator("[data-builder-id='hero'] h1")).toHaveText(longUrl(80));
+
+  expect(await frame.locator("html").evaluate(overflowsHorizontally)).toBe(false);
+});
+
+// 品質判定は、生成CSSに折り返しの指定があることだけを見て「モバイル表示」を合格にする(#121)。
+// 指定が実際に効いているかは、スマートフォンの幅で描いて測らないと分からない。
+// サイト名とキャッチコピーには編集欄が無いため、提出物と同じHTML・CSSを直接描く。
+test("生成サイトのすべての文字に上限いっぱいの長いURLが入っても、スマートフォンの幅で横にはみ出さない", async ({ page }) => {
+  const site = createSampleSite();
+  site.siteTitle = longUrl(80);
+  site.tagline = longUrl(160);
+  for (const section of site.sections) {
+    section.title = longUrl(80);
+    section.body = longUrl(800);
+  }
+  expect(evaluateQuality(site).find((item) => item.id === "mobile")?.passed).toBe(true);
+
+  const artifacts = buildSiteArtifacts(site);
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.setContent(
+    artifacts.html
+      .replace('<link rel="stylesheet" href="style.css">', `<style>${artifacts.css}</style>`)
+      .replace('<script src="script.js"></script>', ""),
+  );
+  await expect(page.locator("h1")).toHaveText(longUrl(80));
+
+  expect(await page.locator("html").evaluate(overflowsHorizontally)).toBe(false);
+  for (const element of await page.locator("header, header > *, section, h1, h2, p").all()) {
+    expect(await element.evaluate(overflowsHorizontally)).toBe(false);
+  }
+});
+
+// 要素自身の中身がはみ出さず、親の枠からも画面の右端からも出ていないか。
+// 親ごと広がって外側のoverflow:hiddenで隠れる場合は、自身と親の比較だけでは気づけないため、画面の幅とも比べる。
+const fitsInParent = (element: Element) => {
+  const parent = element.parentElement;
+  const right = element.getBoundingClientRect().right;
+  return (
+    element.scrollWidth <= element.clientWidth &&
+    (!parent || right <= parent.getBoundingClientRect().right + 1) &&
+    right <= document.documentElement.clientWidth + 1
+  );
+};
+
+test("編集画面のサイト名・選択中の見出し・学習メモ・品質チェック・コードのラベルも、長いURLを枠の中で折り返す", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  // サイト名とヒーローの見出しは、題材から作られる。
+  const topic = longUrl(60);
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  await page.getByLabel("紹介サイトの題材").fill(topic);
+  await page.getByRole("button", { name: "たたき台を生成" }).click();
+  await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+
+  // プレビュー上部のサイト名と、コードパネルの「選んだ要素」。
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+  const siteName = page.locator("#view-preview").getByRole("heading", { level: 2, name: topic });
+  await expect(siteName).toBeVisible();
+  expect(await siteName.locator("..").evaluate(fitsInParent)).toBe(true);
+  const frame = page.frameLocator("iframe[title='生成サイトのプレビュー']");
+  await frame.locator("[data-builder-id='hero']").click();
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+  const selectedLabel = page.locator("#view-preview").getByText("選んだ要素:");
+  await expect(selectedLabel).toBeVisible();
+  expect(await selectedLabel.evaluate(fitsInParent)).toBe(true);
+
+  // 編集パネルの「選択中」の見出しと、学習メモ。
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  const selectedHeading = page.getByRole("heading", { name: `選択中: ${topic}` });
+  await expect(selectedHeading).toBeVisible();
+  expect(await selectedHeading.evaluate(fitsInParent)).toBe(true);
+  await page.getByRole("textbox", { name: "本文", exact: true }).fill("入口で鉢の選び方を案内します。");
+  await page.getByLabel("なぜこの変更をしますか？").fill(`参考にしたページ ${longUrl(150)} に合わせたいから`);
+  await page.getByRole("button", { name: "内容変更の理由を記録" }).click();
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  const note = page.getByTestId("learning-note").first();
+  await expect(note).toContainText(longUrl(150));
+  expect(await note.evaluate(fitsInParent)).toBe(true);
+
+  // 品質チェックの詳細には、画像説明が空のセクション名がそのまま入る。
+  await page.getByRole("tab", { name: "調整と学習" }).click();
+  await page.getByRole("tab", { name: "品質" }).click();
+  const detail = page.locator("#view-panel").getByText(/の画像説明が空です。/);
+  await expect(detail).toContainText(topic);
+  expect(await detail.locator("..").evaluate(fitsInParent)).toBe(true);
+
+  // 最後に、どの表示でもページ全体が横にスクロールしないこと。
+  for (const view of ["プレビュー", "題材・メモ", "調整と学習"]) {
+    await page.getByRole("tab", { name: view }).click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+});
+
+test("キーボードだけで、一覧からセクションを選んで編集を始められる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await generateSite(page, "スミレ即売会");
+
+  // .focus()で直接当てるとTab順から外れていても通ってしまうため、
+  // 同じ行の表示チェックボックスからTabで移れることを確かめる。
+  const editButton = page.getByRole("button", { name: "私たちについてを編集" });
+  await page.getByRole("checkbox", { name: "私たちについて", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(editButton).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  // 選んだ結果が読み上げで伝わるよう、編集欄の見出しへフォーカスが移る。
+  const heading = page.getByRole("heading", { name: "選択中: 私たちについて" });
+  await expect(heading).toBeFocused();
+  await expect(editButton).toHaveAttribute("aria-current", "true");
+  await expect(page.getByLabel("見出し", { exact: true })).toHaveValue("私たちについて");
+
+  // Spaceでも選べる。
+  const heroButton = page.getByRole("button", { name: /を編集$/ }).first();
+  await heroButton.focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("heading", { name: /^選択中: / })).toBeFocused();
+  await expect(heroButton).toHaveAttribute("aria-current", "true");
+  await expect(editButton).not.toHaveAttribute("aria-current");
+});
+
+// 背景と枠の色だけでは、色を見分けにくい人に、どの行を選んでいるかが伝わらない。
+test("一覧で選んでいる行は、色だけでなく、太字と左の太い線でも見分けられる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "私たちについてを編集" }).click();
+
+  // 色に頼らない手がかりだけを測る。タイトルの太さと、左の線の太さ。
+  const cuesOf = (title: string) =>
+    page.getByRole("listitem").filter({ has: page.getByRole("button", { name: `${title}を編集` }) }).evaluate((row) => ({
+      titleWeight: Number(getComputedStyle(row.querySelector("label > span")!).fontWeight),
+      leftLineWidth: getComputedStyle(row).borderLeftWidth,
+      titleLeft: row.querySelector("label > span")!.getBoundingClientRect().left,
+    }));
+  const selected = await cuesOf("私たちについて");
+  const other = await cuesOf("3つの魅力");
+
+  expect(selected.titleWeight).toBeGreaterThanOrEqual(700);
+  expect(other.titleWeight).toBeLessThan(700);
+  expect(selected.leftLineWidth).toBe("4px");
+  expect(other.leftLineWidth).toBe("1px");
+  // 線を太くしても、タイトルの書き出しの位置は他の行とそろったままにする。
+  expect(selected.titleLeft).toBeCloseTo(other.titleLeft, 0);
+});
+
+test("モバイルで一覧から編集を始めると、調整と学習の表示へ切り替わる", async ({ page }) => {
+  await generateSite(page, "スミレ即売会");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+
+  await page.getByRole("button", { name: "私たちについてを編集" }).click();
+
+  await expect(page.getByRole("tab", { name: "調整と学習" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "選択中: 私たちについて" })).toBeFocused();
+});
+
+test("右パネルを畳んだり別のタブを開いたりしていても、一覧から選ぶと編集欄が開く", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await generateSite(page, "スミレ即売会");
+  await page.getByRole("tab", { name: "品質" }).click();
+  await page.getByRole("button", { name: "パネルを畳んでプレビューを広げる" }).click();
+
+  await page.getByRole("button", { name: "私たちについてを編集" }).click();
+
+  await expect(page.getByRole("tab", { name: "調整" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "選択中: 私たちについて" })).toBeFocused();
+});
+
+test("セクションをすべて非表示にすると、プレビューに戻し方の案内が出る", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const guidance = page.getByTestId("preview-all-hidden");
+  const toggles = page.locator("input[id^='section-visible-']");
+  const count = await toggles.count();
+  for (let index = 0; index < count; index += 1) {
+    await toggles.nth(index).uncheck();
+  }
+  await expect(guidance).toContainText("すべてのセクションが非表示です。");
+  // 操作していた一覧の側からは案内が見えないため、通知でも伝わる。
+  await expect(page.getByTestId("notice-bar").getByRole("status")).toContainText("すべてのセクションが非表示になりました。");
+
+  // 左カラムを畳んでいても、案内のボタンから一覧を開いて見出しへ移れる。
+  await page.getByTitle("題材・メモを畳んでプレビューを広げる").click();
+  await guidance.getByRole("button", { name: "セクション一覧へ" }).click();
+  await expect(page.getByRole("heading", { name: /^セクション/ })).toBeFocused();
+
+  // 1つでも表示に戻すと、案内は消える。
+  await toggles.first().check();
+  await expect(guidance).toHaveCount(0);
+});
+
+test("モバイルでも、案内のボタンから一覧のある表示へ切り替わる", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  await page.getByRole("tab", { name: "題材・メモ" }).click();
+  const toggles = page.locator("input[id^='section-visible-']");
+  const count = await toggles.count();
+  for (let index = 0; index < count; index += 1) {
+    await toggles.nth(index).uncheck();
+  }
+  await page.getByRole("tab", { name: "プレビュー" }).click();
+
+  await page.getByTestId("preview-all-hidden").getByRole("button", { name: "セクション一覧へ" }).click();
+  await expect(page.getByRole("tab", { name: "題材・メモ" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: /^セクション/ })).toBeFocused();
+});
+
+test("axeの自動チェックに失敗しても、同じサイトのまま再実行できる", async ({ page }) => {
+  // 1回目だけaxe本体の読み込みを止め、検査を失敗させる。
+  let blocked = false;
+  await page.route(/axe\.min.*\.js/, async (route) => {
+    if (!blocked) {
+      blocked = true;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "品質" }).click();
+
+  const error = page.getByTestId("axe-error");
+  await expect(error).toContainText("「もう一度チェックする」を押すと再実行します。", { timeout: 20000 });
+
+  await error.getByRole("button", { name: "もう一度チェックする" }).click();
+  await expect(page.getByRole("heading", { name: "アクセシビリティの自動チェック" })).toBeFocused();
+  // 開始と結果は、ボタンが消えたあとも通知で伝わる。
+  const noticeStatus = page.getByTestId("notice-bar").getByRole("status");
+  await expect(noticeStatus).toContainText("自動チェックをやり直しています");
+  await expect(page.getByTestId("axe-findings")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("axe-error")).toHaveCount(0);
+  await expect(noticeStatus).toContainText(/自動チェックが終わりました。指摘が\d+件あります。/);
+});
+
+test("マウスの環境でも、分割バーは24px以上の高さでつかめて、ドラッグでコードの高さが変わる", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+  const box = await splitter.boundingBox();
+  expect(box?.height).toBeGreaterThanOrEqual(24);
+
+  // 上へ動かすとコードが広がる。
+  const before = Number(await splitter.getAttribute("aria-valuenow"));
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 - 60, { steps: 5 });
+  await page.mouse.up();
+  expect(Number(await splitter.getAttribute("aria-valuenow"))).toBeGreaterThan(before);
+
+  // コードを上限まで広げても、プレビューは最小の高さ（240px）を保つ。上限の計算で分割バーの高さを差し引いているため。
+  await splitter.focus();
+  for (let index = 0; index < 40; index += 1) await page.keyboard.press("ArrowUp");
+  await expect(splitter).toHaveAttribute("aria-valuenow", await splitter.getAttribute("aria-valuemax") ?? "");
+  const previewBox = await page.locator("iframe[title='生成サイトのプレビュー']").boundingBox();
+  expect(previewBox?.height).toBeGreaterThanOrEqual(240);
+});
+
+test.describe("タッチ操作の環境", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test("分割バーとセクションの編集・削除ボタンは、指で押せる大きさがある", async ({ page }) => {
+    await page.goto("/");
+    // このテストの前提。指で操作できる端末として扱われていること。
+    expect(await page.evaluate(() => window.matchMedia("(any-pointer: coarse)").matches)).toBe(true);
+
+    const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+    expect((await splitter.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+
+    await page.getByRole("tab", { name: "題材・メモ" }).click();
+    for (const name of [/を編集$/, /を削除$/]) {
+      const box = await page.getByRole("button", { name }).first().boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(40);
+      expect(box?.height).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  test("分割バーは指でドラッグでき、すぐ上のプレビューとすぐ下のコードの操作を奪わない", async ({ page }) => {
+    await page.goto("/");
+    const splitter = page.getByRole("separator", { name: "プレビューとコードの高さを調整" });
+    const box = (await splitter.boundingBox())!;
+    const x = box.x + box.width / 2;
+
+    // バーのつかめる範囲は自分の枠の中だけ。すぐ外側は、隣のプレビューとコードのまま。
+    const hitsSplitter = (y: number) =>
+      page.evaluate(([px, py]) => document.elementFromPoint(px, py)?.closest("[role='separator']") !== null, [x, y]);
+    expect(await hitsSplitter(box.y + box.height / 2)).toBe(true);
+    expect(await hitsSplitter(box.y - 2)).toBe(false);
+    expect(await hitsSplitter(box.y + box.height + 2)).toBe(false);
+
+    // 指のドラッグは、Chromiumの操作用の仕組み（CDP）でタッチを送って再現する。上へ動かすとコードが広がる。
+    const before = Number(await splitter.getAttribute("aria-valuenow"));
+    const cdp = await page.context().newCDPSession(page);
+    const startY = box.y + box.height / 2;
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: startY }] });
+    for (let step = 1; step <= 5; step += 1) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: startY - step * 12 }] });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect.poll(async () => Number(await splitter.getAttribute("aria-valuenow"))).toBeGreaterThan(before);
+  });
 });
