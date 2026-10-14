@@ -1743,3 +1743,91 @@ test.describe("タッチ操作の環境", () => {
     await expect.poll(async () => Number(await splitter.getAttribute("aria-valuenow"))).toBeGreaterThan(before);
   });
 });
+
+// 本番のAPIは、しばらく使われないと止まり、最初の応答に40秒以上かかる(#147)。
+// 時計を進めて、待ち時間を実際には待たずに確かめる。
+test.describe("APIの起動待ち", () => {
+  const wakeMessage = "サーバーを起動しています。しばらく使われていなかったため、応答まで1分ほどかかることがあります。このままお待ちください。";
+
+  // ヘルスチェックの応答を止めておく（APIが起動中）か、すぐ返す（APIが起きている）。
+  async function routeHealth(page: Page, awake: boolean) {
+    let release: () => void = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requested = 0;
+    await page.route("**/api/v1/health", async (route) => {
+      requested += 1;
+      if (!awake) await released;
+      await route.fulfill({ status: 200, contentType: "application/json", body: '{"status":"ok"}' });
+    });
+    return { release, requested: () => requested };
+  }
+
+  test("開いた時点でAPIを起こし、起動を待つ操作では待てば使えることを伝える", async ({ page }) => {
+    await page.clock.install();
+    const health = await routeHealth(page, false);
+    const releaseGeneration = await holdGeneration(page);
+    await page.goto("/");
+    await expect.poll(health.requested).toBe(1);
+
+    const wakeStatus = page.getByTestId("api-wake-notice").getByRole("status");
+    // 待っていない間も、ライブリージョンは残しておく。
+    await expect(wakeStatus).toBeAttached();
+    await expect(wakeStatus).toHaveText("");
+
+    await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+    await page.getByRole("button", { name: "たたき台を生成" }).click();
+    await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+    await page.clock.runFor(4000);
+    await expect(wakeStatus).toHaveText("");
+    await page.clock.runFor(1000);
+    await expect(wakeStatus).toHaveText(wakeMessage);
+
+    // 起動を終えて応答が届けば、案内は消える。
+    health.release();
+    await expect(wakeStatus).toHaveText("");
+    releaseGeneration();
+    await expect(page.getByText("AIでの生成を利用できなかったため、見本のたたき台を用意しました。文章を題材に合わせて書き換えてください。")).toBeVisible();
+  });
+
+  test("APIが起きていれば、生成に時間がかかっても起動待ちとは伝えない", async ({ page }) => {
+    await page.clock.install();
+    const health = await routeHealth(page, true);
+    const releaseGeneration = await holdGeneration(page);
+    await page.goto("/");
+    await expect.poll(health.requested).toBe(1);
+
+    await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+    await page.getByRole("button", { name: "たたき台を生成" }).click();
+    await expect(page.getByRole("button", { name: "生成中…" })).toBeVisible();
+    // 生成はふだんでも20秒ほどかかる。
+    await page.clock.runFor(20_000);
+    await expect(page.getByTestId("api-wake-notice").getByRole("status")).toHaveText("");
+    releaseGeneration();
+    await expect(page.getByRole("button", { name: "たたき台を生成" })).toBeVisible();
+  });
+
+  test("モバイルでは、プレビューを表示していても起動待ちの案内が崩れずに見える", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.clock.install();
+    const health = await routeHealth(page, false);
+    const releaseGeneration = await holdGeneration(page);
+    await page.goto("/");
+
+    await page.getByRole("tab", { name: "題材・メモ" }).click();
+    await page.getByLabel("紹介サイトの題材").fill("学校の写真部");
+    await page.getByRole("button", { name: "たたき台を生成" }).click();
+    await page.getByRole("tab", { name: "プレビュー" }).click();
+    await page.clock.runFor(5000);
+
+    const wakeNotice = page.getByTestId("api-wake-notice");
+    await expect(wakeNotice.getByText(wakeMessage)).toBeVisible();
+    const box = await wakeNotice.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= 390).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+    health.release();
+    releaseGeneration();
+  });
+});
