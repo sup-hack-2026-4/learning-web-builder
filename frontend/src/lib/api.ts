@@ -9,6 +9,7 @@ import {
   type SiteModel,
 } from "@/features/site-model/schema";
 import { conceptReplySchema, trimHistory, type ChatMessage, type ConceptDraft, type ConceptReply } from "@/features/concept/schema";
+import { recordApiResponse, wakeApi, watchApiRequest } from "@/lib/api-wake";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
@@ -26,10 +27,22 @@ export async function requestApi(path: string, options: ApiRequestOptions = {}):
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  return fetch(`${apiBaseUrl}${path}`, {
-    ...requestOptions,
-    headers,
-  });
+  const done = watchApiRequest();
+  try {
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      ...requestOptions,
+      headers,
+    });
+    recordApiResponse(response);
+    return response;
+  } finally {
+    done();
+  }
+}
+
+/** 止まっているかもしれないAPIを、利用者が操作する前に起こしておく(#147)。 */
+export function wakeApiServer() {
+  wakeApi(`${apiBaseUrl}/health`);
 }
 
 // AIを呼ぶAPIでトークンを待つ上限。
