@@ -11,7 +11,7 @@ export function ApiWakeNotice() {
       <Callout tone={waking ? "info" : null} elevated className="flex items-start gap-2 px-3 py-2 text-sm leading-normal">
         {waking && <LoaderCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none" />}
         <p role="status" className="min-w-0 flex-1 break-words">
-          {waking && "サーバーを起動しています。しばらく使われていなかったため、応答まで1分ほどかかることがあります。このままお待ちください。"}
+          {waking && "サーバーの応答を待っています。しばらく使われていなかった場合は、起動に1分ほどかかることがあります。このままお待ちください。"}
         </p>
       </Callout>
     </div>

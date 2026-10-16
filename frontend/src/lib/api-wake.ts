@@ -37,9 +37,11 @@ function mayBeAsleep(now: number): boolean {
  * APIが応答を返したことを記録する。
  *
  * 手前の基盤が返す502〜504は、API自体が応答していないことがあるため、起きた証拠にしない。
+ * ただしこのAPIは混雑で断るとき、必ずRetry-Afterを付けた503を返す。それはAPIが起きている証拠になる。
  */
 export function recordApiResponse(response: Response) {
-  if (response.status >= 502 && response.status <= 504) return;
+  const busyFromApi = response.status === 503 && response.headers.has("Retry-After");
+  if (response.status >= 502 && response.status <= 504 && !busyFromApi) return;
   lastResponseAt = Date.now();
   if (waitingRequests.size > 0) {
     waitingRequests.clear();

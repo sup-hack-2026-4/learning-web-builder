@@ -4,7 +4,7 @@ import { ApiWakeNotice } from "@/features/notice/api-wake-notice";
 import { requestApi } from "./api";
 import { IDLE_SLEEP_MS, recordApiResponse, resetApiWakeForTest, SLOW_REQUEST_MS, wakeApi, watchApiRequest } from "./api-wake";
 
-const wakeMessage = /サーバーを起動しています/;
+const wakeMessage = /サーバーの応答を待っています/;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -71,13 +71,58 @@ describe("起動待ちの案内", () => {
     expect(screen.getByRole("status")).toHaveTextContent("");
   });
 
-  it("手前の基盤が返す502〜504は、起きた証拠にしない", () => {
+  it.each([502, 503, 504])("手前の基盤が返す%iは、起きた証拠にしない", (status) => {
     render(<ApiWakeNotice />);
-    recordApiResponse(new Response(null, { status: 502 }));
+    recordApiResponse(new Response(null, { status }));
     watchApiRequest();
 
     act(() => vi.advanceTimersByTime(SLOW_REQUEST_MS));
     expect(screen.getByRole("status")).toHaveTextContent(wakeMessage);
+  });
+
+  it("このAPIが混雑で返すRetry-After付きの503は、起きた証拠にする", () => {
+    render(<ApiWakeNotice />);
+    recordApiResponse(new Response(null, { status: 503, headers: { "Retry-After": "5" } }));
+    watchApiRequest();
+
+    act(() => vi.advanceTimersByTime(SLOW_REQUEST_MS));
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("5秒たたずに終われば、伝えない", () => {
+    render(<ApiWakeNotice />);
+    const done = watchApiRequest();
+    act(() => vi.advanceTimersByTime(SLOW_REQUEST_MS - 1));
+    act(() => done());
+
+    act(() => vi.advanceTimersByTime(SLOW_REQUEST_MS));
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("並んで待っている操作がすべて終わるまで、伝え続ける", () => {
+    render(<ApiWakeNotice />);
+    const first = watchApiRequest();
+    const second = watchApiRequest();
+    act(() => vi.advanceTimersByTime(SLOW_REQUEST_MS));
+    expect(screen.getByRole("status")).toHaveTextContent(wakeMessage);
+
+    act(() => first());
+    expect(screen.getByRole("status")).toHaveTextContent(wakeMessage);
+
+    act(() => second());
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("案内を外したあとに状態が変わっても、警告を出さない", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { unmount } = render(<ApiWakeNotice />);
+    unmount();
+
+    const done = watchApiRequest();
+    vi.advanceTimersByTime(SLOW_REQUEST_MS);
+    done();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
 
@@ -97,6 +142,39 @@ describe("requestApi", () => {
       respond(new Response(null, { status: 200 }));
       await request;
     });
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it.each([
+    ["通信に失敗した", new TypeError("Failed to fetch")],
+    ["中断した", new DOMException("The operation was aborted.", "AbortError")],
+  ])("%sときも、案内を消す", async (_label, error) => {
+    let fail: (error: unknown) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((_resolve, reject) => {
+      fail = reject;
+    })));
+    render(<ApiWakeNotice />);
+
+    const request = requestApi("/generate", { method: "POST" });
+    await act(() => vi.advanceTimersByTimeAsync(SLOW_REQUEST_MS));
+    expect(screen.getByRole("status")).toHaveTextContent(wakeMessage);
+
+    await act(async () => {
+      fail(error);
+      await expect(request).rejects.toBe(error);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("混雑で断られたあとの再試行が遅くても、起動待ちとは伝えない", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503, headers: { "Retry-After": "5" } }))
+      .mockReturnValueOnce(new Promise<Response>(() => {})));
+    render(<ApiWakeNotice />);
+
+    await requestApi("/generate", { method: "POST" });
+    void requestApi("/generate", { method: "POST" });
+    await act(() => vi.advanceTimersByTimeAsync(SLOW_REQUEST_MS));
     expect(screen.getByRole("status")).toHaveTextContent("");
   });
 });
