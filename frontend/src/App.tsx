@@ -14,6 +14,7 @@ import { TopicForm } from "@/features/generation/topic-form";
 import { useSiteGeneration } from "@/features/generation/use-site-generation";
 import { nextAction, stepViews, type FlowState } from "@/features/learning-flow/steps";
 import { captureFocusOrigin, type Notice, type NoticeTone } from "@/features/notice/notice";
+import { ApiWakeNotice } from "@/features/notice/api-wake-notice";
 import { NoticeBar } from "@/features/notice/notice-bar";
 import { DesignPanel } from "@/features/panels/design-panel";
 import { ExplanationPanel } from "@/features/panels/explanation-panel";
@@ -27,6 +28,7 @@ import { LearningNotes } from "@/features/sections/learning-notes";
 import { SectionList } from "@/features/sections/section-list";
 import type { LearningRecord } from "@/features/site-model/schema";
 import { onPersistFailure, useBuilderStore } from "@/features/site-model/store";
+import { wakeApiServer } from "@/lib/api";
 
 // 狭い画面では3カラムを縦に積むと極端に見づらいため、
 // プレビューを主役に据え、他はここで切り替える。
@@ -83,6 +85,17 @@ export default function App() {
       ),
     [showNotice],
   );
+
+  // 本番のAPIはしばらく使われないと止まる。開いた時点と、別のタブから戻った時点で起こしておき、
+  // 最初の操作で待つ時間を短くする(#147)。止まっていない間は何も送らない。
+  useEffect(() => {
+    wakeApiServer();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") wakeApiServer();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   const tracking = useChangeTracking(showNotice);
   // サイトが差し替わる操作（生成・リセット・読み込み）のあとに共通して行う後始末。
@@ -195,7 +208,11 @@ export default function App() {
         </div>
       </header>
 
-      <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />
+      {/* 起動待ちの案内は結果の通知と並べて固定し、どちらもスクロールしても見えるようにする。 */}
+      <div className="sticky top-0 z-20">
+        <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />
+        <ApiWakeNotice />
+      </div>
 
       {/* 左右のカラムを畳むとプレビューが広がり、PC幅での見た目を確認できる。畳んでもつまみは残す。 */}
       <div className={`grid grid-cols-1 xl:min-h-0 xl:flex-1 ${setupOpen ? "xl:grid-cols-[340px_minmax(0,1fr)_var(--panel-w)]" : "xl:grid-cols-[40px_minmax(0,1fr)_var(--panel-w)]"}`} style={{ "--panel-w": panelOpen ? "350px" : "60px" } as CSSProperties}>
