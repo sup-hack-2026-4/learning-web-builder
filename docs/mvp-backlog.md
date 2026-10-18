@@ -17,9 +17,9 @@
 - [x] Clerkログインとプロジェクト所有者確認
       （`backend/internal/auth`。`backend/internal/project/postgres.go`が
       `clerk_user_id`で所有者を絞り込む）
-- [ ] Neon保存、マイグレーション、sqlcクエリ
+- [x] Neon保存、マイグレーション
       （保存とマイグレーションは実装済みで、本番のNeonへの保存も確認済み。
-      sqlcのみ未完。下記参照）
+      sqlcクエリは使わないと決めた。下記参照）
 
 ## 2週目
 
@@ -41,12 +41,14 @@
       （3環境とも公開・疎通済み。2026年9月8日にログインから保存・復元までの
       縦断確認も完了。[production-verification.md](production-verification.md)）
 
-## 残っている作業
+## 発表後に判断したこと
 
-発表時点で未完だったものです。急ぎではありません。
+### sqlcクエリは使わない
 
-### sqlcクエリ
+発表時点では`db/queries/projects.sql`と`db/sqlc.yaml`だけが用意され、
+生成先の`backend/internal/dbgen`は存在せず、`backend/internal/project/postgres.go`は
+生SQLで実装されていました。
 
-`db/queries/projects.sql`と`db/sqlc.yaml`は用意されていますが、
-生成先の`backend/internal/dbgen`が存在せず、`backend/internal/project/postgres.go`は
-生SQLで実装されています。動作はしているため、sqlcへ寄せるかどうかは判断が要ります。
+2026年10月18日に、sqlcへは移さず生SQLのままにすると決め、使われていなかった
+設定とクエリを削除しました（#151）。生SQLの実装は本番のNeonで動作を確認済みで、
+実際のPostgreSQLを使ったテスト（#140）もあり、sqlcへ移しても機能は変わらないためです。

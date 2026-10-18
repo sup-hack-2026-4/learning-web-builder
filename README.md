@@ -22,7 +22,7 @@
 ```text
 frontend/     React + TypeScript + Vite
 backend/      Go + chi API
-db/           PostgreSQLマイグレーションとsqlc設定
+db/           PostgreSQLマイグレーション
 openapi/      API契約
 docs/         設計・役割分担・開発規約
 scripts/      開発用スクリプト（開発サーバーの一括起動）
