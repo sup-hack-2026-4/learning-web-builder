@@ -5,6 +5,22 @@ Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認する�
 現在は本番環境に手を入れたあとの回帰確認として使います。
 秘密鍵、トークン、DB接続文字列はスクリーンショットやIssueへ貼り付けません。
 
+## 2026年10月21日の確認結果
+
+#157 のリリース（`56b6a96`）で、バックエンドのGoと依存の脆弱性対応（#156）を本番へ出したあとの確認です。
+`backend/go.mod`の`go`行が`1.26.9`になったため、Renderが使うGoがそれ以上であることを確かめました。
+
+| 対象 | 確認内容 | 結果 |
+|---|---|---|
+| Render | ビルドログのGoのバージョン | `Using Go version 1.27.3`（1.26.9以上） |
+| Render | 依存の取得 | `go-jose/v3 v3.0.5`・`golang.org/x/text v0.41.0`・`golang.org/x/sync v0.22.0` |
+| Render | ビルドと起動 | `Build successful`、`Your service is live` |
+| API | `GET /api/v1/health` | `status`が`ok`（HTTP 200） |
+| ブラウザ | Clerkでログインしての保存 | 保存できる（`go-jose`を通るJWT検証が本番で動く） |
+
+Renderが使うGoの版はリポジトリからは決められないため、
+今後`go`行を上げるときも、このビルドログの`Using Go version`の行で確かめます。
+
 ## 2026年9月8日の確認結果
 
 ログインを伴う手順（2・4〜6・8）とNeon側の確認を実施し、
