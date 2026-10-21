@@ -15,7 +15,7 @@
 ## 担当C: API・データ・運用
 
 - Go API、OpenAPI、Gemini連携
-- Clerk、PostgreSQL、sqlc
+- Clerk、PostgreSQL
 - Render、Neon、GitHub Actions
 
 境界を越える変更は、先にIssueで型・API契約を合意してください。`SiteModel`とOpenAPIの変更には全員のレビューを推奨します。

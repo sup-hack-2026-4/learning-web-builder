@@ -22,7 +22,7 @@
 ```text
 frontend/     React + TypeScript + Vite
 backend/      Go + chi API
-db/           PostgreSQLマイグレーションとsqlc設定
+db/           PostgreSQLマイグレーション
 openapi/      API契約
 docs/         設計・役割分担・開発規約
 scripts/      開発用スクリプト（開発サーバーの一括起動）
@@ -33,7 +33,7 @@ scripts/      開発用スクリプト（開発サーバーの一括起動）
 
 - Node.js 24.14以上
 - npm 11以上
-- Go 1.26以上
+- Go 1.26.9以上
 - PostgreSQL 17（DB機能を開発する場合。Neonも利用可能）
 
 ## 初回セットアップ
