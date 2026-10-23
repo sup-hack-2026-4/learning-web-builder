@@ -1,6 +1,6 @@
 module github.com/haru-yoshi-5/learning-web-builder/backend
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/clerk/clerk-sdk-go/v2 v2.7.0
