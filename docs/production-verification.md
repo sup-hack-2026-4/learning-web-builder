@@ -5,6 +5,23 @@ Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認する�
 現在は本番環境に手を入れたあとの回帰確認として使います。
 秘密鍵、トークン、DB接続文字列はスクリーンショットやIssueへ貼り付けません。
 
+## 2026年10月26日の確認結果
+
+#183 のリリース（`fa25b52`）で、依存のminor・patchの更新（#168・#172・#178）とGitHub Actionsのv7への更新（#167・#169・#170）を本番へ出したあとの確認です。
+アプリのコードは変えていませんが、Clerk・React・pgx・chiなど実行時に使う依存が変わったため、縦断の動作を確かめました。
+
+| 対象 | 確認内容 | 結果 |
+|---|---|---|
+| Render | ビルドしたコミット | `fa25b52`（#183） |
+| Render | ビルドログのGoのバージョン | `Using Go version 1.27.3`（GO-2026-6809の修正済み版。ツールチェーンの自動切り替えなし） |
+| Render | 依存の取得 | `pgx/v5 v5.11.0`・`chi/v5 v5.5.0` |
+| Render | ビルドと起動 | `Build successful`、`Your service is live` |
+| API | `GET /api/v1/health` | `status`が`ok`（HTTP 200） |
+| API | 認証なしの`GET /api/v1/projects` | HTTP 401 |
+| Cloudflare Pages | `https://learning-web-builder.pages.dev` | HTTP 200 |
+| ブラウザ | Clerkでログインしての保存と再読み込み | 保存でき、再読み込み後も保存した内容が残る |
+| GitHub Actions | `scheduled-vulnerability-check.yml`の手動実行（`main`から） | `checkout`・`setup-go`・`setup-node`のv7で、govulncheck・npm auditとも脆弱性0件で成功 |
+
 ## 2026年10月25日の確認結果
 
 #163 のリリース（`1dfc716`）で、`crypto/x509`の脆弱性対応（#161）・zodの脆弱性対応（#166）・依存の脆弱性の検出（#162・#164）を本番へ出したあとの確認です。
