@@ -5,6 +5,25 @@ Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認する�
 現在は本番環境に手を入れたあとの回帰確認として使います。
 秘密鍵、トークン、DB接続文字列はスクリーンショットやIssueへ貼り付けません。
 
+## 2026年10月25日の確認結果
+
+#163 のリリース（`1dfc716`）で、`crypto/x509`の脆弱性対応（#161）・zodの脆弱性対応（#166）・依存の脆弱性の検出（#162・#164）を本番へ出したあとの確認です。
+`backend/go.mod`の`go`行が`1.26.10`になったため、Renderが使うGoがGO-2026-6809の修正を含むことを確かめました。
+
+| 対象 | 確認内容 | 結果 |
+|---|---|---|
+| Render | ビルドしたコミット | `1dfc716`（#163） |
+| Render | ビルドログのGoのバージョン | `Using Go version 1.27.3`（GO-2026-6809の修正済み版。ツールチェーンの自動切り替えなし） |
+| Render | ビルドと起動 | `Build successful`、`Your service is live` |
+| API | `GET /api/v1/health` | `status`が`ok`（HTTP 200） |
+| API | 認証なしの`GET /api/v1/projects` | HTTP 401 |
+| Cloudflare Pages | `https://learning-web-builder.pages.dev` | HTTP 200 |
+| ブラウザ | Clerkでログインしての保存と再読み込み | 保存でき、再読み込み後も保存した内容が残る |
+| GitHub Actions | `scheduled-vulnerability-check.yml`の手動実行（`main`から） | govulncheck・npm auditとも脆弱性0件で成功 |
+
+GO-2026-6809の修正は系列ごとに入っており、1.26系は1.26.10以上、1.27系は1.27.3以上が修正済みです。
+1.27.0〜1.27.2は`go`行の`1.26.10`より新しくても影響を受けるため、数字の大小だけで判定しません。
+
 ## 2026年10月21日の確認結果
 
 #157 のリリース（`56b6a96`）で、バックエンドのGoと依存の脆弱性対応（#156）を本番へ出したあとの確認です。
