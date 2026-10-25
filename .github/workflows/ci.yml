@@ -63,7 +63,7 @@ jobs:
         run: |
           python3 -m pip install --quiet openapi-spec-validator==0.9.0
           python3 -m openapi_spec_validator openapi/openapi.yaml
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
