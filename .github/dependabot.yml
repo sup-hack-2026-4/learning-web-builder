@@ -41,7 +41,7 @@ updates:
       time: "09:00"
       timezone: Asia/Tokyo
     groups:
-      github-actions:
-        patterns: ["*"]
+      github-actions-minor-patch:
+        update-types: [minor, patch]
     commit-message:
       prefix: chore
