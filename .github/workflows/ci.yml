@@ -16,8 +16,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -54,7 +54,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://app:app@localhost:5432/learning_web_builder_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 仕様書が壊れるとコード生成やモックがすべて失敗するため、最初に検査する。
       # YAMLとして読めるかに加えて、OpenAPI 3.1の文書として正しいか(必須の項目、参照切れ)を確かめる。
       # 実装との食い違いは、go test の中の契約テスト(openapi_contract_test.go)で確かめる。
@@ -63,7 +63,7 @@ jobs:
         run: |
           python3 -m pip install --quiet openapi-spec-validator==0.9.0
           python3 -m openapi_spec_validator openapi/openapi.yaml
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -82,8 +82,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
