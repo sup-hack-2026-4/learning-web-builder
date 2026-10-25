@@ -1,0 +1,47 @@
+# 依存の更新を週1回確認し、developへのPRを作る。
+# target-branchが効くのはバージョン更新だけで、セキュリティ更新のPRはmain向けに作られる。
+# 扱いはdocs/github-rules.mdの「DependabotのPR」を参照。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /frontend
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    # minorとpatchは1本のPRにまとめ、PRが増えすぎないようにする。majorは個別に確認する。
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: gomod
+    directory: /backend
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    groups:
+      gomod-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    groups:
+      github-actions-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
