@@ -35,7 +35,7 @@ if ($null -eq $goPath) {
 $npmPath = Get-CommandPath "npm.cmd"
 if ($null -eq $npmPath) { $npmPath = Get-CommandPath "npm" }
 if ($null -eq $npmPath) {
-    Write-Host "npmが見つかりません。Node.js 24.14以上をインストールしてPATHに追加してください。" -ForegroundColor Red
+    Write-Host "npmが見つかりません。Node.js 24.15以上をインストールしてPATHに追加してください。" -ForegroundColor Red
     exit 1
 }
 
