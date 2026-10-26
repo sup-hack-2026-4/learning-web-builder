@@ -43,6 +43,11 @@ func TestGenerateReturnsValidatedModel(t *testing.T) {
 		if responseSchema["additionalProperties"] != false {
 			t.Error("expected unknown properties to be rejected")
 		}
+		// 推論の深さを指定しないと、生成が時間予算を超えて毎回フォールバックになる（#191）。
+		thinking, ok := generationConfig["thinkingConfig"].(map[string]any)
+		if !ok || thinking["thinkingLevel"] != "low" {
+			t.Errorf("expected thinkingLevel low, got %#v", generationConfig["thinkingConfig"])
+		}
 
 		writeCandidate(t, writer, `{
 			"siteTitle":"学校の写真部",

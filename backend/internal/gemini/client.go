@@ -27,6 +27,9 @@ const (
 	// チャットは往復するぶん、1回あたりの待ち時間を生成より短く抑える。
 	maxChatDuration        = 12 * time.Second
 	maxChatPrimaryDuration = 6 * time.Second
+	// 推論の深さ。指定しないとモデル既定の推論が走り、生成に100秒以上かかって
+	// 上の時間予算をすべて使い切る（#191）。lowなら主モデルで数秒に収まる。
+	thinkingLevel = "low"
 )
 
 type Config struct {
@@ -71,6 +74,11 @@ type generationConfig struct {
 	CandidateCount     int            `json:"candidateCount"`
 	MaxOutputTokens    int            `json:"maxOutputTokens"`
 	Temperature        float64        `json:"temperature"`
+	ThinkingConfig     thinkingConfig `json:"thinkingConfig"`
+}
+
+type thinkingConfig struct {
+	ThinkingLevel string `json:"thinkingLevel"`
 }
 
 type generateContentResponse struct {
@@ -153,6 +161,7 @@ func (client *Client) Generate(ctx context.Context, topic string, draft concept.
 			CandidateCount:     1,
 			MaxOutputTokens:    4096,
 			Temperature:        0.7,
+			ThinkingConfig:     thinkingConfig{ThinkingLevel: thinkingLevel},
 		},
 	}
 
