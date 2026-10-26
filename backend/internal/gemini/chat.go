@@ -61,6 +61,7 @@ func (client *Client) Chat(ctx context.Context, messages []concept.Message, draf
 			CandidateCount:     1,
 			MaxOutputTokens:    1024,
 			Temperature:        0.4,
+			ThinkingConfig:     thinkingConfig{ThinkingLevel: thinkingLevel},
 		},
 	}
 

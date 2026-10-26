@@ -109,6 +109,32 @@ func TestChatDoesNotSendRoleOnSystemInstruction(t *testing.T) {
 	}
 }
 
+func TestChatSendsLowThinkingLevel(t *testing.T) {
+	// チャットは生成より時間予算が短いため、推論の深さを抑えないと間に合わない（#191）。
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		writeCandidate(t, writer, validChatCandidate)
+	}))
+	defer server.Close()
+
+	client := newChatClient(t, server.URL)
+	if _, err := client.Chat(context.Background(), []concept.Message{{Role: concept.RoleUser, Text: "植物園"}}, concept.Draft{}); err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+
+	generationConfig, ok := received["generationConfig"].(map[string]any)
+	if !ok {
+		t.Fatal("expected generationConfig")
+	}
+	thinking, ok := generationConfig["thinkingConfig"].(map[string]any)
+	if !ok || thinking["thinkingLevel"] != "low" {
+		t.Errorf("expected thinkingLevel low, got %#v", generationConfig["thinkingConfig"])
+	}
+}
+
 func TestGenerateStillOmitsRole(t *testing.T) {
 	// チャット対応で content に role を足したが、単発生成の形は変えない。
 	var received map[string]any
