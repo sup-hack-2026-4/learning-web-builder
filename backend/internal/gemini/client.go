@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -91,12 +92,29 @@ type errorResponse struct {
 	Error struct {
 		Message string `json:"message"`
 		Status  string `json:"status"`
+		// 型の違う要素が混ざるため、1件ずつ読む。1件が壊れていても残りを捨てない。
+		Details []json.RawMessage `json:"details"`
 	} `json:"error"`
+}
+
+// errorDetail は google.rpc の詳細のうち、回数の上限の判断に使う項目だけを読む。
+// RetryInfo なら retryDelay、QuotaFailure なら violations が入る。
+type errorDetail struct {
+	Type       string `json:"@type"`
+	RetryDelay string `json:"retryDelay"`
+	Violations []struct {
+		QuotaID string `json:"quotaId"`
+	} `json:"violations"`
 }
 
 type geminiHTTPError struct {
 	statusCode int
 	details    string
+	// サーバーが指定した、再試行までの待ち時間。指定がなければ0。
+	retryDelay time.Duration
+	// 1日あたりの回数の上限に達した。リセットまで同じモデルは使えない。
+	dailyQuota bool
+	quotaIDs   []string
 }
 
 func (err *geminiHTTPError) Error() string {
@@ -295,9 +313,21 @@ func (client *Client) generateContent(ctx context.Context, model string, encoded
 
 		responseErr := newHTTPError(response.StatusCode, responseBody)
 		if !isRetryableStatus(response.StatusCode) || attempt == maxGenerateAttempts-1 {
+			logQuotaExceeded(model, responseErr, "attempts_exhausted")
 			return nil, responseErr
 		}
-		if err := waitForRetry(ctx, client.retryDelay(attempt)); err != nil {
+		// 1日の上限はリセットまで回復しないため、再試行しても枠と時間を使うだけになる。
+		if responseErr.dailyQuota {
+			logQuotaExceeded(model, responseErr, "daily_quota")
+			return nil, responseErr
+		}
+		// サーバーが指定した待ち時間より早く送っても、また断られる。
+		delay := max(client.retryDelay(attempt), responseErr.retryDelay)
+		if !fitsInBudget(ctx, delay) {
+			logQuotaExceeded(model, responseErr, "retry_delay_exceeds_budget")
+			return nil, responseErr
+		}
+		if err := waitForRetry(ctx, delay); err != nil {
 			return nil, fmt.Errorf("wait to retry Gemini: %w", err)
 		}
 	}
@@ -328,18 +358,47 @@ func isRetryableStatus(statusCode int) bool {
 		statusCode >= http.StatusInternalServerError
 }
 
+// isFallbackEligible は、主モデルの失敗のあとに予備のモデルを試すかを決める。
+//
+// 1日の上限では試さない。予備のモデルは枠が別でも遅く（#192）、時間予算の中で
+// 返らないまま利用者を待たせるだけになるため、すぐ見本へ回す。
 func isFallbackEligible(err error) bool {
 	var responseErr *geminiHTTPError
-	return errors.As(err, &responseErr) && isRetryableStatus(responseErr.statusCode)
+	return errors.As(err, &responseErr) &&
+		isRetryableStatus(responseErr.statusCode) &&
+		!responseErr.dailyQuota
 }
 
-func newHTTPError(statusCode int, responseBody []byte) error {
+// fitsInBudget は、delay だけ待ってもまだ時間予算が残るかを返す。
+func fitsInBudget(ctx context.Context, delay time.Duration) bool {
+	deadline, ok := ctx.Deadline()
+	return !ok || time.Until(deadline) > delay
+}
+
+// logQuotaExceeded は、回数の上限で諦めたことを1行で残す。
+// 上限に達したかどうかは画面の見本からは見分けられないため、ログで追えるようにする。
+func logQuotaExceeded(model string, err *geminiHTTPError, reason string) {
+	if err.statusCode != http.StatusTooManyRequests {
+		return
+	}
+	log.Printf(
+		"gemini quota exceeded model=%s reason=%s daily=%t retry_after=%s quota_ids=%s",
+		model,
+		reason,
+		err.dailyQuota,
+		err.retryDelay,
+		strings.Join(err.quotaIDs, ","),
+	)
+}
+
+func newHTTPError(statusCode int, responseBody []byte) *geminiHTTPError {
+	responseErr := &geminiHTTPError{
+		statusCode: statusCode,
+		details:    fmt.Sprintf("Gemini returned HTTP %d", statusCode),
+	}
 	var envelope errorResponse
 	if err := json.Unmarshal(responseBody, &envelope); err != nil {
-		return &geminiHTTPError{
-			statusCode: statusCode,
-			details:    fmt.Sprintf("Gemini returned HTTP %d", statusCode),
-		}
+		return responseErr
 	}
 
 	status := strings.TrimSpace(envelope.Error.Status)
@@ -350,19 +409,38 @@ func newHTTPError(statusCode int, responseBody []byte) error {
 	}
 	switch {
 	case status != "" && message != "":
-		return &geminiHTTPError{
-			statusCode: statusCode,
-			details:    fmt.Sprintf("Gemini returned HTTP %d status=%s message=%s", statusCode, status, message),
-		}
+		responseErr.details = fmt.Sprintf("Gemini returned HTTP %d status=%s message=%s", statusCode, status, message)
 	case status != "":
-		return &geminiHTTPError{
-			statusCode: statusCode,
-			details:    fmt.Sprintf("Gemini returned HTTP %d status=%s", statusCode, status),
+		responseErr.details = fmt.Sprintf("Gemini returned HTTP %d status=%s", statusCode, status)
+	}
+	readErrorDetails(responseErr, envelope.Error.Details)
+	return responseErr
+}
+
+// readErrorDetails は、再試行までの待ち時間と、どの上限に達したかを読み取る。
+// 上限の種類は message の文言ではなく quotaId で見分ける。文言は日次と分次で同じことがある。
+func readErrorDetails(responseErr *geminiHTTPError, details []json.RawMessage) {
+	for _, rawDetail := range details {
+		var detail errorDetail
+		if err := json.Unmarshal(rawDetail, &detail); err != nil {
+			continue
 		}
-	default:
-		return &geminiHTTPError{
-			statusCode: statusCode,
-			details:    fmt.Sprintf("Gemini returned HTTP %d", statusCode),
+		switch {
+		case strings.HasSuffix(detail.Type, "google.rpc.RetryInfo"):
+			// JSONでの期間は "52s" や "1.5s" の形で届く。読めない値と負の値は指定なしとみなす。
+			if delay, err := time.ParseDuration(detail.RetryDelay); err == nil && delay > 0 {
+				responseErr.retryDelay = delay
+			}
+		case strings.HasSuffix(detail.Type, "google.rpc.QuotaFailure"):
+			for _, violation := range detail.Violations {
+				if violation.QuotaID == "" {
+					continue
+				}
+				responseErr.quotaIDs = append(responseErr.quotaIDs, violation.QuotaID)
+				if strings.Contains(violation.QuotaID, "PerDay") {
+					responseErr.dailyQuota = true
+				}
+			}
 		}
 	}
 }
