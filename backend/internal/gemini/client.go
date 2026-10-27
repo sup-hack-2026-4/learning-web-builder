@@ -48,6 +48,7 @@ type Client struct {
 	baseURL             string
 	httpClient          *http.Client
 	retryDelay          func(int) time.Duration
+	wait                func(context.Context, time.Duration) error
 	generationTimeout   time.Duration
 	primaryModelTimeout time.Duration
 }
@@ -160,6 +161,7 @@ func NewClient(config Config) (*Client, error) {
 		baseURL:             baseURL,
 		httpClient:          config.HTTPClient,
 		retryDelay:          defaultRetryDelay,
+		wait:                waitForRetry,
 		generationTimeout:   maxGenerationDuration,
 		primaryModelTimeout: maxPrimaryModelDuration,
 	}, nil
@@ -249,9 +251,11 @@ func (client *Client) callWithFallback(
 	primaryTimedOut := errors.Is(primaryCtx.Err(), context.DeadlineExceeded)
 	cancelPrimary()
 
+	// 1日の上限は、主モデルの時間切れと重なっても予備へ回さない。
 	if err != nil &&
 		client.fallbackModel != "" &&
 		totalCtx.Err() == nil &&
+		!isDailyQuotaExceeded(err) &&
 		(isFallbackEligible(err) || primaryTimedOut) {
 		primaryErr := err
 		responseBody, err = client.generateContent(totalCtx, client.fallbackModel, encodedRequest)
@@ -293,7 +297,7 @@ func (client *Client) generateContent(ctx context.Context, model string, encoded
 			if ctx.Err() != nil || attempt == maxGenerateAttempts-1 {
 				return nil, requestErr
 			}
-			if err := waitForRetry(ctx, client.retryDelay(attempt)); err != nil {
+			if err := client.wait(ctx, client.retryDelay(attempt)); err != nil {
 				return nil, fmt.Errorf("wait to retry Gemini: %w", err)
 			}
 			continue
@@ -312,13 +316,14 @@ func (client *Client) generateContent(ctx context.Context, model string, encoded
 		}
 
 		responseErr := newHTTPError(response.StatusCode, responseBody)
-		if !isRetryableStatus(response.StatusCode) || attempt == maxGenerateAttempts-1 {
-			logQuotaExceeded(model, responseErr, "attempts_exhausted")
-			return nil, responseErr
-		}
 		// 1日の上限はリセットまで回復しないため、再試行しても枠と時間を使うだけになる。
+		// 最後の試行でも理由を daily_quota にそろえるため、回数の判定より先に見る。
 		if responseErr.dailyQuota {
 			logQuotaExceeded(model, responseErr, "daily_quota")
+			return nil, responseErr
+		}
+		if !isRetryableStatus(response.StatusCode) || attempt == maxGenerateAttempts-1 {
+			logQuotaExceeded(model, responseErr, "attempts_exhausted")
 			return nil, responseErr
 		}
 		// サーバーが指定した待ち時間より早く送っても、また断られる。
@@ -327,8 +332,10 @@ func (client *Client) generateContent(ctx context.Context, model string, encoded
 			logQuotaExceeded(model, responseErr, "retry_delay_exceeds_budget")
 			return nil, responseErr
 		}
-		if err := waitForRetry(ctx, delay); err != nil {
-			return nil, fmt.Errorf("wait to retry Gemini: %w", err)
+		if err := client.wait(ctx, delay); err != nil {
+			// 待っている間に打ち切られても、断られた理由を失わないよう両方を包む。
+			logQuotaExceeded(model, responseErr, "wait_interrupted")
+			return nil, fmt.Errorf("wait to retry Gemini: %w; last response: %w", err, responseErr)
 		}
 	}
 
@@ -358,15 +365,18 @@ func isRetryableStatus(statusCode int) bool {
 		statusCode >= http.StatusInternalServerError
 }
 
-// isFallbackEligible は、主モデルの失敗のあとに予備のモデルを試すかを決める。
-//
-// 1日の上限では試さない。予備のモデルは枠が別でも遅く（#192）、時間予算の中で
-// 返らないまま利用者を待たせるだけになるため、すぐ見本へ回す。
 func isFallbackEligible(err error) bool {
 	var responseErr *geminiHTTPError
-	return errors.As(err, &responseErr) &&
-		isRetryableStatus(responseErr.statusCode) &&
-		!responseErr.dailyQuota
+	return errors.As(err, &responseErr) && isRetryableStatus(responseErr.statusCode)
+}
+
+// isDailyQuotaExceeded は、1日の上限で断られたかを返す。
+//
+// このときは予備のモデルを試さない。予備のモデルは枠が別でも遅く（#192）、時間予算の中で
+// 返らないまま利用者を待たせるだけになるため、すぐ見本へ回す。
+func isDailyQuotaExceeded(err error) bool {
+	var responseErr *geminiHTTPError
+	return errors.As(err, &responseErr) && responseErr.dailyQuota
 }
 
 // fitsInBudget は、delay だけ待ってもまだ時間予算が残るかを返す。

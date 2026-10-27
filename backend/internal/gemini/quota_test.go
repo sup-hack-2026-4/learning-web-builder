@@ -3,6 +3,7 @@ package gemini
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -35,12 +36,40 @@ func writeQuotaError(t *testing.T, writer http.ResponseWriter, body []byte) {
 	}
 }
 
+// captureLog は標準のloggerの出力先を差し替える。グローバルな状態のため、
+// これを使うテストは t.Parallel にしない。
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buffer bytes.Buffer
+	previous := log.Writer()
 	log.SetOutput(&buffer)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	t.Cleanup(func() { log.SetOutput(previous) })
 	return &buffer
+}
+
+// recordWaits は実際には待たずに、再試行の前に待とうとした時間を記録する。
+// 経過時間で確かめると、CIの遅さで誤って失敗したり、待たなくても通ったりする。
+func recordWaits(client *Client) *[]time.Duration {
+	var waits []time.Duration
+	client.wait = func(ctx context.Context, delay time.Duration) error {
+		waits = append(waits, delay)
+		return ctx.Err()
+	}
+	return &waits
+}
+
+// slowRoundTripper は、応答を返す前に止まる。応答を受け取った時点で
+// 主モデルの持ち時間が切れている状況を作るために使う。
+type slowRoundTripper struct {
+	delay   time.Duration
+	handler http.Handler
+}
+
+func (transport slowRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	recorder := httptest.NewRecorder()
+	transport.handler.ServeHTTP(recorder, request)
+	time.Sleep(transport.delay)
+	return recorder.Result(), nil
 }
 
 const validGeneratedSite = `{
@@ -225,10 +254,8 @@ func TestGenerateFallsBackWhenRetryDelayExceedsBudget(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 	client.retryDelay = func(int) time.Duration { return 0 }
-	client.primaryModelTimeout = time.Second
-	client.generationTimeout = 2 * time.Second
+	waits := recordWaits(client)
 
-	startedAt := time.Now()
 	model, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{})
 	if err != nil {
 		t.Fatalf("generate with fallback: %v", err)
@@ -236,9 +263,9 @@ func TestGenerateFallsBackWhenRetryDelayExceedsBudget(t *testing.T) {
 	if model.SiteTitle != "学校の写真部" {
 		t.Fatalf("unexpected model: %#v", model)
 	}
-	// 38秒待てと言われたら、主モデルの予算（1秒）を待ちで使い切らずに予備へ移る。
-	if elapsed := time.Since(startedAt); elapsed >= time.Second {
-		t.Errorf("expected not to wait for the retry delay, took %v", elapsed)
+	// 38秒待てと言われたら、主モデルの予算（8秒）を待ちで使い切らずに予備へ移る。
+	if len(*waits) != 0 {
+		t.Errorf("expected not to wait for the retry delay, waited %v", *waits)
 	}
 	if primaryRequestCount != 1 {
 		t.Errorf("expected one primary request, got %d", primaryRequestCount)
@@ -276,16 +303,140 @@ func TestGenerateWaitsForServerRetryDelay(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 	client.retryDelay = func(int) time.Duration { return 0 }
+	waits := recordWaits(client)
 
-	startedAt := time.Now()
 	if _, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{}); err != nil {
 		t.Fatalf("generate after retry: %v", err)
 	}
-	if elapsed := time.Since(startedAt); elapsed < 100*time.Millisecond {
-		t.Errorf("expected to wait for the server retry delay, took %v", elapsed)
+	if !slices.Equal(*waits, []time.Duration{100 * time.Millisecond}) {
+		t.Errorf("expected to wait for the server retry delay once, waited %v", *waits)
 	}
 	if requestCount != 2 {
 		t.Errorf("expected two requests, got %d", requestCount)
+	}
+}
+
+func TestGenerateDoesNotFallBackOnDailyQuotaAfterPrimaryTimeout(t *testing.T) {
+	captureLog(t)
+	dailyQuota := readFixture(t, "quota_daily_429.json")
+	fallbackRequestCount := 0
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if strings.Contains(request.URL.Path, "gemini-fallback:") {
+			fallbackRequestCount++
+			writeCandidate(t, writer, validGeneratedSite)
+			return
+		}
+		writeQuotaError(t, writer, dailyQuota)
+	})
+
+	client, err := NewClient(Config{
+		APIKey:        "test-key",
+		Model:         "gemini-primary",
+		FallbackModel: "gemini-fallback",
+		BaseURL:       "http://gemini.test",
+		// 1日の上限の429を受け取った時点で、主モデルの持ち時間を過ぎている。
+		HTTPClient: &http.Client{Transport: slowRoundTripper{delay: 100 * time.Millisecond, handler: handler}},
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.primaryModelTimeout = 20 * time.Millisecond
+	client.generationTimeout = 5 * time.Second
+
+	_, err = client.Generate(context.Background(), "学校の写真部", concept.Draft{})
+	if !isDailyQuotaExceeded(err) {
+		t.Fatalf("expected daily quota error, got %v", err)
+	}
+	if fallbackRequestCount != 0 {
+		t.Errorf("expected no fallback request, got %d", fallbackRequestCount)
+	}
+}
+
+func TestGenerateKeepsQuotaErrorWhenRetryWaitIsInterrupted(t *testing.T) {
+	logs := captureLog(t)
+	minuteQuota := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","details":[
+		{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0.1s"}
+	]}}`)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writeQuotaError(t, writer, minuteQuota)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		APIKey:     "test-key",
+		Model:      "gemini-test",
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	client.wait = func(context.Context, time.Duration) error { return context.Canceled }
+
+	_, err = client.Generate(context.Background(), "学校の写真部", concept.Draft{})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected the interruption to be kept, got %v", err)
+	}
+	var responseErr *geminiHTTPError
+	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTooManyRequests {
+		t.Errorf("expected the 429 response to be kept, got %v", err)
+	}
+	if !strings.Contains(logs.String(), "reason=wait_interrupted") {
+		t.Errorf("expected interruption reason in log, got %q", logs.String())
+	}
+}
+
+func TestGenerateLogsDailyQuotaOnLastAttempt(t *testing.T) {
+	logs := captureLog(t)
+	dailyQuota := readFixture(t, "quota_daily_429.json")
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		if requestCount < maxGenerateAttempts {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writeQuotaError(t, writer, dailyQuota)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{
+		APIKey:     "test-key",
+		Model:      "gemini-test",
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	recordWaits(client)
+
+	if _, err := client.Generate(context.Background(), "学校の写真部", concept.Draft{}); !isDailyQuotaExceeded(err) {
+		t.Fatalf("expected daily quota error, got %v", err)
+	}
+	if requestCount != maxGenerateAttempts {
+		t.Errorf("expected %d requests, got %d", maxGenerateAttempts, requestCount)
+	}
+	if !strings.Contains(logs.String(), "reason=daily_quota") {
+		t.Errorf("expected daily quota reason on the last attempt, got %q", logs.String())
+	}
+}
+
+func TestFitsInBudget(t *testing.T) {
+	if !fitsInBudget(context.Background(), time.Hour) {
+		t.Error("expected any delay to fit without a deadline")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if !fitsInBudget(ctx, time.Second) {
+		t.Error("expected a short delay to fit in the remaining budget")
+	}
+	if fitsInBudget(ctx, time.Minute) {
+		t.Error("expected a delay that uses up the whole budget not to fit")
+	}
+	if fitsInBudget(ctx, time.Hour) {
+		t.Error("expected a longer delay not to fit")
 	}
 }
 
