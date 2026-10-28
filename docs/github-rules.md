@@ -37,5 +37,13 @@
   2. 変更履歴（PR本文のRelease notes・Changelog）で、破壊的変更がないか確かめる。majorの更新は、必要ならIssueを立てて別のPRで対応し、DependabotのPRは閉じる
   3. 承認して`develop`へマージする。コミットメッセージは英語のままでよい
 - セキュリティ更新のPR: `target-branch`はバージョン更新にしか効かないため、セキュリティ更新のPRは`main`向けに作られます。`main`へは直接マージせず、PRを閉じて同じ更新を`develop`向けのPRで行います
-- Dependabotのアラートとセキュリティ更新は、リポジトリの「Settings → Code security」で管理者が有効にします
+- Dependabotのアラート・セキュリティ更新・Grouped security updatesは、2026年10月26日にリポジトリの「Settings → Advanced Security」で有効にしました。セキュリティ更新のPRは、エコシステムごとに1本にまとまります（`dependabot.yml`のグループは`applies-to`を書いていないため、バージョン更新にだけ効きます）
+
+## 秘密情報の検出
+
+Secret scanningとPush protectionを、2026年10月26日に「Settings → Advanced Security」で有効にしました。このリポジトリはpublicのため、コミットに入った秘密情報は誰でも見られます。
+
+- pushを止められたら、まずコミットから秘密情報を取り除いてpushし直します。誤検知のときだけ、止められたときの画面で理由を選んで通します
+- Securityタブの「Secret scanning」にアラートが出たら、**先にそのキーを発行元（Clerk・Neon・AIのAPIなど）で無効にして、新しいキーに差し替えます**。そのあとでコミットを直し、アラートを閉じます。履歴から消しても、すでに見られていた前提で対応します
+- 秘密情報はコミットしません。`.env`と`.env.local`は`.gitignore`で除外しており、リポジトリに置くのは項目の一覧である`.env.example`だけです。実行環境（Render・Cloudflare Pages）には、それぞれの管理画面で設定します
 
