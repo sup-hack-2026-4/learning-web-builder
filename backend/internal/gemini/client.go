@@ -89,6 +89,15 @@ type generateContentResponse struct {
 	} `json:"candidates"`
 }
 
+// usageResponse は、応答のうちトークン数だけを読む。推論の深さの指定が本番で効いているかを
+// ログで確かめるために使う（#191）。
+type usageResponse struct {
+	UsageMetadata struct {
+		ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+	} `json:"usageMetadata"`
+}
+
 type errorResponse struct {
 	Error struct {
 		Message string `json:"message"`
@@ -291,8 +300,10 @@ func (client *Client) generateContent(ctx context.Context, model string, encoded
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("x-goog-api-key", client.apiKey)
 
+		startedAt := time.Now()
 		response, err := client.httpClient.Do(request)
 		if err != nil {
+			logAttempt(model, attempt, time.Since(startedAt), requestErrorResult(err), "")
 			requestErr := fmt.Errorf("call Gemini: %w", err)
 			if ctx.Err() != nil || attempt == maxGenerateAttempts-1 {
 				return nil, requestErr
@@ -305,16 +316,21 @@ func (client *Client) generateContent(ctx context.Context, model string, encoded
 
 		responseBody, err = io.ReadAll(io.LimitReader(response.Body, maxResponseBodySize+1))
 		response.Body.Close()
+		elapsed := time.Since(startedAt)
 		if err != nil {
+			logAttempt(model, attempt, elapsed, requestErrorResult(err), "")
 			return nil, fmt.Errorf("read Gemini response: %w", err)
 		}
 		if len(responseBody) > maxResponseBodySize {
+			logAttempt(model, attempt, elapsed, "response_too_large", "")
 			return nil, errors.New("Gemini response is too large")
 		}
 		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			logAttempt(model, attempt, elapsed, "ok", usageFields(responseBody))
 			break
 		}
 
+		logAttempt(model, attempt, elapsed, fmt.Sprintf("http_%d", response.StatusCode), "")
 		responseErr := newHTTPError(response.StatusCode, responseBody)
 		// 1日の上限はリセットまで回復しないため、再試行しても枠と時間を使うだけになる。
 		// 最後の試行でも理由を daily_quota にそろえるため、回数の判定より先に見る。
@@ -398,6 +414,49 @@ func logQuotaExceeded(model string, err *geminiHTTPError, reason string) {
 		err.dailyQuota,
 		err.retryDelay,
 		strings.Join(err.quotaIDs, ","),
+	)
+}
+
+// logAttempt は、Geminiへの1回の送信の結果と所要時間を1行で残す。
+// 主モデルが時間予算に収まらず予備や見本へ回ったとき、時間切れか、断られたのか、
+// 何秒かかったのかを本番で見分けるために使う（#191）。
+func logAttempt(model string, attempt int, elapsed time.Duration, result string, extra string) {
+	line := fmt.Sprintf(
+		"gemini attempt model=%s attempt=%d result=%s elapsed=%s",
+		model,
+		attempt+1,
+		result,
+		elapsed.Round(time.Millisecond),
+	)
+	if extra != "" {
+		line += " " + extra
+	}
+	log.Print(line)
+}
+
+// requestErrorResult は、送信や受信の失敗を、時間切れ・打ち切り・それ以外に分ける。
+// エラー文はURLなどを含んで長くなるため、ログには種類だけを出す。
+func requestErrorResult(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "transport_error"
+	}
+}
+
+// usageFields は、成功した応答のトークン数をログ用の文字列にする。読めなければ空にする。
+func usageFields(responseBody []byte) string {
+	var usage usageResponse
+	if err := json.Unmarshal(responseBody, &usage); err != nil {
+		return ""
+	}
+	return fmt.Sprintf(
+		"thoughts_tokens=%d output_tokens=%d",
+		usage.UsageMetadata.ThoughtsTokenCount,
+		usage.UsageMetadata.CandidatesTokenCount,
 	)
 }
 
