@@ -5,6 +5,26 @@ Cloudflare Pages・Clerk・Render・Neonを通した縦断動作を確認する�
 現在は本番環境に手を入れたあとの回帰確認として使います。
 秘密鍵、トークン、DB接続文字列はスクリーンショットやIssueへ貼り付けません。
 
+## 2026年11月14日の確認結果
+
+#212 のリリース（`4100097`）で、clerk-sdk-goの2.8.0への更新（#210）・フロントエンドの依存の更新（#211）・Goの1.26.11への更新（#214）を本番へ出したあとの確認です。
+clerk-sdk-goの間接依存が`go-jose/v3`から`go-jose/v4`へ移ったため、Renderでの依存の取得と、標準ライブラリのGO-2026-6859の修正を含むGoが使われることを確かめました。
+
+| 対象 | 確認内容 | 結果 |
+|---|---|---|
+| Render | ビルドしたコミット | `4100097`（#212） |
+| Render | ビルドログのGoのバージョン | `Using Go version 1.27.4`（GO-2026-6859の修正済み版） |
+| Render | 依存の取得 | `clerk-sdk-go/v2 v2.8.0`・`go-jose/v4 v4.1.6`・`pgx/v5 v5.12.0`・`puddle/v2 v2.2.3` |
+| Render | ビルドと起動 | `Build successful`、`Your service is live` |
+| API | `GET /api/v1/health` | `status`が`ok`（HTTP 200） |
+| API | 認証なしの`GET /api/v1/projects` | HTTP 401 |
+| Cloudflare Pages | `https://learning-web-builder.pages.dev` | HTTP 200 |
+| ブラウザ | Clerkでログインしての保存と再読み込み | 保存できる（`POST /api/v1/projects`がHTTP 201）。再読み込み後もログインが続き（`GET /api/v1/session`・`/projects`がHTTP 200）、一覧から選ぶと保存した内容が読み込まれる。`go-jose/v4`を通るJWT検証が本番で動く |
+| Dependabot | `go-jose/v3`のアラート3件（#198） | すべてfixedになった |
+
+GO-2026-6859の修正も系列ごとに入っており、1.26系は1.26.11以上、1.27系は1.27.4以上が修正済みです。
+前回まで使われていた1.27.3は影響を受けるため、今回もビルドログの版で確かめました。
+
 ## 2026年10月26日の確認結果
 
 #183 のリリース（`fa25b52`）で、依存のminor・patchの更新（#168・#172・#178）とGitHub Actionsのv7への更新（#167・#169・#170）を本番へ出したあとの確認です。
