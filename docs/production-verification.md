@@ -19,6 +19,7 @@ clerk-sdk-goの間接依存が`go-jose/v3`から`go-jose/v4`へ移ったため�
 | API | `GET /api/v1/health` | `status`が`ok`（HTTP 200） |
 | API | 認証なしの`GET /api/v1/projects` | HTTP 401 |
 | Cloudflare Pages | `https://learning-web-builder.pages.dev` | HTTP 200 |
+| ブラウザ | Clerkでログインしての保存と再読み込み | 保存できる（`POST /api/v1/projects`がHTTP 201）。再読み込み後もログインが続き（`GET /api/v1/session`・`/projects`がHTTP 200）、一覧から選ぶと保存した内容が読み込まれる。`go-jose/v4`を通るJWT検証が本番で動く |
 | Dependabot | `go-jose/v3`のアラート3件（#198） | すべてfixedになった |
 
 GO-2026-6859の修正も系列ごとに入っており、1.26系は1.26.11以上、1.27系は1.27.4以上が修正済みです。
